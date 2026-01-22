@@ -1,0 +1,25 @@
+services:
+  valhalla:
+    image: ghcr.io/valhalla/valhalla-scripted:latest
+    container_name: valhalla
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./valhalla/custom_files:/custom_files
+    environment:
+      - serve_tiles=True
+      - server_threads=4
+      - tile_urls=https://download.geofabrik.de/europe/germany/niedersachsen-latest.osm.pbf
+
+  vroom:
+    image: ghcr.io/vroom-project/vroom-docker:v1.15.0-rc.1
+    container_name: vroom
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./vroom:/conf
+    environment:
+      - VROOM_ROUTER=valhalla
+    depends_on:
+      - valhalla
+
