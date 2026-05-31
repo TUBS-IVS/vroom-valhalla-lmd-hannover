@@ -1,25 +1,11 @@
-"""End-to-end pipeline orchestrator.
+"""Seven pipeline stages, one ``step_*`` function each.
 
-Ported from ``archive/legacy_2026_05/notebooks/batch_delivery_day_optimization.ipynb``
-(cells 1-17), the modern ML-SA workflow used for the MobilTUM 2026 paper.
-
-The pipeline runs eight stages in order:
-
-    1. step_load_demand_and_hubs   -- HAGRID demand + hub assignment per provider
-    2. step_solve_baseline          -- two-pass VROOM baseline (raw -> traffic)
-    3. step_prepare_optimisation    -- per-provider data structures
-    4. step_train_surrogate         -- 5-seed MLP ensemble from baseline samples
-    5. step_optimize                -- coordinate descent (Express + Batch-Only)
-    6. step_solve_scenarios         -- VROOM resolve for every non-baseline scenario
-    7. step_evaluate                -- KPIs, scenario comparison, CSV/HTML reports
-
-Each stage takes a :class:`PipelineState`, mutates ``state.artefacts``, and
-returns the same state. Stages can be invoked individually from notebooks or
-tests; the full ``run_all`` entry point chains them.
-
-Checkpointing matches the legacy tags (``01_demand``, ``02_baseline``, ...)
-so existing on-disk caches are reused transparently.
+Each stage takes a :class:`PipelineState`, mutates ``state.artefacts``,
+and returns the same state. Stages can be invoked individually from
+notebooks or tests; the orchestrator chains them.
 """
+from __future__ import annotations
+
 from __future__ import annotations
 
 import logging
@@ -59,22 +45,9 @@ from batch_delivery.utils import (
 
 log = get_logger(__name__, level=logging.INFO)
 
-
-# ─── State container ────────────────────────────────────────────────────────
-
-
-@dataclass
-class PipelineState:
-    """Mutable bag of intermediate artefacts produced by the pipeline.
-
-    ``ctx`` is optional so notebooks/tests can still drive individual stages
-    without booting a full :class:`RunContext`. ``run_all`` always creates one.
-    """
-
-    config: PipelineConfig
-    out_dir: Path
-    artefacts: dict[str, Any] = field(default_factory=dict)
-    ctx: RunContext | None = None
+from batch_delivery.pipeline.state import (
+    PipelineState,
+)
 
 
 # ─── Stage 1: demand + hub network ──────────────────────────────────────────
@@ -769,101 +742,4 @@ def step_evaluate(state: PipelineState) -> PipelineState:
     state.artefacts["df_kpi"] = df_kpi
     state.artefacts["df_kpi_provider"] = df_kpi_provider
     state.artefacts["scenario_waiting"] = scenario_waiting
-    return state
-
-
-# ─── Top-level orchestration ───────────────────────────────────────────────
-
-
-PIPELINE_STAGES = [
-    step_load_demand_and_hubs,
-    step_solve_baseline,
-    step_prepare_optimisation,
-    step_train_surrogate,
-    step_optimize,
-    step_solve_scenarios,
-    step_evaluate,
-]
-
-
-def run_all(
-    config_path: str | Path | None = None,
-    *,
-    use_cache: bool = True,
-    parallel_jobs: int | None = None,
-    run_name: str | None = None,
-) -> PipelineState:
-    """Execute every stage in order.
-
-    Parameters
-    ----------
-    config_path : str | Path | None
-        YAML config (defaults to ``conf/default.yaml``).
-    use_cache : bool
-        Forwarded to :class:`RunContext`. ``False`` mimics the legacy
-        ``FORCE_RECOMPUTE=True`` behaviour for the *new* stage cache; legacy
-        pickle checkpoints (``results/checkpoints``) are still controlled
-        by :data:`batch_delivery.config.constants.FORCE_RECOMPUTE`.
-    parallel_jobs : int | None
-        Override ``cfg.parallel_jobs``.
-    run_name : str | None
-        Override ``cfg.run_name``.
-
-    Returns
-    -------
-    PipelineState
-        Always populated; ``state.ctx`` holds the RunContext.
-    """
-    cfg = load_config(config_path)
-    out_dir = Path(cfg.results_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build runtime context (run_id, manifest, JSONL, stage cache).
-    runs_root = out_dir / "runs"
-    cache_root = Path(cfg.cache_dir) if cfg.cache_dir else (out_dir / "cache" / "stages")
-    ctx = RunContext.create(
-        config=cfg,
-        runs_root=runs_root,
-        cache_root=cache_root,
-        run_name=run_name or cfg.run_name,
-        use_cache=use_cache,
-        parallel_jobs=parallel_jobs if parallel_jobs is not None else cfg.parallel_jobs,
-    )
-    state = PipelineState(config=cfg, out_dir=out_dir, ctx=ctx)
-
-    log.info("pipeline.run_all: run_id=%s out_dir=%s providers=%s",
-             ctx.run_id, out_dir, cfg.providers)
-    ctx.log_event("pipeline_start", out_dir=str(out_dir), providers=list(cfg.providers))
-
-    t_total = time.perf_counter()
-    try:
-        for stage in PIPELINE_STAGES:
-            t0 = time.perf_counter()
-            ctx.log_event("stage_start", stage=stage.__name__)
-            state = stage(state)
-            dt = time.perf_counter() - t0
-            log.info("  ✓ %s — %.1fs", stage.__name__, dt)
-            ctx.log_event("stage_done", stage=stage.__name__, duration_s=round(dt, 2))
-    except Exception as exc:  # capture failure in manifest before re-raising
-        ctx.log_event("pipeline_failed", error=type(exc).__name__, message=str(exc))
-        ctx.finalize(kpis={"_failed": True})
-        raise
-
-    total_s = time.perf_counter() - t_total
-    log.info("pipeline.run_all: done in %.1fs", total_s)
-
-    # Pull headline KPIs into the manifest if stage 7 produced them.
-    kpis: dict[str, Any] = {"total_runtime_s": round(total_s, 2)}
-    df_kpi = state.artefacts.get("df_kpi")
-    if df_kpi is not None and "cost_eur" in df_kpi.columns:
-        try:
-            df_reset = df_kpi.reset_index() if df_kpi.index.name else df_kpi
-            label_col = "scenario" if "scenario" in df_reset.columns else df_reset.columns[0]
-            kpis["scenario_cost_eur"] = {
-                str(row[label_col]): float(row["cost_eur"])
-                for _, row in df_reset.iterrows()
-            }
-        except Exception:  # don't fail run on a manifest-format hiccup
-            pass
-    ctx.finalize(kpis=kpis)
     return state
