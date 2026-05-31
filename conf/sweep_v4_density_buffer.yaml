@@ -1,0 +1,44 @@
+# Density-buffer + edge-case sweep — covers BOTH low and high-end corners.
+#
+# Motivation (2026-05-26):
+#   Hub-bundle inference points sit at low-density edge of training.
+#   Wednesday peaks + 3-day-accum can hit upper-end of training.
+#   Density bucketing alone helps coverage but doesn't fully match
+#   hub-bundle topology (summed-area is unique). This sweep is the
+#   PRAGMATIC step: better corner sampling than current pool.
+#
+# Coverage extensions vs v3 sweep:
+#   - scales: [0.05, 0.1, 0.2, 0.3, 0.7, 1.0, 1.3, 1.5, 1.8]
+#     → 4 low-end (density buffer) + standard + 2 high-end (peak surge)
+#   - b2c_scales: [1.0, 1.5] for Christmas-style B2C surge coverage
+#   - More p_keep variation: [1.0, 0.85, 0.7]
+#   - Total enumerable: 7p × 6d × 3k × 80plz × 9scales × 3keeps × 2noise
+#                       × 2 b2c × 3 seeds ~ 1.5M → capped via stratified shuffle
+providers: [DHL, Amazon, DPD, FedEx, GLS, Hermes, UPS]
+base_days: [0, 1, 2, 3, 4, 5]
+agg_ks: [1, 2, 3]
+plzs: null
+
+# 4 low-end + std + 2 high-end
+scales: [0.05, 0.1, 0.2, 0.3, 0.7, 1.0, 1.3, 1.5, 1.8]
+p_keeps: [1.0, 0.85, 0.7]
+noise_sigmas: [0.0, 0.15]
+b2c_scales: [1.0, 1.5]     # Christmas / Black Friday simulation
+b2b_scales: [1.0]
+seeds: [42, 123, 456]
+
+out_dir: results/sweep_v4_density_buffer
+out_csv: training_matrix.csv
+out_parquet: training_matrix.parquet
+
+# Cap higher for edge coverage; stratified shuffle ensures balance
+max_combinations: 2500
+shuffle_seed: 20260526
+
+parallel_jobs: 8
+parallel_backend: threading
+use_cache: false
+progress: true
+
+min_parcels: 1
+min_stops: 2

@@ -1,0 +1,53 @@
+# Targeted augmentation sweep — fills training gaps for the under-covered
+# merged clusters and high-MAPE non-merged clusters identified by
+# scripts/audit_training_pool_gaps.py (2026-05-25).
+#
+# Coverage logic:
+#   - 14 clusters: 10 merged + 4 worst non-merged (by MAPE)
+#   - All 7 providers, all 6 base_days, agg_ks {1, 2, 3}
+#   - Expanded perturbation grid: 5 scales x 3 p_keeps x 2 noise x 3 seeds
+#   - Total combos = 14 x 7 x 6 x 3 x 90 = 158,760 enumerable
+#   - max_combinations caps to ~600 highest-value runs via stratified shuffle
+providers: [DHL, Amazon, DPD, FedEx, GLS, Hermes, UPS]
+base_days: [0, 1, 2, 3, 4, 5]
+agg_ks: [1, 2, 3]
+
+# 10 merged clusters + 4 worst non-merged (cluster_ids from ml_accuracy table)
+plzs:
+  - "30159"  # merged: 30159, 30171, 30173, 30175 (MAPE 59%)
+  - "30163"  # merged: 30163, 30165, 30177, 30179 (MAPE 19%)
+  - "30167"  # merged: 30167, 30451 (MAPE 51%)
+  - "30449"  # merged: 30169, 30449, 30459 (MAPE 31%)
+  - "30519"  # merged
+  - "30559"  # merged: 30559, 30629, 30655, 30659 (MAPE 13%)
+  - "30625"  # merged: 30625, 30627 (MAPE 17%)
+  - "30827"  # merged
+  - "30853"  # merged: 30851, 30853 (MAPE 14%)
+  - "30855"  # merged
+  - "30419"  # non-merged worst-MAPE
+  - "30457"  # non-merged: MAPE 12%, bias -12%
+  - "30890"  # non-merged: MAPE 10%
+  - "30952"  # non-merged: MAPE 11%, bias -11%
+  - "30982"  # non-merged: MAPE 12%, bias -11%
+
+# Expanded perturbation grid for diverse cluster-feature coverage
+scales: [0.6, 0.8, 1.0, 1.2, 1.5]
+p_keeps: [1.0, 0.85, 0.7]
+noise_sigmas: [0.0, 0.25]
+seeds: [42, 123, 456]
+
+out_dir: results/sweep_augment_2026_05_25
+out_csv: training_matrix_augment.csv
+out_parquet: training_matrix_augment.parquet
+
+# Cap at ~600 runs for ~30 min compute
+max_combinations: 600
+shuffle_seed: 20260525
+
+parallel_jobs: 8
+parallel_backend: threading
+use_cache: true
+progress: true
+
+min_parcels: 1
+min_stops: 2

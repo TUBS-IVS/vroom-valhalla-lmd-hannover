@@ -1,0 +1,32 @@
+# Full-coverage sweep with the 2026-05-25 merge-fix patches applied
+# (merge_small_plz now propagates to daily_gdfs; prepare_plz_data sums
+# cluster member areas; assign_plz_to_hubs uses cluster-dissolved centroids).
+#
+# All training rows for cluster representatives (30159, 30163, etc.) now
+# reflect the CLUSTER-aggregated demand topology that production inference uses.
+# Schema unchanged so build_combo_features still produces 44 features.
+providers: [DHL, Amazon, DPD, FedEx, GLS, Hermes, UPS]
+base_days: [0, 1, 2, 3, 4, 5]
+agg_ks: [1, 2, 3]
+plzs: null   # auto-resolve to all post-merge cluster_ids
+
+scales: [0.7, 1.0, 1.3]
+p_keeps: [1.0, 0.9]
+noise_sigmas: [0.0, 0.2]
+seeds: [42, 123, 456]
+
+out_dir: results/sweep_v3_mergefix
+out_csv: training_matrix.csv
+out_parquet: training_matrix.parquet
+
+# Run a substantial but bounded sample size (~3000 combos)
+max_combinations: 3000
+shuffle_seed: 20260525
+
+parallel_jobs: 8
+parallel_backend: threading
+use_cache: false   # IMPORTANT: cache must be invalidated — old cache used un-merged topology
+progress: true
+
+min_parcels: 1
+min_stops: 2

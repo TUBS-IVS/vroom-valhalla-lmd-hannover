@@ -1,0 +1,29 @@
+# Default sweep configuration — small grid for fast smoke tests.
+#
+# Real training runs override this via `batch-delivery sweep --config ...`
+# A full grid (7 providers × 6 days × 3 K × ~50 PLZ × 3 scales × 2 p_keep
+# × 2 noise × 3 seeds) ≈ 75k combinations — adapt the lists below.
+
+providers: [DHL]
+base_days: [0, 1, 2, 3, 4, 5]
+agg_ks: [1, 2, 3]
+
+# null = all PLZs in the demand layer
+plzs: null
+
+scales:       [0.7, 1.0, 1.3]
+p_keeps:      [1.0, 0.9]
+noise_sigmas: [0.0, 0.2]
+seeds:        [42, 123, 456]
+
+out_dir: results/sweep
+out_csv: training_matrix.csv
+out_parquet: training_matrix.parquet
+
+max_combinations: null
+parallel_jobs: 1
+use_cache: true
+progress: true
+
+min_parcels: 1
+min_stops: 2

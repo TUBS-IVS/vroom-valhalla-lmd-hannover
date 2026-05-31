@@ -1,18 +1,105 @@
-valhalla/custom_files/*
-!valhalla/custom_files/.gitkeep
+# =============================================================================
+# .gitignore — batch-delivery / EWGT 2026 paper repository
+# =============================================================================
+# Strategy: track code, small reference artifacts, paper-figure outputs.
+# Ignore everything that can be regenerated from code + data, and everything
+# that is bulk data. Large reproducible artifacts are fetched via the data
+# download script (see docs/REPRODUCING_PAPER.md).
+# =============================================================================
 
+# ─── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+pip-wheel-metadata/
+
+# ─── Bulk inputs (fetched via scripts/data/download_inputs.py) ───────────────
+# HAGRID demand shapefiles, PLZ geodata, hub CSVs are ~400 MB.
+# See docs/REPRODUCING_PAPER.md for the canonical download source.
+data/
+!data/README.md
+!data/MANIFEST.md
+
+# ─── Bulk outputs (regenerable via the pipeline) ─────────────────────────────
+# results/ contains ~6 GB of optimization runs, caches, checkpoints.
+# Only the canonical paper outputs (paper_final_*/, EWGT_Results/) are tracked
+# explicitly via the un-ignores below — added in Phase 2 of the refactor.
+results/
+!results/README.md
+!results/CANONICAL.md
+
+# Large binary artifacts that can always be regenerated
+*.pkl
+*.pickle
+*.joblib
+*.parquet
+*.feather
+*.npz
+*.npy
+*.h5
+*.hdf5
+
+# Large geospatial binaries (shapefile bundles, tiles)
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.sbn
+*.sbx
 *.osm.pbf
+*.osm
+*.mbtiles
+
+# Compressed archives — track sources, not bundles
 *.tar
 *.tar.gz
+*.tgz
 *.zip
+*.7z
+*.rar
+
+# Elevation tiles
 *.hgt
+
+# ─── Routing service runtime ─────────────────────────────────────────────────
+valhalla/custom_files/*
+!valhalla/custom_files/.gitkeep
+vroom/*.json
+vroom/access.log
+
+# ─── Hash registry (regenerated on demand) ───────────────────────────────────
 .file_hashes.txt
 
-outputs/
-results/
-logs/
+# ─── Frozen legacy snapshot (already preserved offline) ──────────────────────
+archive/
 
-.DS_Store
-Thumbs.db
+# ─── Local agent / IDE state (not for upstream) ──────────────────────────────
+.claude/
+memory/
 .vscode/
 .idea/
+.cursor/
+.DS_Store
+Thumbs.db
+
+# ─── Generic runtime ─────────────────────────────────────────────────────────
+outputs/
+logs/
+tmp/
+*.log
+!vroom/access.log.example
+
+# ─── Notebook checkpoints ────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*-checkpoint.ipynb

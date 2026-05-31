@@ -2,6 +2,7 @@ services:
   valhalla:
     image: ghcr.io/valhalla/valhalla-scripted:latest
     container_name: valhalla
+    restart: unless-stopped
     ports:
       - "8002:8002"
     volumes:
@@ -10,16 +11,28 @@ services:
       - serve_tiles=True
       - server_threads=4
       - tile_urls=https://download.geofabrik.de/europe/germany/niedersachsen-latest.osm.pbf
+    mem_limit: 24g
+    memswap_limit: 24g
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8002/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
 
   vroom:
     image: ghcr.io/vroom-project/vroom-docker:v1.15.0-rc.1
     container_name: vroom
+    restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
       - ./vroom:/conf
     environment:
       - VROOM_ROUTER=valhalla
+    mem_limit: 8g
+    memswap_limit: 8g
     depends_on:
-      - valhalla
+      valhalla:
+        condition: service_healthy
 
