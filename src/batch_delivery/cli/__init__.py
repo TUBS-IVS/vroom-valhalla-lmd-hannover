@@ -7,6 +7,7 @@ commands are organised by topic:
 
 * :mod:`batch_delivery.cli.info`      — version, schedules, config show/validate
 * :mod:`batch_delivery.cli.run`       — run the full pipeline
+* :mod:`batch_delivery.cli.paper`     — reproduce EWGT 2026 paper outputs
 * :mod:`batch_delivery.cli.sweep`     — parameter sweep
 * :mod:`batch_delivery.cli.surrogate` — train / tune / validate / learn-loop
 * :mod:`batch_delivery.cli.export`    — export optimisation results, build holdout
@@ -27,6 +28,7 @@ from batch_delivery.cli import (  # noqa: F401  (import-for-side-effect)
     export,
     info,
     oracle,
+    paper,
     run,
     surrogate,
     sweep,
