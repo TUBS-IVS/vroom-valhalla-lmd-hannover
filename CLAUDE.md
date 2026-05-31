@@ -6,8 +6,7 @@ agents. Read it before making changes.
 ## Project Identity
 
 This repository contains `batch-delivery`, the companion code for Bienzeisler
-et al., "A Machine Learning Based Surrogate Optimization Framework for Time
-Based Consolidation in Last Mile Parcel Delivery", MobilTUM 2026.
+et al., "Machine Learning Surrogate Optimization Framework for Time-ased Consolidation in Last Mile Parcel Delivery", EWGT 2026
 
 The project is a scientific transportation-research pipeline for the Region
 Hannover last-mile parcel-delivery setting. It studies time-based delivery
