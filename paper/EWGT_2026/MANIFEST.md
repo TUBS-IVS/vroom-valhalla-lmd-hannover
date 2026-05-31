@@ -9,7 +9,7 @@ Frozen copy of the **submitted** EWGT 2026 paper:
 > accepted.**
 
 This folder is the canonical submission record. The TeX source compiles
-to the preprint PDF (`TRPRO_EWGT2026_SUBMITTED.pdf`) using the Elsevier
+to the preprint PDF (`EWGT26_Full_Paper_LB_preprint.pdf`) using the Elsevier
 `elsarticle` class. The PDF is the **submitted manuscript**, not the
 final typeset version (which Elsevier produces during production after
 acceptance).
@@ -18,8 +18,8 @@ acceptance).
 
 ```
 paper/EWGT_2026/
-├── TRPRO_EWGT2026.tex            ← main paper source
-├── TRPRO_EWGT2026_SUBMITTED.pdf            ← compiled preprint (reference)
+├── tbc_preprint_main.tex          ← main paper source
+├── EWGT26_Full_Paper_LB_preprint.pdf            ← compiled preprint (reference)
 ├── FullPaperLMDPCLiteratur.bib   ← bibliography
 ├── ABSTRACT.md                   ← submitted abstract (markdown form)
 ├── MANIFEST.md                   ← this file
@@ -54,13 +54,13 @@ it's redundant once the contents are unpacked into the tracked layout.
 cd paper/EWGT_2026
 
 # Either via pdflatex directly:
-pdflatex TRPRO_EWGT2026
-bibtex   TRPRO_EWGT2026
-pdflatex TRPRO_EWGT2026
-pdflatex TRPRO_EWGT2026
+pdflatex tbc_preprint_main
+bibtex   tbc_preprint_main
+pdflatex tbc_preprint_main
+pdflatex tbc_preprint_main
 
 # Or via latexmk (cleaner — handles bib + cross-refs automatically):
-latexmk -pdf TRPRO_EWGT2026.tex
+latexmk -pdf tbc_preprint_main.tex
 ```
 
 The TeX file's `\input@path` is set so it finds the class files in
