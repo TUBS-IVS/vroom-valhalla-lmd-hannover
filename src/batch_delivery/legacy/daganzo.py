@@ -15,18 +15,25 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-from scipy.optimize import differential_evolution, minimize as sp_minimize
+from scipy.optimize import differential_evolution
+from scipy.optimize import minimize as sp_minimize
 
 from batch_delivery.config.constants import (
-    N_DAYS, WEEKDAYS,
-    VEHICLE_CAPACITY, FIXED_COST_EUR, COST_PER_KM_EUR, COST_SCALE,
-    SERVICE_TIME_PER_PARCEL, SERVICE_TIME_CAP,
-    BHH_CONSTANT, AVAILABLE_WORK_S, LINE_HAUL_SPEED_KMH,
-    FAST_SHARE_B2C, FAST_SHARE_B2B,
+    AVAILABLE_WORK_S,
+    BHH_CONSTANT,
+    COST_PER_KM_EUR,
+    COST_SCALE,
+    FAST_SHARE_B2B,
+    FAST_SHARE_B2C,
+    FIXED_COST_EUR,
+    LINE_HAUL_SPEED_KMH,
+    N_DAYS,
+    SERVICE_TIME_CAP,
+    SERVICE_TIME_PER_PARCEL,
+    VEHICLE_CAPACITY,
 )
 from batch_delivery.io.demand import compute_shifted_demand_plz
 from batch_delivery.utils import log
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Textbook BHH proxy (v0)
@@ -327,7 +334,6 @@ class CalibratedDaganzo:
             Calibration dataset with predictions.
         """
         self.use_jabali = use_jabali
-        import geopandas  # noqa: F811 — ensure available
 
         # ── Build calibration dataset ────────────────────────────────────
         cal_rows = []
@@ -517,7 +523,6 @@ class CalibratedDaganzo:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        from matplotlib.ticker import FuncFormatter
 
         if output_dir is None:
             from batch_delivery.config.constants import RESULTS_DIR

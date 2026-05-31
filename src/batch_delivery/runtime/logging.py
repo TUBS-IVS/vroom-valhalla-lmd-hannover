@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _JSONL_HANDLERS: dict[Path, logging.Handler] = {}
@@ -20,9 +20,9 @@ _JSONL_HANDLERS: dict[Path, logging.Handler] = {}
 class JsonlFormatter(logging.Formatter):
     """Emit each log record as a single JSON line."""
 
-    def format(self, record: logging.LogRecord) -> str:  # noqa: D401
+    def format(self, record: logging.LogRecord) -> str:
         payload = {
-            "ts": datetime.now(tz=timezone.utc).isoformat(),
+            "ts": datetime.now(tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "msg": record.getMessage(),

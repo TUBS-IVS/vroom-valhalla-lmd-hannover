@@ -73,7 +73,7 @@ class LGBLogTSurrogate:
                           "kind": "LGBLogTSurrogate"}, f)
 
     @classmethod
-    def load(cls, path: str | Path) -> "LGBLogTSurrogate":
+    def load(cls, path: str | Path) -> LGBLogTSurrogate:
         """Load from either the train_production_lgb.py pickle (dict format)
         or from a save()-produced pickle. Both are supported."""
         with open(path, "rb") as f:

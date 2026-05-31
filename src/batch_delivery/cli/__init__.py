@@ -20,8 +20,6 @@ continues to work because ``app`` is re-exported here.
 """
 from __future__ import annotations
 
-from batch_delivery.cli._app import app, config_app
-
 # Trigger registration of every command via its module import. Order does
 # not matter functionally — alphabetical for readability.
 from batch_delivery.cli import (  # noqa: F401  (import-for-side-effect)
@@ -33,5 +31,6 @@ from batch_delivery.cli import (  # noqa: F401  (import-for-side-effect)
     surrogate,
     sweep,
 )
+from batch_delivery.cli._app import app, config_app
 
 __all__ = ["app", "config_app"]

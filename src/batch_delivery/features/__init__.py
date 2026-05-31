@@ -6,11 +6,11 @@ Bulk implementation in :mod:`batch_delivery.features.core`.
 from __future__ import annotations
 
 from batch_delivery.features.core import (  # noqa: F401
+    _PROVIDER_IDX,
     ALL_COLS,
     TIER1_COLS,
     TIER2_COLS,
     TIER3_COLS,
-    _PROVIDER_IDX,
     build_feature_matrix,
     compute_all_features,
     compute_tier1_features,
@@ -19,13 +19,13 @@ from batch_delivery.features.core import (  # noqa: F401
 )
 
 __all__ = [
+    "ALL_COLS",
     "TIER1_COLS",
     "TIER2_COLS",
     "TIER3_COLS",
-    "ALL_COLS",
+    "build_feature_matrix",
+    "compute_all_features",
     "compute_tier1_features",
     "compute_tier2_features",
     "compute_tier3_features",
-    "compute_all_features",
-    "build_feature_matrix",
 ]

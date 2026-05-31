@@ -1,15 +1,9 @@
 """``batch-delivery oracle-loop`` — variance-driven sample-gen loop."""
 from __future__ import annotations
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import typer
-import yaml
-
-from batch_delivery import __version__
-from batch_delivery.config import load_config
 
 from batch_delivery.cli._app import app, config_app  # noqa: F401
 
@@ -149,14 +143,20 @@ def oracle_loop_cmd(
     snapshot is saved as ``ml_cost_predictor_iter{NN}.pkl``.
     """
     import csv
+    import datetime as _dt
     import json
     import sys
-    import datetime as _dt
+
     from batch_delivery.runtime import RunContext
     from batch_delivery.surrogate import (
-        MLCostPredictor, append_to_training, compute_feature_importance,
-        load_training_data, split_extreme_holdout, summarize_training_data,
-        train_full_model, validate_against_vroom,
+        MLCostPredictor,
+        append_to_training,
+        compute_feature_importance,
+        load_training_data,
+        split_extreme_holdout,
+        summarize_training_data,
+        train_full_model,
+        validate_against_vroom,
     )
     from batch_delivery.sweep import load_sweep_yaml, run_sweep
 
@@ -215,7 +215,7 @@ def oracle_loop_cmd(
     # weekly demand distribution. PLZ rotation is handled implicitly via
     # shuffle_seed + samples_per_iter (each iter draws a fresh random subset
     # over the full PLZ pool).
-    from batch_delivery.config.constants import PROVIDERS, N_DAYS
+    from batch_delivery.config.constants import N_DAYS, PROVIDERS
     full_providers = list(PROVIDERS) if all_providers else list(base_cfg.providers)
     full_base_days = list(range(N_DAYS)) if all_days else list(base_cfg.base_days)
     if plzs_per_iter and plzs_per_iter > 0 and base_cfg.plzs is not None:
@@ -350,7 +350,7 @@ def oracle_loop_cmd(
         )
         try:
             df_val = run_sweep(cfg, ctx=ctx)
-            ctx.finalize(kpis={"n_rows": int(len(df_val)), "iteration": it})
+            ctx.finalize(kpis={"n_rows": len(df_val), "iteration": it})
         except Exception:
             ctx.finalize(kpis={"_failed": True, "iteration": it})
             raise
@@ -593,7 +593,7 @@ def oracle_loop_cmd(
             "model": {
                 "arch": list(arch_tuple),
                 "alpha": alpha,
-                "n_pipelines": int(len(getattr(model, "pipelines", []))),
+                "n_pipelines": len(getattr(model, "pipelines", [])),
                 "saved_to": str(model_path),
             },
             "validation": val_summary,
@@ -620,6 +620,7 @@ def oracle_loop_cmd(
 
         # ── plot learning curve so far ────────────────────────────────────
         try:
+            from batch_delivery.cli.surrogate import _plot_oracle_loop_history
             _plot_oracle_loop_history(history_csv, out_dir / "learning_curve.png")
         except Exception as exc:
             typer.echo(f"  (plot skipped: {exc})")
@@ -643,6 +644,7 @@ def oracle_loop_cmd(
         try:
             import numpy as _np
             import pandas as _pd
+
             from batch_delivery.features import ALL_COLS as _ALL
             df_val_full = _pd.read_csv(val_csv)
             cur_pred = model.predict(df_val_full[_ALL])
@@ -733,6 +735,7 @@ def _build_final_report(
       frozen test set, history CSV, learning curve PNG).
     """
     import json
+
     import pandas as pd
 
     iter_files = sorted(out_dir.glob("iter*/iteration_summary.json"))
@@ -798,6 +801,7 @@ def _compute_hot_regions(
     gain per oracle call.
     """
     import pandas as pd
+
     from batch_delivery.features import ALL_COLS as _ALL
 
     df = pd.read_csv(training_csv)

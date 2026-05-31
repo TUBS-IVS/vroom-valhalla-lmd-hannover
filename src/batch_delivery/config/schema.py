@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from batch_delivery.config import constants as C
 
-
 # ─── Sub-schemas ────────────────────────────────────────────────────────────
 
 
@@ -46,7 +45,7 @@ class RoutingConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _windows_monotonic(self) -> "RoutingConfig":
+    def _windows_monotonic(self) -> RoutingConfig:
         if self.delivery_window[0] >= self.delivery_window[1]:
             raise ValueError("delivery_window must be strictly increasing")
         if self.vehicle_time_window[0] >= self.vehicle_time_window[1]:

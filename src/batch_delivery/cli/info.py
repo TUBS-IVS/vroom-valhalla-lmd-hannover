@@ -1,19 +1,14 @@
 """Basic info commands: version, schedules, config show/validate."""
 from __future__ import annotations
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import typer
 import yaml
 
 from batch_delivery import __version__
+from batch_delivery.cli._app import app, config_app
 from batch_delivery.config import load_config
-
-from batch_delivery.cli._app import app, config_app  # noqa: F401
-
-
 
 
 @app.command()

@@ -11,36 +11,22 @@ because CD outperforms SA on the (P, theta) grid; the SA variants are
 kept for ablation and reproducibility.
 """
 
-import itertools
 import math
 import time
 
 import numpy as np
-import pandas as pd
 from tqdm.auto import tqdm
 
 from batch_delivery.config.constants import (
-    N_DAYS, WEEKDAYS, MAX_HOLDING_DAYS,
-    VEHICLE_CAPACITY, FIXED_COST_EUR, COST_PER_KM_EUR,
-    SERVICE_TIME_PER_PARCEL, SERVICE_TIME_CAP,
-    AVAILABLE_WORK_S, LINE_HAUL_SPEED_KMH,
-    FAST_SHARE_B2C, FAST_SHARE_B2B,
-    SA_ITERATIONS, SA_T_INIT, SA_ALPHA, SA_SEED,
-    FLEET_BALANCE_MAX_SWAPS,
-    CARRIER_DAYS, CARRIER_FIXED_INDICES,
+    N_DAYS,
+    SA_ALPHA,
+    SA_ITERATIONS,
+    SA_SEED,
+    SA_T_INIT,
 )
-from batch_delivery.config.constants import COST_SCALE
-from batch_delivery.legacy.daganzo import predict_vec, CalibratedDaganzo
-from batch_delivery.io.demand import get_source_days, compute_shifted_demand_plz
-from batch_delivery.features import (
-    compute_tier2_features, ALL_COLS, TIER2_COLS, _PROVIDER_IDX,
-)
-from batch_delivery.utils import log
-
+from batch_delivery.legacy.daganzo import CalibratedDaganzo
 from batch_delivery.optimization.costs import _hub_express_day, _hub_express_day_ml
-
-
-
+from batch_delivery.utils import log
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 1: SA — pure cost optimisation (no fleet penalty)
@@ -641,6 +627,10 @@ def sa_optimize_ml(
     fixed_assignment: np.ndarray | None = None,
 ) -> dict:
     """Legacy wrapper — delegates to coordinate descent (optimize_cd_ml)."""
+    # Lazy import to avoid eagerly pulling coordinate_descent at module load
+    # (it imports back from this module's siblings for cost helpers).
+    from batch_delivery.optimization.coordinate_descent import optimize_cd_ml
+
     return optimize_cd_ml(
         plz_keys=plz_keys,
         plz_hub_arr=plz_hub_arr,

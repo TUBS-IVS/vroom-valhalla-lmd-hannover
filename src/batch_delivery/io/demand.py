@@ -9,8 +9,14 @@ import pandas as pd
 from shapely import wkt
 
 from batch_delivery.config.constants import (
-    DATA_DIR, N_DAYS, WEEKDAYS, OUTLIER_THRESHOLD, MIN_PLZ_JOBS_MERGE,
-    FAST_SHARE_B2C, FAST_SHARE_B2B, provider_to_demand_prefix,
+    DATA_DIR,
+    FAST_SHARE_B2B,
+    FAST_SHARE_B2C,
+    MIN_PLZ_JOBS_MERGE,
+    N_DAYS,
+    OUTLIER_THRESHOLD,
+    WEEKDAYS,
+    provider_to_demand_prefix,
 )
 from batch_delivery.utils import log
 

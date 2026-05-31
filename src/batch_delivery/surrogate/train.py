@@ -27,7 +27,6 @@ from batch_delivery.surrogate.core import (
 )
 from batch_delivery.utils import log
 
-
 TARGET_COL = "actual_cost_eur"
 
 
@@ -193,7 +192,7 @@ def cross_validate(
         "cv_kind": cv_kind,
         "k": k,
         "n_rows": n,
-        "n_groups": int(len(np.unique(data.groups))),
+        "n_groups": len(np.unique(data.groups)),
         "n_baseline": int(data.is_baseline.sum()),
         "fold_metrics": fold_rows,
         "overall": overall,

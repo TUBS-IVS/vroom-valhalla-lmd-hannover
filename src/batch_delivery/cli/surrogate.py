@@ -1,15 +1,9 @@
 """Surrogate-model commands: train/tune/validate/learn-loop."""
 from __future__ import annotations
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import typer
-import yaml
-
-from batch_delivery import __version__
-from batch_delivery.config import load_config
 
 from batch_delivery.cli._app import app, config_app  # noqa: F401
 
@@ -44,9 +38,12 @@ def train_surrogate(
 ) -> None:
     """Train MLCostPredictor on a sweep CSV with k-fold CV reporting."""
     import json
+
     from batch_delivery.surrogate import (
-        cross_validate, load_training_data, train_full_model,
         append_iteration_row,
+        cross_validate,
+        load_training_data,
+        train_full_model,
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -146,11 +143,12 @@ def learn_loop(
 
     Watch the history CSV's MAE / R² columns to see the learning curve.
     """
-    import json
     from batch_delivery.runtime import RunContext
     from batch_delivery.surrogate import (
-        append_iteration_row, cross_validate,
-        load_training_data, train_full_model,
+        append_iteration_row,
+        cross_validate,
+        load_training_data,
+        train_full_model,
     )
     from batch_delivery.sweep import load_sweep_yaml, run_sweep
 
@@ -188,7 +186,7 @@ def learn_loop(
         )
         try:
             df_sweep = run_sweep(cfg, ctx=ctx)
-            ctx.finalize(kpis={"n_rows": int(len(df_sweep)), "iteration": it})
+            ctx.finalize(kpis={"n_rows": len(df_sweep), "iteration": it})
         except Exception:
             ctx.finalize(kpis={"_failed": True, "iteration": it})
             raise
@@ -264,7 +262,9 @@ def plot_learning_curve_cmd(
 ) -> None:
     """Render learning-curve / fold-detail / pred-vs-actual PNGs."""
     from batch_delivery.surrogate.plots import (
-        plot_fold_detail, plot_learning_curve, plot_pred_vs_actual,
+        plot_fold_detail,
+        plot_learning_curve,
+        plot_pred_vs_actual,
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -329,7 +329,9 @@ def tune_surrogate_cmd(
     the winner is then refit with the full :data:`ENSEMBLE_SEEDS` ensemble.
     """
     from batch_delivery.surrogate import (
-        ENSEMBLE_SEEDS, MLCostPredictor, load_training_data, train_full_model,
+        ENSEMBLE_SEEDS,
+        load_training_data,
+        train_full_model,
         tune_hyperparameters,
     )
 
@@ -414,7 +416,9 @@ def validate_surrogate_cmd(
     surrogate-with-oracle-correction loop (trust-region style).
     """
     from batch_delivery.surrogate import (
-        MLCostPredictor, append_to_training, validate_against_vroom,
+        MLCostPredictor,
+        append_to_training,
+        validate_against_vroom,
     )
 
     if not model_path.exists():

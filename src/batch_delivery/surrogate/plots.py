@@ -15,8 +15,8 @@ requested so that pytest unit runs stay matplotlib-free.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import matplotlib
 
@@ -26,7 +26,6 @@ import numpy as np
 import pandas as pd
 
 from batch_delivery.utils import log
-
 
 # ---------------------------------------------------------------------------
 # Learning curve
@@ -169,7 +168,8 @@ def plot_pred_vs_actual(
     Use a small ``arch`` for quick previews.
     """
     from batch_delivery.surrogate.train import (
-        cross_validate, load_training_data,
+        cross_validate,
+        load_training_data,
     )
 
     data_csv = Path(data_csv)

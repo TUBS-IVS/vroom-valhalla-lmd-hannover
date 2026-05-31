@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -19,7 +18,6 @@ from sklearn.preprocessing import StandardScaler
 
 from batch_delivery.features import ALL_COLS
 from batch_delivery.utils import log
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Combo feature recipe (must match calibration notebook §10k)
@@ -199,10 +197,10 @@ class MLCostPredictor:
                  path.name, path.stat().st_size / 1_048_576)
 
     @classmethod
-    def load(cls, path: str | Path) -> "MLCostPredictor":
+    def load(cls, path: str | Path) -> MLCostPredictor:
         """Load from pickle."""
         path = Path(path)
-        data = pickle.loads(path.read_bytes())  # noqa: S301 — trusted local
+        data = pickle.loads(path.read_bytes())
         obj = cls(
             pipelines=data["pipelines"],
             combo_cols=data["combo_cols"],
@@ -222,7 +220,7 @@ class MLCostPredictor:
         alpha: float = 0.0001,
         arch: tuple[int, ...] = (256, 128, 64, 32),
         seeds: list[int] | None = None,
-    ) -> "MLCostPredictor":
+    ) -> MLCostPredictor:
         """Train a new ensemble on full data.
 
         Parameters

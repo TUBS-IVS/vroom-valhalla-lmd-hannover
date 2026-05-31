@@ -86,7 +86,7 @@ class StageCache:
         if not p.exists():
             return None
         try:
-            data = pickle.loads(p.read_bytes())  # noqa: S301 — local trusted files
+            data = pickle.loads(p.read_bytes())
         except Exception as exc:  # corrupt cache → recompute
             log.warning("StageCache: failed to load %s (%s); will recompute", p, exc)
             return None

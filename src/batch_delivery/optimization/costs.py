@@ -13,36 +13,27 @@ share the same vectorised demand/stops accumulator:
 helper invoked when the legacy path is exercised.
 """
 
-import itertools
-import math
-import time
 
 import numpy as np
 import pandas as pd
-from tqdm.auto import tqdm
 
 from batch_delivery.config.constants import (
-    N_DAYS, WEEKDAYS, MAX_HOLDING_DAYS,
-    VEHICLE_CAPACITY, FIXED_COST_EUR, COST_PER_KM_EUR,
-    SERVICE_TIME_PER_PARCEL, SERVICE_TIME_CAP,
-    AVAILABLE_WORK_S, LINE_HAUL_SPEED_KMH,
-    FAST_SHARE_B2C, FAST_SHARE_B2B,
-    SA_ITERATIONS, SA_T_INIT, SA_ALPHA, SA_SEED,
-    FLEET_BALANCE_MAX_SWAPS,
-    CARRIER_DAYS, CARRIER_FIXED_INDICES,
+    COST_SCALE,
+    FAST_SHARE_B2B,
+    FAST_SHARE_B2C,
+    N_DAYS,
+    VEHICLE_CAPACITY,
 )
-from batch_delivery.config.constants import COST_SCALE
-from batch_delivery.legacy.daganzo import predict_vec, CalibratedDaganzo
-from batch_delivery.io.demand import get_source_days, compute_shifted_demand_plz
 from batch_delivery.features import (
-    compute_tier2_features, ALL_COLS, TIER2_COLS, _PROVIDER_IDX,
+    _PROVIDER_IDX,
+    ALL_COLS,
+    TIER2_COLS,
+    compute_tier2_features,
 )
-from batch_delivery.utils import log
-
+from batch_delivery.io.demand import compute_shifted_demand_plz, get_source_days
+from batch_delivery.legacy.daganzo import CalibratedDaganzo, predict_vec
 from batch_delivery.optimization.schedules import _compute_wait_mx
-
-
-
+from batch_delivery.utils import log
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Cost / vehicle matrix construction
@@ -532,7 +523,6 @@ def build_cost_matrices_ml(
     hub_coords_by_plz : dict
         ``{plz_code: (hub_lon, hub_lat)}`` in WGS-84.
     """
-    from batch_delivery.features import compute_all_features, ALL_COLS
 
     n_plz = len(plz_keys)
     n_sched = len(schedules)
@@ -925,8 +915,9 @@ def _hub_express_day_ml(
     MLP Ensemble.  Results are cached by ``(hub, day, contributing_plz)``.
     """
     from batch_delivery.features import (
-        compute_tier1_features, compute_tier2_features,
-        compute_tier3_features, ALL_COLS,
+        compute_tier1_features,
+        compute_tier2_features,
+        compute_tier3_features,
     )
 
     h_ps = hub_plz_list[hi]
@@ -1003,7 +994,7 @@ def _hub_express_day_ml(
         t2 = compute_tier2_features(merged_lon, merged_lat, hlon, hlat, merged_psd)
     else:
         from batch_delivery.features import TIER2_COLS
-        t2 = {c: 0.0 for c in TIER2_COLS}
+        t2 = dict.fromkeys(TIER2_COLS, 0.0)
     t3 = compute_tier3_features(
         merged_psd if len(merged_psd) > 0 else np.array([tot_dem]),
         int(tot_dem * b2c_share_w), int(tot_dem),

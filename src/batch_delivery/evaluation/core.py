@@ -1,18 +1,22 @@
 """KPI computation, scenario comparison tables, and result export."""
 
-import math
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from batch_delivery.config.constants import (
-    COST_SCALE, VEHICLE_CAPACITY, COST_PER_KM_EUR, N_DAYS, WEEKDAYS,
-    SC_BASELINE, SC_FIXED_EXPRESS, SC_SA_EXPRESS, SC_FIXED_BATCH, SC_SA_BATCH,
+    COST_SCALE,
+    N_DAYS,
+    SC_BASELINE,
+    SC_FIXED_BATCH,
+    SC_FIXED_EXPRESS,
+    SC_SA_BATCH,
+    SC_SA_EXPRESS,
+    WEEKDAYS,
 )
 from batch_delivery.utils import log
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-scenario KPI aggregation

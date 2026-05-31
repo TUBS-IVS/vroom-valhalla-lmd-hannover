@@ -27,7 +27,6 @@ from sklearn.preprocessing import StandardScaler
 from batch_delivery.surrogate.train import TrainingData, _metrics
 from batch_delivery.utils import log
 
-
 # ---------------------------------------------------------------------------
 # Search-space helpers
 # ---------------------------------------------------------------------------

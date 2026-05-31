@@ -10,11 +10,9 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import math
 import re
-import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -26,18 +24,17 @@ import requests as http_requests
 from tqdm.auto import tqdm
 
 from batch_delivery.config.constants import (
-    N_DAYS, WEEKDAYS,
-    VEHICLE_CAPACITY, FIXED_COST_CENTS, COST_PER_KM_CENTS, COST_PER_HOUR_CENTS,
-    COST_SCALE, SERVICE_TIME_PER_PARCEL, SERVICE_TIME_CAP, PROFILE,
-    VROOM_API_URL, DELIVERY_WINDOW, VEHICLE_TIME_WINDOW,
-    BREAK_DURATION, BREAK_WINDOW,
-    VEH_START_SPREAD_S, VEH_START_LATEST, VEH_START_SEED,
-    LARGE_HUB_TYPES, SMALL_HUB_DELAY,
-    MAX_VEHICLES_PER_REQUEST, SOLVE_WORKERS, HTTP_TIMEOUT,
-    HTTP_CONNECT_TIMEOUT, PER_JOB_BUDGET_S,
-    MAX_RETRIES, CONNECTION_RETRIES, MAX_UNASSIGNED_RETRIES,
-    SPEED_FACTOR, RESULTS_DIR,
-    MAX_JOBS_PER_REQUEST, AVAILABLE_WORK_S,
+    CONNECTION_RETRIES,
+    HTTP_CONNECT_TIMEOUT,
+    HTTP_TIMEOUT,
+    MAX_RETRIES,
+    MAX_UNASSIGNED_RETRIES,
+    N_DAYS,
+    PER_JOB_BUDGET_S,
+    SOLVE_WORKERS,
+    VEHICLE_CAPACITY,
+    VROOM_API_URL,
+    WEEKDAYS,
 )
 from batch_delivery.utils import log
 
@@ -51,25 +48,18 @@ _CLUSTER_SEP = "__c"
 _kmeans_cache: dict[tuple[int, int], np.ndarray] = {}
 
 from batch_delivery.routing.cache import (
-    _request_hash,
-    _cache_path,
     load_cached_solution,
     save_cached_solution,
 )
 from batch_delivery.routing.client import (
-    _health_check,
+    _MAX_RESTART_ATTEMPTS,
     _check_valhalla_memory,
-    _restart_vroom,
     _get_container_mem_mb,
-    _restart_container,
+    _health_check,
+    _restart_vroom,
 )
 from batch_delivery.routing.requests import (
-    build_vroom_jobs,
-    build_vroom_vehicles,
     _parse_unfound_loc,
-    _split_points_kmeans,
-    compute_baseline_job_caps,
-    build_scenario_requests,
 )
 
 

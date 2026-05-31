@@ -11,44 +11,43 @@ submodule (``cache``, ``client``, ``requests``, ``solver``).
 """
 from __future__ import annotations
 
+# ruff: noqa: F401  (this file is a re-export shim — every name is "unused" here)
+
 from batch_delivery.routing.cache import (
-    _request_hash,
     _cache_path,
+    _request_hash,
     load_cached_solution,
     save_cached_solution,
 )
-
 from batch_delivery.routing.client import (
-    _health_check,
+    _check_valhalla_memory,
     _get_container_mem_mb,
+    _health_check,
     _restart_container,
     _restart_vroom,
-    _check_valhalla_memory,
 )
-
 from batch_delivery.routing.requests import (
-    compute_baseline_job_caps,
+    _parse_unfound_loc,
     _split_points_kmeans,
+    build_scenario_requests,
     build_vroom_jobs,
     build_vroom_vehicles,
-    _parse_unfound_loc,
-    build_scenario_requests,
+    compute_baseline_job_caps,
 )
-
 from batch_delivery.routing.solver import (
-    solve_single_plz,
-    solve_scenario,
     parse_routes,
+    solve_scenario,
+    solve_single_plz,
 )
 
 __all__ = [
-    "load_cached_solution",
-    "save_cached_solution",
-    "compute_baseline_job_caps",
+    "build_scenario_requests",
     "build_vroom_jobs",
     "build_vroom_vehicles",
-    "build_scenario_requests",
-    "solve_single_plz",
-    "solve_scenario",
+    "compute_baseline_job_caps",
+    "load_cached_solution",
     "parse_routes",
+    "save_cached_solution",
+    "solve_scenario",
+    "solve_single_plz",
 ]

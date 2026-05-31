@@ -12,36 +12,17 @@ Two-stage balancing:
 helpers used by both stages.
 """
 
-import itertools
-import math
-import time
 
 import numpy as np
-import pandas as pd
 from tqdm.auto import tqdm
 
 from batch_delivery.config.constants import (
-    N_DAYS, WEEKDAYS, MAX_HOLDING_DAYS,
-    VEHICLE_CAPACITY, FIXED_COST_EUR, COST_PER_KM_EUR,
-    SERVICE_TIME_PER_PARCEL, SERVICE_TIME_CAP,
-    AVAILABLE_WORK_S, LINE_HAUL_SPEED_KMH,
-    FAST_SHARE_B2C, FAST_SHARE_B2B,
-    SA_ITERATIONS, SA_T_INIT, SA_ALPHA, SA_SEED,
     FLEET_BALANCE_MAX_SWAPS,
-    CARRIER_DAYS, CARRIER_FIXED_INDICES,
+    N_DAYS,
+    SA_SEED,
 )
-from batch_delivery.config.constants import COST_SCALE
-from batch_delivery.legacy.daganzo import predict_vec, CalibratedDaganzo
-from batch_delivery.io.demand import get_source_days, compute_shifted_demand_plz
-from batch_delivery.features import (
-    compute_tier2_features, ALL_COLS, TIER2_COLS, _PROVIDER_IDX,
-)
-from batch_delivery.utils import log
-
 from batch_delivery.optimization.costs import _hub_express_day, _hub_express_day_ml
-
-
-
+from batch_delivery.utils import log
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 2: Fleet balancing post-processing (swap-based)

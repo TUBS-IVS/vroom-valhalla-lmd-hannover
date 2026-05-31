@@ -5,7 +5,7 @@ the legacy ``routing.py``).
 """
 from __future__ import annotations
 
-from batch_delivery.routing.core import (  # noqa: F401
+from batch_delivery.routing.core import (
     build_scenario_requests,
     build_vroom_jobs,
     build_vroom_vehicles,

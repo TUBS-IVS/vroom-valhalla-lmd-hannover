@@ -7,10 +7,9 @@ combination.
 """
 from __future__ import annotations
 
-import math
 import time
-from pathlib import Path
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 import geopandas as gpd
 import numpy as np
@@ -253,7 +252,7 @@ def _route_combination(
 
     # 5. compute features
     n_parcels = int(pts["dhl_total"].sum())
-    n_stops = int(len(pts))
+    n_stops = len(pts)
     area_km2 = float(plz_area_km2.get(combo.plz, 1.0)) or 1.0
     hub_dist_km = float(hub_row["dist_km"])
     hub_lon = float(hub_row["hub_lon"])
@@ -519,7 +518,7 @@ def run_sweep(
             from joblib import Parallel, delayed
         except ImportError:  # pragma: no cover — joblib is a hard dep here
             log.warning(
-                f"sweep: joblib unavailable, falling back to serial execution"
+                "sweep: joblib unavailable, falling back to serial execution"
             )
             iterator = combo_list
             if cfg.progress:

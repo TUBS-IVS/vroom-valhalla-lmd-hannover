@@ -21,7 +21,7 @@ import logging
 import os
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +55,7 @@ def _git_dirty(repo_root: Path) -> bool | None:
 
 
 def _make_run_id(name: str | None) -> str:
-    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
+    ts = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
     suffix = name.replace(" ", "_") if name else os.urandom(2).hex()
     return f"{ts}_{suffix}"
 
@@ -92,7 +92,7 @@ class RunContext:
         use_cache: bool = True,
         parallel_jobs: int = 1,
         repo_root: Path | None = None,
-    ) -> "RunContext":
+    ) -> RunContext:
         run_id = _make_run_id(run_name)
         run_dir = Path(runs_root) / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -116,7 +116,7 @@ class RunContext:
             parallel=parallel,
             git_sha=_git_sha(repo),
             git_dirty=_git_dirty(repo),
-            started_at=datetime.now(tz=timezone.utc).isoformat(),
+            started_at=datetime.now(tz=UTC).isoformat(),
             config_dump=config_dump,
             config_hash=config_hash,
         )
@@ -169,7 +169,7 @@ class RunContext:
     # ------------------------------------------------------------------ logging
     def log_event(self, event: str, **fields: Any) -> None:
         rec = {
-            "ts": datetime.now(tz=timezone.utc).isoformat(),
+            "ts": datetime.now(tz=UTC).isoformat(),
             "run_id": self.run_id,
             "event": event,
             **fields,
@@ -184,6 +184,6 @@ class RunContext:
                  {k: v for k, v in fields.items() if k not in ("traceback",)})
 
     def finalize(self, kpis: dict[str, Any] | None = None) -> None:
-        finished_at = datetime.now(tz=timezone.utc).isoformat()
+        finished_at = datetime.now(tz=UTC).isoformat()
         self._write_manifest(finished_at=finished_at, kpis=kpis)
         self.log_event("run_finished", finished_at=finished_at)

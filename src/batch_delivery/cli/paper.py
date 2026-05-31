@@ -32,7 +32,6 @@ import typer
 
 from batch_delivery.cli._app import app
 
-
 PIPELINE_DIR = Path(__file__).resolve().parents[3] / "scripts" / "pipeline"
 
 STAGES: list[tuple[int, str, str, str]] = [

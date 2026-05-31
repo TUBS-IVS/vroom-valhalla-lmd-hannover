@@ -245,7 +245,8 @@ FORCE_RECOMPUTE: bool = False   # was True; flipped to use stage 1-5 caches afte
 
 # ─── Eager invariant check ─────────────────────────────────────────────────
 # Imported here so any import of the package fires the assertion.
-from batch_delivery.config import validation as _validation  # noqa: E402,F401
+from batch_delivery.config import validation as _validation  # noqa: E402
+
 _validation.assert_invariants(
     max_holding_days=MAX_HOLDING_DAYS,
     n_days=N_DAYS,

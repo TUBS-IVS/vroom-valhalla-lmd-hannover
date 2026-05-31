@@ -1,17 +1,12 @@
 """Result-export commands: optimization-results, build-holdout."""
 from __future__ import annotations
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import typer
-import yaml
-
-from batch_delivery import __version__
-from batch_delivery.config import load_config
 
 from batch_delivery.cli._app import app, config_app  # noqa: F401
+from batch_delivery.config import load_config
 
 
 @app.command(name="export-optimization-results")
@@ -155,9 +150,10 @@ def build_holdout_cmd(
     * b2c_scales    ``[1.0, 1.5, 2.0]``             normal / Christmas-surge B2C
     * b2b_scales    ``[1.0, 0.7]``                  normal / summer-quiet B2B
     """
+    import pandas as _pd
+
     from batch_delivery.runtime import RunContext
     from batch_delivery.sweep import load_sweep_yaml, run_sweep
-    import pandas as _pd
 
     base_cfg = load_sweep_yaml(sweep_config)
     holdout_seeds = [holdout_seed_base + i for i in range(n_seeds)]
@@ -200,7 +196,7 @@ def build_holdout_cmd(
     )
     try:
         df = run_sweep(cfg, ctx=ctx)
-        ctx.finalize(kpis={"n_rows": int(len(df))})
+        ctx.finalize(kpis={"n_rows": len(df)})
     except Exception:
         ctx.finalize(kpis={"_failed": True})
         raise

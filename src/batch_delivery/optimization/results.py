@@ -15,8 +15,9 @@ matrices/PLZ list, produce:
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import matplotlib
 
@@ -305,8 +306,8 @@ def export_optimization_results(
     )
 
     summary = {
-        "n_plz": int(len(plz_keys)),
-        "n_hubs": int(len(hub_names)),
+        "n_plz": len(plz_keys),
+        "n_hubs": len(hub_names),
         "best_cost": float(cd_result.get("best_cost", float("nan"))),
         "improved": int(cd_result.get("improved", 0)),
         "polish_rounds": int(cd_result.get("polish_rounds", 0)),

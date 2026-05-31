@@ -8,8 +8,11 @@ import numpy as np
 import pandas as pd
 
 from batch_delivery.config.constants import (
-    DATA_DIR, N_DAYS, LARGE_HUB_TYPES, SMALL_HUB_DISTANCE_PENALTY,
-    MIN_PLZ_PER_ZSP, DEPOT_DAILY_CAP_SMALL,
+    DATA_DIR,
+    DEPOT_DAILY_CAP_SMALL,
+    LARGE_HUB_TYPES,
+    MIN_PLZ_PER_ZSP,
+    SMALL_HUB_DISTANCE_PENALTY,
 )
 from batch_delivery.utils import log
 

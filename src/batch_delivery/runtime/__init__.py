@@ -18,10 +18,10 @@ from .parallel import ParallelMap
 from .run_context import RunContext
 
 __all__ = [
+    "ParallelMap",
     "RunContext",
     "StageCache",
     "cache_key",
     "configure_logging",
     "get_run_logger",
-    "ParallelMap",
 ]

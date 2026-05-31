@@ -1,41 +1,15 @@
 """Pipeline orchestrator: ``run_all`` chains the seven stages."""
 from __future__ import annotations
 
-from __future__ import annotations
-
 import logging
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import pandas as pd
-
-from batch_delivery.config import PipelineConfig, load_config
-from batch_delivery.config.constants import (
-    FAST_SHARE_B2B,
-    FAST_SHARE_B2C,
-    N_DAYS,
-    PROVIDERS,
-    RESULTS_DIR,
-    SC_BASELINE,
-    SC_FIXED_BATCH,
-    SC_FIXED_EXPRESS,
-    SC_SA_ML_BATCH,
-    SC_SA_ML_EXPRESS,
-    SCENARIO_NAMES,
-    NON_BASELINE_SCENARIOS,
-    EXPRESS_SCENARIOS,
-    WEEKDAYS,
-    provider_to_demand_prefix,
-)
+from batch_delivery.config import load_config
 from batch_delivery.runtime import RunContext
 from batch_delivery.utils import (
-    compute_weighted_speed_factor,
     get_logger,
-    load_checkpoint,
-    save_checkpoint,
 )
 
 log = get_logger(__name__, level=logging.INFO)
@@ -44,6 +18,20 @@ from batch_delivery.pipeline.state import (
     PipelineState,
 )
 from batch_delivery.pipeline.stages import (
+    step_evaluate,
+    step_load_demand_and_hubs,
+    step_optimize,
+    step_prepare_optimisation,
+    step_solve_baseline,
+    step_solve_scenarios,
+    step_train_surrogate,
+)
+
+# Canonical pipeline stage order. The orchestrator iterates this list so
+# that re-ordering or skipping stages is a single edit here. Defined in
+# orchestrator.py rather than stages.py to keep the stages module a pure
+# library of step functions with no run-order opinion.
+PIPELINE_STAGES = [
     step_load_demand_and_hubs,
     step_solve_baseline,
     step_prepare_optimisation,
@@ -51,9 +39,7 @@ from batch_delivery.pipeline.stages import (
     step_optimize,
     step_solve_scenarios,
     step_evaluate,
-)
-
-
+]
 
 
 def run_all(

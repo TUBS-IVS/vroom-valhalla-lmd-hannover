@@ -25,9 +25,8 @@ import numpy as np
 import pandas as pd
 
 from batch_delivery.features import ALL_COLS
-from batch_delivery.surrogate import MLCostPredictor, TARGET_COL
+from batch_delivery.surrogate import TARGET_COL, MLCostPredictor
 from batch_delivery.utils import log
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Perturbation extremity classification
@@ -148,7 +147,7 @@ def validate_against_vroom(
         ss_res = float(np.sum(err * err))
         ss_tot = float(np.sum((y - y.mean()) ** 2))
         return {
-            "n": int(len(y)),
+            "n": len(y),
             "mae_eur": float(np.mean(np.abs(err))),
             "mape_pct": float(np.mean(np.abs(err) / np.maximum(1.0, y)) * 100),
             "r2": float(1.0 - ss_res / ss_tot) if ss_tot > 0 else float("nan"),
@@ -230,12 +229,12 @@ def validate_against_vroom(
 
     summary = {
         "sweep_csv": str(sweep_csv),
-        "n_rows": int(len(df)),
+        "n_rows": len(df),
         "model": {
             "arch": list(getattr(model, "best_arch", ()) or ()),
             "alpha": float(getattr(model, "best_alpha", float("nan"))),
-            "n_pipelines": int(len(getattr(model, "pipelines", []))),
-            "n_combo_features": int(len(getattr(model, "combo_cols", []))),
+            "n_pipelines": len(getattr(model, "pipelines", [])),
+            "n_combo_features": len(getattr(model, "combo_cols", [])),
         },
         "overall": overall,
         "by_provider": by_provider,
@@ -465,7 +464,7 @@ def compute_feature_importance(
     fi["base_mape_pct"] = base_mape
     fi.to_csv(out_dir / "feature_importance.csv", index=False)
     log.info(
-        f"feature_importance: top-3 = "
+        "feature_importance: top-3 = "
         + ", ".join(f"{r['feature']}(+{r['delta_mape_mean']:.2f}%)"
                     for _, r in fi.head(3).iterrows())
     )
@@ -488,7 +487,7 @@ def summarize_training_data(
     """
     training_csv = Path(training_csv)
     df = pd.read_csv(training_csv)
-    n = int(len(df))
+    n = len(df)
 
     def _counts(col: str) -> dict[str, int]:
         if col not in df.columns:

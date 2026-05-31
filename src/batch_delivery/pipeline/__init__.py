@@ -27,26 +27,26 @@ continue to work because every symbol is re-exported here.
 """
 from __future__ import annotations
 
-from batch_delivery.pipeline.state import PipelineState
-from batch_delivery.pipeline.stages import (
-    step_load_demand_and_hubs,
-    step_solve_baseline,
-    step_prepare_optimisation,
-    step_train_surrogate,
-    step_optimize,
-    step_solve_scenarios,
-    step_evaluate,
-)
 from batch_delivery.pipeline.orchestrator import run_all
+from batch_delivery.pipeline.stages import (
+    step_evaluate,
+    step_load_demand_and_hubs,
+    step_optimize,
+    step_prepare_optimisation,
+    step_solve_baseline,
+    step_solve_scenarios,
+    step_train_surrogate,
+)
+from batch_delivery.pipeline.state import PipelineState
 
 __all__ = [
     "PipelineState",
-    "step_load_demand_and_hubs",
-    "step_solve_baseline",
-    "step_prepare_optimisation",
-    "step_train_surrogate",
-    "step_optimize",
-    "step_solve_scenarios",
-    "step_evaluate",
     "run_all",
+    "step_evaluate",
+    "step_load_demand_and_hubs",
+    "step_optimize",
+    "step_prepare_optimisation",
+    "step_solve_baseline",
+    "step_solve_scenarios",
+    "step_train_surrogate",
 ]

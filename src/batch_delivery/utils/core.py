@@ -3,7 +3,6 @@
 import logging
 import re
 
-import numpy as np
 import pandas as pd
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(message)s"
@@ -145,12 +144,13 @@ def load_checkpoint(name: str):
         Unpickled data dict, or *None* if not found / forced recompute.
     """
     import pickle
+
     from batch_delivery.config.constants import FORCE_RECOMPUTE
     if FORCE_RECOMPUTE:
         return None
     p = _checkpoint_dir() / f"{name}.pkl"
     if not p.exists():
         return None
-    data = pickle.loads(p.read_bytes())  # noqa: S301 — trusted local files only
+    data = pickle.loads(p.read_bytes())
     log.debug("Checkpoint loaded: %s", p.name)
     return data

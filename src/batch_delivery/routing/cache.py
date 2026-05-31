@@ -6,37 +6,16 @@ before issuing a network call and ``save_cached_solution`` afterwards.
 """
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
-import math
-import re
-import subprocess
 import threading
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
-import requests as http_requests
-from tqdm.auto import tqdm
 
 from batch_delivery.config.constants import (
-    N_DAYS, WEEKDAYS,
-    VEHICLE_CAPACITY, FIXED_COST_CENTS, COST_PER_KM_CENTS, COST_PER_HOUR_CENTS,
-    COST_SCALE, SERVICE_TIME_PER_PARCEL, SERVICE_TIME_CAP, PROFILE,
-    VROOM_API_URL, DELIVERY_WINDOW, VEHICLE_TIME_WINDOW,
-    BREAK_DURATION, BREAK_WINDOW,
-    VEH_START_SPREAD_S, VEH_START_LATEST, VEH_START_SEED,
-    LARGE_HUB_TYPES, SMALL_HUB_DELAY,
-    MAX_VEHICLES_PER_REQUEST, SOLVE_WORKERS, HTTP_TIMEOUT,
-    HTTP_CONNECT_TIMEOUT, PER_JOB_BUDGET_S,
-    MAX_RETRIES, CONNECTION_RETRIES, MAX_UNASSIGNED_RETRIES,
-    SPEED_FACTOR, RESULTS_DIR,
-    MAX_JOBS_PER_REQUEST, AVAILABLE_WORK_S,
+    RESULTS_DIR,
 )
-from batch_delivery.utils import log
 
 _print_lock = threading.Lock()
 

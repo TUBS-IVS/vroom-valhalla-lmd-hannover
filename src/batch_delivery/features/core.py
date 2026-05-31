@@ -17,7 +17,6 @@ internally.
 from __future__ import annotations
 
 import math
-import warnings
 from typing import Any
 
 import numpy as np
@@ -26,17 +25,12 @@ from scipy.spatial import ConvexHull, KDTree
 from tqdm.auto import tqdm
 
 from batch_delivery.config.constants import (
-    N_DAYS,
-    VEHICLE_CAPACITY,
     COST_SCALE,
-    FAST_SHARE_B2C,
-    FAST_SHARE_B2B,
-    SCENARIO_NAMES,
-    SC_BASELINE,
+    N_DAYS,
     PROVIDERS,
+    VEHICLE_CAPACITY,
 )
 from batch_delivery.utils import log
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Feature-name constants (referenced by notebooks for column selection)
@@ -169,7 +163,7 @@ def compute_tier2_features(
     n = len(lon)
 
     # Default fallback for degenerate cases
-    fallback = {c: 0.0 for c in TIER2_COLS}
+    fallback = dict.fromkeys(TIER2_COLS, 0.0)
 
     if n == 0:
         return fallback
@@ -349,7 +343,7 @@ def compute_all_features(
     if tier >= 2 and len(lon) > 0:
         feats.update(compute_tier2_features(lon, lat, hub_lon, hub_lat, per_stop_demand))
     elif tier >= 2:
-        feats.update({c: np.nan for c in TIER2_COLS})
+        feats.update(dict.fromkeys(TIER2_COLS, np.nan))
 
     # Tier 3
     if tier >= 3:
@@ -473,7 +467,7 @@ def _build_features_single(
     tier: int,
 ) -> list[dict[str, Any]]:
     """Process one (provider, scenario) pair — returns list of row dicts."""
-    from batch_delivery.config.constants import COST_SCALE, N_DAYS, provider_to_demand_prefix
+    from batch_delivery.config.constants import provider_to_demand_prefix
 
     plz_data = odata["plz_data"]
     daily_wgs = pdata["daily_gdfs_wgs"]

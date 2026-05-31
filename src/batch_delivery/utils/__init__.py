@@ -1,7 +1,7 @@
 """Logging, geometry, timing helpers."""
 from __future__ import annotations
 
-from batch_delivery.utils.core import (  # noqa: F401
+from batch_delivery.utils.core import (
     compute_weighted_speed_factor,
     fmt_time,
     get_logger,
@@ -15,8 +15,8 @@ __all__ = [
     "compute_weighted_speed_factor",
     "fmt_time",
     "get_logger",
-    "log",
     "load_checkpoint",
+    "log",
     "parse_unfound_location",
     "save_checkpoint",
 ]

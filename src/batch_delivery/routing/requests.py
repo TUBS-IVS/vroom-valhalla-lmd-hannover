@@ -6,35 +6,36 @@ sub-clusters so VROOM never sees a > ``baseline_job_cap`` request.
 """
 from __future__ import annotations
 
-import copy
-import hashlib
-import json
 import math
 import re
-import subprocess
 import threading
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import requests as http_requests
-from tqdm.auto import tqdm
 
 from batch_delivery.config.constants import (
-    N_DAYS, WEEKDAYS,
-    VEHICLE_CAPACITY, FIXED_COST_CENTS, COST_PER_KM_CENTS, COST_PER_HOUR_CENTS,
-    COST_SCALE, SERVICE_TIME_PER_PARCEL, SERVICE_TIME_CAP, PROFILE,
-    VROOM_API_URL, DELIVERY_WINDOW, VEHICLE_TIME_WINDOW,
-    BREAK_DURATION, BREAK_WINDOW,
-    VEH_START_SPREAD_S, VEH_START_LATEST, VEH_START_SEED,
-    LARGE_HUB_TYPES, SMALL_HUB_DELAY,
-    MAX_VEHICLES_PER_REQUEST, SOLVE_WORKERS, HTTP_TIMEOUT,
-    HTTP_CONNECT_TIMEOUT, PER_JOB_BUDGET_S,
-    MAX_RETRIES, CONNECTION_RETRIES, MAX_UNASSIGNED_RETRIES,
-    SPEED_FACTOR, RESULTS_DIR,
-    MAX_JOBS_PER_REQUEST, AVAILABLE_WORK_S,
+    AVAILABLE_WORK_S,
+    BREAK_DURATION,
+    BREAK_WINDOW,
+    COST_PER_HOUR_CENTS,
+    COST_PER_KM_CENTS,
+    DELIVERY_WINDOW,
+    FIXED_COST_CENTS,
+    LARGE_HUB_TYPES,
+    MAX_JOBS_PER_REQUEST,
+    MAX_VEHICLES_PER_REQUEST,
+    N_DAYS,
+    PROFILE,
+    SERVICE_TIME_CAP,
+    SERVICE_TIME_PER_PARCEL,
+    SMALL_HUB_DELAY,
+    SPEED_FACTOR,
+    VEH_START_LATEST,
+    VEH_START_SEED,
+    VEH_START_SPREAD_S,
+    VEHICLE_CAPACITY,
+    VEHICLE_TIME_WINDOW,
+    WEEKDAYS,
 )
 from batch_delivery.utils import log
 
@@ -336,7 +337,7 @@ def build_scenario_requests(
     -------
     (sc_requests, df_summary)
     """
-    from batch_delivery.io.demand import merge_source_points, get_source_days
+    from batch_delivery.io.demand import get_source_days, merge_source_points
 
     if merge_source_fn is None:
         merge_source_fn = merge_source_points
