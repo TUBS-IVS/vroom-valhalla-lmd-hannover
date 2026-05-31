@@ -394,8 +394,10 @@ python -m pytest -m slow
 The reproducibility suite is the one to watch: it verifies that every
 file referenced in [`paper/EWGT_2026/MANIFEST.md`](paper/EWGT_2026/MANIFEST.md)
 exists, that every canonical results CSV has the expected schema, and
-that the documented cost-saving headline numbers (22.8 %, 18.6 %,
-13.5 %) are within ±1.5 pp of the in-repo values.
+that the documented cost-saving headline numbers
+(**22.8 %, 18.6 %, 13.5 %** at θ = 1 for P ∈ {0, 0.25, 0.5}) match
+the in-repo values **exactly** to the paper's 1-decimal-place
+precision — no slack.
 
 ---
 

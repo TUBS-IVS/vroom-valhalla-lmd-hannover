@@ -90,30 +90,45 @@ def test_vroom_balanced_validation_present() -> None:
 # ─── headline-number sanity checks ───────────────────────────────────────────
 
 
-def test_baseline_total_cost_in_expected_band() -> None:
-    """Baseline total cost (theta=0) per the path2 run should be ~1.9 M€/wk."""
+def test_baseline_total_cost_matches_paper() -> None:
+    """Baseline weekly cost (theta=0, every P level) must be 1.91 M EUR
+    when rounded to the paper's 2-decimal precision (1.9097 M actual).
+    """
     df = _df("runs/path2_2026_05_29/tab_balancing_summary.csv")
     base = df[df.share_willing == 0.0].init_cost_eur.sum() / 8  # 8 P levels, all equal at theta=0
-    # Paper claims 1.91 M€; allow ±2 % tolerance
-    assert 1.85e6 <= base <= 1.95e6, (
-        f"baseline weekly cost out of band: {base:.0f} EUR "
-        f"(expected ~1.91 M EUR, see paper §3)"
+    base_m = round(base / 1e6, 2)
+    assert base_m == 1.91, (
+        f"baseline weekly cost {base:.2f} EUR rounds to {base_m} M, "
+        f"expected 1.91 M EUR (paper §3)"
     )
 
 
-@pytest.mark.parametrize("penalty", [0.0, 0.25, 0.5])
-def test_paper_saving_at_documented_p_and_theta_one(penalty: float) -> None:
-    """Cost-saving headline numbers at theta=1 are in the documented band.
+@pytest.mark.parametrize(
+    "penalty,documented_pct",
+    [
+        (0.0,  22.8),  # paper Table 1 / abstract: 22.8 %
+        (0.25, 18.6),  # paper §3.2:               18.6 %
+        (0.5,  13.5),  # paper abstract:           13.5 %
+    ],
+)
+def test_paper_saving_at_documented_p_and_theta_one(
+    penalty: float, documented_pct: float,
+) -> None:
+    """Cost-saving headline numbers at theta=1 must equal the paper claim
+    to 1-decimal precision (the precision the paper actually quotes).
 
-    The paper reports 22.8 % at P=0 and 13.5 % at P=0.5. Allow ±1 pp.
+    The exact unrounded values in the canonical CSV are:
+      P=0.00 -> 22.8093 %  (rounds to 22.8)
+      P=0.25 -> 18.5538 %  (rounds to 18.6)
+      P=0.50 -> 13.5170 %  (rounds to 13.5)
     """
     df = _df("runs/path2_2026_05_29/tab_balancing_summary.csv")
     base = df[df.share_willing == 0.0].init_cost_eur.sum() / 8
     cell = df[(df.penalty == penalty) & (df.share_willing == 1.0)]
     bal = cell.balanced_cost_eur.sum()
     saving_pct = 100 * (base - bal) / base
-    documented = {0.0: 22.8, 0.25: 18.6, 0.5: 13.5}[penalty]
-    assert abs(saving_pct - documented) < 1.5, (
-        f"P={penalty}: cost saving {saving_pct:.2f}% diverges from "
-        f"documented {documented}% by more than 1.5 pp — paper claim broken?"
+    rounded = round(saving_pct, 1)
+    assert rounded == documented_pct, (
+        f"P={penalty}: cost saving {saving_pct:.4f}% rounds to "
+        f"{rounded}%, expected {documented_pct}% — paper claim broken?"
     )
