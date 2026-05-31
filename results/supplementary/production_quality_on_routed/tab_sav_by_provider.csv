@@ -1,0 +1,8 @@
+provider,n,mean_bias_pp,median_bias_pp,mean_actual_saving_pct,mean_predicted_saving_pct
+Amazon,47,7.73,7.26,12.72,20.45
+DHL,48,5.4,5.24,8.67,14.07
+DPD,47,11.58,12.14,21.63,33.21
+FedEx,37,10.51,7.19,20.62,31.14
+GLS,46,14.42,12.24,18.3,32.72
+Hermes,47,9.95,9.52,20.12,30.07
+UPS,40,11.77,10.22,17.5,29.27

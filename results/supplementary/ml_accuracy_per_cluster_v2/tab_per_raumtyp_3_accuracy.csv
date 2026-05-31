@@ -1,0 +1,4 @@
+raumtyp_3,n_cells,cost_mape_pct,cost_bias_pct,mean_actual_cost,n_provider_plz_cells,n_clusters,mean_actual_saving_pct,mean_predicted_saving_pct,saving_bias_pp,saving_mae_pp
+rural,509,7.119,-5.142,2333.666,125,17,21.18,26.015,4.835,5.348
+suburban,588,11.29,-2.706,2134.922,141,14,14.391,17.981,3.59,9.922
+urban,190,33.755,25.898,2005.439,46,5,12.167,-8.762,-20.928,29.229

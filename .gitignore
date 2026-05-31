@@ -32,11 +32,23 @@ data/*
 
 # ─── Bulk outputs (regenerable via the pipeline) ─────────────────────────────
 # Default-ignore everything under results/, then explicitly un-ignore the
-# canonical paper outputs (Phase 2 will add per-folder un-ignores once the
-# tree is reorganized).
+# canonical and supplementary paper outputs. The _archive/ tree stays
+# gitignored — it is preserved locally for review provenance but not shipped.
+# Bulk binary patterns (*.pkl, *.parquet, *.npz) further down still apply
+# inside the un-ignored paths.
 results/*
 !results/README.md
 !results/CANONICAL.md
+!results/paper_ewgt_2026/
+!results/paper_ewgt_2026/**
+!results/paper_outputs_2026_05_30/
+!results/paper_outputs_2026_05_30/**
+!results/paper_results_2026_05_30/
+!results/paper_results_2026_05_30/**
+!results/runs/
+!results/runs/**
+!results/supplementary/
+!results/supplementary/**
 
 # Large binary artifacts that can always be regenerated
 *.pkl

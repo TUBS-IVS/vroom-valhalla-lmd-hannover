@@ -1,0 +1,4 @@
+raumtyp_3,n,mean_bias_pp,median_bias_pp,mean_actual_saving_pct,mean_predicted_saving_pct
+rural,125,10.84,10.17,20.98,31.82
+suburban,141,10.4,8.4,14.98,25.37
+urban,46,7.3,6.92,11.9,19.2

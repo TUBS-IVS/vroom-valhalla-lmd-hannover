@@ -1,0 +1,14 @@
+{
+  "run_id": "20260525-194854_sweep",
+  "git_sha": "d8f4530",
+  "git_dirty": true,
+  "started_at": "2026-05-25T19:48:54.124011+00:00",
+  "finished_at": "2026-05-26T01:08:09.340950+00:00",
+  "config_hash": "59590e405dc49ff9",
+  "cache_enabled": false,
+  "parallel_jobs": 8,
+  "kpis": {
+    "n_rows": 2733
+  },
+  "extra": {}
+}

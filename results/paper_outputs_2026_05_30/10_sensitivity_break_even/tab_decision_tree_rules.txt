@@ -1,0 +1,36 @@
+Decision Tree on actual_saving_pct (in-sample R² = 0.702)
+
+|--- parcels_per_route_baseline <= 161.33
+|   |--- demand_per_area <= 2.55
+|   |   |--- value: [35.01]
+|   |--- demand_per_area >  2.55
+|   |   |--- demand_per_area <= 27.86
+|   |   |   |--- weekly_parcels <= 1395.50
+|   |   |   |   |--- value: [24.38]
+|   |   |   |--- weekly_parcels >  1395.50
+|   |   |   |   |--- value: [27.54]
+|   |   |--- demand_per_area >  27.86
+|   |   |   |--- weekly_parcels <= 1494.00
+|   |   |   |   |--- value: [16.31]
+|   |   |   |--- weekly_parcels >  1494.00
+|   |   |   |   |--- value: [22.31]
+|--- parcels_per_route_baseline >  161.33
+|   |--- demand_per_area <= 9.12
+|   |   |--- area_km2 <= 83.93
+|   |   |   |--- value: [14.46]
+|   |   |--- area_km2 >  83.93
+|   |   |   |--- parcels_per_route_baseline <= 184.09
+|   |   |   |   |--- value: [24.64]
+|   |   |   |--- parcels_per_route_baseline >  184.09
+|   |   |   |   |--- value: [19.42]
+|   |--- demand_per_area >  9.12
+|   |   |--- parcels_per_route_baseline <= 179.31
+|   |   |   |--- weekly_parcels <= 1827.50
+|   |   |   |   |--- value: [10.06]
+|   |   |   |--- weekly_parcels >  1827.50
+|   |   |   |   |--- value: [16.97]
+|   |   |--- parcels_per_route_baseline >  179.31
+|   |   |   |--- area_km2 <= 19.35
+|   |   |   |   |--- value: [7.83]
+|   |   |   |--- area_km2 >  19.35
+|   |   |   |   |--- value: [12.17]

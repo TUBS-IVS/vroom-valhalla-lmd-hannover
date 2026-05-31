@@ -1,0 +1,46 @@
+{
+  "version": "lgb_disjoint",
+  "fit_seconds": 2.6767618656158447,
+  "n_train_rows": 2322,
+  "n_holdout_rows": 411,
+  "holdout_cluster_ids": [
+    "30916",
+    "30826",
+    "31319",
+    "30419",
+    "30966",
+    "30163",
+    "30855"
+  ],
+  "metrics": {
+    "pool": {
+      "n": 2322.0,
+      "mae": 1.9986301860436468,
+      "rmse": 4.62915252650087,
+      "mape": 0.12037773582027954,
+      "r2": 0.9999890082994917,
+      "bias": 0.00015045699576956108
+    },
+    "holdout": {
+      "n": 411.0,
+      "mae": 59.14699188082426,
+      "rmse": 154.68463801663154,
+      "mape": 3.026293716389988,
+      "r2": 0.9920382475901875,
+      "bias": 1.2329051815009326
+    }
+  },
+  "hps": {
+    "n_estimators": 1000,
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "max_depth": -1,
+    "subsample": 0.85,
+    "colsample_bytree": 0.85,
+    "reg_lambda": 0.5,
+    "min_child_samples": 10,
+    "n_jobs": 4,
+    "random_state": 42,
+    "verbosity": -1
+  }
+}

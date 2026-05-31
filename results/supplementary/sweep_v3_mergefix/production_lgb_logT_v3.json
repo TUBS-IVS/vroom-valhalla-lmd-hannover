@@ -1,0 +1,45 @@
+{
+  "version": "v3_mergefix",
+  "fit_seconds": 1.3654158115386963,
+  "n_train_rows": 2388,
+  "n_holdout_rows": 345,
+  "holdout_cluster_ids": [
+    31515,
+    30159,
+    30627,
+    31535,
+    30982,
+    31275
+  ],
+  "metrics": {
+    "pool": {
+      "n": 2388.0,
+      "mae": 1.8835836960354417,
+      "rmse": 3.758812551622106,
+      "mape": 0.11682073057758145,
+      "r2": 0.9999924875585269,
+      "bias": 0.00012560027508835982
+    },
+    "holdout": {
+      "n": 345.0,
+      "mae": 114.54852868036991,
+      "rmse": 222.16593409734264,
+      "mape": 5.443146900933726,
+      "r2": 0.9855301928496357,
+      "bias": -1.5579851176282826
+    }
+  },
+  "hps": {
+    "n_estimators": 1000,
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "max_depth": -1,
+    "subsample": 0.85,
+    "colsample_bytree": 0.85,
+    "reg_lambda": 0.5,
+    "min_child_samples": 10,
+    "n_jobs": 4,
+    "random_state": 42,
+    "verbosity": -1
+  }
+}
