@@ -90,8 +90,18 @@ memory/
 .vscode/
 .idea/
 .cursor/
+.aider*
+.windsurf/
 .DS_Store
 Thumbs.db
+
+# ─── AI-agent session artefacts (ephemeral, not shared knowledge) ────────────
+# Plans/specs written by agents during a session live here; they are not
+# project documentation. CLAUDE.md / AGENTS.md / GEMINI.md ARE tracked
+# (shared repo instructions) — only the per-session output is ignored.
+docs/superpowers/
+docs/codebase/
+docs/_paper_patches_*.md
 
 # ─── Generic runtime ─────────────────────────────────────────────────────────
 outputs/
