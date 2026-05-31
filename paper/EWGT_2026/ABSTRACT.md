@@ -2,11 +2,15 @@
 
 **Title:** Machine-Learning Surrogate Optimization for Time-Based Consolidation in Last-Mile Parcel Delivery
 
-**Authors:** Lasse Bienzeisler, Bernhard Friedrich
+**Authors:** Lasse Bienzeisler\ :sup:`a`, Felix Petre\ :sup:`a`, Oskar Wage\ :sup:`b`, Bernhard Friedrich\ :sup:`a`
+
+- :sup:`a` Institute of Transportation and Urban Engineering, TU Braunschweig
+- :sup:`b` Institute of Cartography and Geoinformatics, Leibniz University Hannover
 
 **Venue:** Transportation Research Procedia (EWGT 2026)
 
-**Submitted:** 2026-05-31
+**Status:** **Submitted 2026-05-31, currently under review.** Not yet
+accepted — please cite as a submitted manuscript (see BibTeX below).
 
 ## Abstract
 
@@ -28,18 +32,22 @@ achieved savings by 1.3--2.1 pp.
 
 ## Keywords
 
-Time-based consolidation; Last-mile delivery; Vehicle routing; Surrogate
-optimization; Machine learning; LightGBM; Willingness-to-wait
+Temporal consolidation; Parcel delivery; Last-mile logistics;
+Vehicle routing problem; Delivery scheduling; Willingness to wait
 
-## Citation (BibTeX placeholder for camera-ready)
+## Citation (until acceptance)
 
 ```bibtex
-@inproceedings{bienzeisler2026tbc,
-  title={Machine-Learning Surrogate Optimization for Time-Based Consolidation
-         in Last-Mile Parcel Delivery},
-  author={Bienzeisler, Lasse and Friedrich, Bernhard},
-  booktitle={Transportation Research Procedia (EWGT 2026)},
-  year={2026},
-  note={Hanover Region case study; preprint 2026-05-31}
+@unpublished{bienzeisler2026tbc,
+  title  = {Machine-Learning Surrogate Optimization for Time-Based
+            Consolidation in Last-Mile Parcel Delivery},
+  author = {Bienzeisler, Lasse and Petre, Felix and Wage, Oskar
+            and Friedrich, Bernhard},
+  year   = {2026},
+  note   = {Manuscript submitted to Transportation Research Procedia
+            (EWGT 2026); under review. Hanover Region case study.}
 }
 ```
+
+After the paper is accepted the entry will be upgraded to the proper
+`@inproceedings` form with venue + DOI.

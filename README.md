@@ -2,13 +2,19 @@
 
 Companion code and reproducibility package for:
 
-> **Bienzeisler, L. and Friedrich, B.**, *"Machine-Learning Surrogate
-> Optimization for Time-Based Consolidation in Last-Mile Parcel Delivery"*,
-> Transportation Research Procedia (EWGT 2026), preprint 2026-05-31.
+> **Bienzeisler, L., Petre, F., Wage, O., and Friedrich, B.**, *"Machine-Learning
+> Surrogate Optimization for Time-Based Consolidation in Last-Mile Parcel
+> Delivery"*, submitted to Transportation Research Procedia (EWGT 2026),
+> preprint 2026-05-31 (currently under review).
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 104 passing](https://img.shields.io/badge/tests-104%20passing-brightgreen.svg)](#tests)
-[![Paper: EWGT 2026](https://img.shields.io/badge/paper-EWGT%202026-orange.svg)](paper/EWGT_2026/ABSTRACT.md)
+[![Tests: 127 passing](https://img.shields.io/badge/tests-127%20passing-brightgreen.svg)](#tests)
+[![Paper: EWGT 2026 (submitted)](https://img.shields.io/badge/paper-EWGT%202026%20%E2%80%94%20submitted-orange.svg)](paper/EWGT_2026/ABSTRACT.md)
+
+> **Status:** the paper is **submitted to EWGT 2026, not yet accepted.**
+> This repo is published alongside the submission as the
+> reproducibility package and will be updated for the camera-ready
+> version once review feedback is in.
 
 ---
 
@@ -209,20 +215,27 @@ tests; every commit on `refactor/github-ready` keeps all 104 green.
 
 ## Citation
 
-If you use this code, please cite the EWGT 2026 paper:
+The paper is currently under review. Until acceptance, please cite it
+as a submitted manuscript:
 
 ```bibtex
-@inproceedings{bienzeisler2026tbc,
-  title={Machine-Learning Surrogate Optimization for Time-Based Consolidation
-         in Last-Mile Parcel Delivery},
-  author={Bienzeisler, Lasse and Friedrich, Bernhard},
-  booktitle={Transportation Research Procedia (EWGT 2026)},
-  year={2026}
+@unpublished{bienzeisler2026tbc,
+  title  = {Machine-Learning Surrogate Optimization for Time-Based
+            Consolidation in Last-Mile Parcel Delivery},
+  author = {Bienzeisler, Lasse and Petre, Felix and Wage, Oskar
+            and Friedrich, Bernhard},
+  year   = {2026},
+  note   = {Manuscript submitted to Transportation Research Procedia
+            (EWGT 2026); under review}
 }
 ```
 
-Also see [`CITATION.cff`](CITATION.cff) for GitHub's automatic citation
-support.
+If you use the **code** in this repository directly, you can also cite
+the software artefact via [`CITATION.cff`](CITATION.cff) (GitHub renders
+a "Cite this repository" button for it).
+
+The BibTeX entry will be replaced with the proper `@inproceedings` form
+once the paper is accepted.
 
 ---
 
@@ -236,14 +249,26 @@ download script) for the source URLs.
 
 ---
 
+## Related projects
+
+* **HAGRID** ([TUBS-IVS/HAGRID](https://github.com/TUBS-IVS/HAGRID)) —
+  the parcel-demand generation pipeline maintained at our institute
+  (TU Braunschweig, Institute of Transportation and Urban Engineering).
+  HAGRID synthesises weekly per-postal-code demand vectors that this
+  repository consumes as input. The output of HAGRID is what's expected
+  under `data/demand/` (see [`data/README.md`](data/README.md)).
+* [VROOM](https://github.com/VROOM-Project/vroom) /
+  [Valhalla](https://github.com/valhalla/valhalla) — the open-source
+  routing stack used inside `scripts/pipeline/04_validate_vroom.py`.
+  Tile data comes from OpenStreetMap.
+
 ## Acknowledgements
 
-The HAGRID parcel-demand dataset is provided by the
-*Niedersächsisches Forschungszentrum für Mobilität* (NFM). Routing
-runs use [VROOM](https://github.com/VROOM-Project/vroom) and
-[Valhalla](https://github.com/valhalla/valhalla) on
-OpenStreetMap geometry. The Daganzo continuum approximation used in
-the surrogate's leading term follows Daganzo (1984).
+The Daganzo continuum approximation used as the leading term of the
+surrogate follows Daganzo (1984). The Akkerman-style feature taxonomy
+used as the LightGBM residual inputs follows Akkerman et al. — see
+the bibliography in [`paper/EWGT_2026/FullPaperLMDPCLiteratur.bib`](paper/EWGT_2026/FullPaperLMDPCLiteratur.bib)
+for full references.
 
 ---
 

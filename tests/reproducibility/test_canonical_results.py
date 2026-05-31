@@ -71,9 +71,9 @@ def test_system_spread_present() -> None:
 
 def test_vroom_balanced_validation_present() -> None:
     """tab_vroom_balanced.csv has ~3300 rows (312 cells x days for 3
-    validated penalty levels). The companion tab_vroom_path2.csv is
-    incomplete because the operator aborted the run after the
-    conservatism claim had enough data — see MANIFEST.md provenance.
+    validated penalty levels P in {0, 0.25, 0.5}). The companion
+    tab_vroom_path2.csv is intentionally not used by the paper
+    pipeline — see MANIFEST.md provenance.
     """
     df = _df("paper_results_2026_05_30/07_validation/tab_vroom_balanced.csv")
     assert len(df) >= 3000, (
