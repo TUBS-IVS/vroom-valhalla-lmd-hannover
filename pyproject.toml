@@ -1,0 +1,118 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "batch-delivery"
+version = "2.0.0"
+description = "Time-based consolidation strategies for last-mile parcel delivery in Region Hannover (ML-surrogate optimisation framework)."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Bienzeisler et al.", email = "bienzeisler@example.org" }]
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "geopandas>=1.0",
+    "scipy>=1.13",
+    "shapely>=2.0",
+    "requests>=2.32",
+    "matplotlib>=3.9",
+    "plotly>=5.20",
+    "scikit-learn>=1.5",
+    "tqdm>=4.66",
+    "typer>=0.12",
+    "pydantic>=2.5",
+    "pyyaml>=6.0",
+    "pyproj>=3.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "black>=24.0",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+    "import-linter>=2.0",
+]
+
+[project.scripts]
+batch-delivery = "batch_delivery.cli:app"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["batch_delivery*"]
+
+# ─── pytest ────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+markers = [
+    "unit: fast, isolated unit tests (default)",
+    "integration: tests that touch VROOM/Valhalla or the filesystem",
+    "slow: long-running tests (full pipeline, heavy fits)",
+]
+
+# ─── ruff ──────────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["archive", "notebooks", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "RUF"]
+ignore = ["E501"]   # line length handled by black
+
+# ─── black ─────────────────────────────────────────────────────────────────
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+extend-exclude = "(archive|notebooks|scripts)/"
+
+# ─── mypy ──────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+files = ["src/batch_delivery"]
+strict = false
+ignore_missing_imports = true
+exclude = "(archive|notebooks|scripts)/"
+
+# ─── import-linter contracts ───────────────────────────────────────────────
+[tool.importlinter]
+root_package = "batch_delivery"
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture"
+type = "layers"
+layers = [
+    "batch_delivery.cli",
+    "batch_delivery.pipeline",
+    "batch_delivery.evaluation",
+    "batch_delivery.optimization",
+    "batch_delivery.surrogate",
+    "batch_delivery.features",
+    "batch_delivery.routing",
+    "batch_delivery.io",
+    "batch_delivery.config",
+    "batch_delivery.utils",
+]
+
+[[tool.importlinter.contracts]]
+name = "Legacy is leaf-only"
+type = "forbidden"
+source_modules = [
+    "batch_delivery.cli",
+    "batch_delivery.pipeline",
+    "batch_delivery.optimization",
+    "batch_delivery.surrogate",
+    "batch_delivery.features",
+    "batch_delivery.routing",
+    "batch_delivery.io",
+    "batch_delivery.evaluation",
+]
+forbidden_modules = ["batch_delivery.legacy"]

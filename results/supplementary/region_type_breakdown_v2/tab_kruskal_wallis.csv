@@ -1,0 +1,2 @@
+test,groups,H_statistic,p_value,n_urban,n_suburban,n_rural
+Kruskal-Wallis,urban / suburban / rural,31.946620432475584,1.1557915509236685e-07,35,98,119

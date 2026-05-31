@@ -1,0 +1,29 @@
+# Tiny smoke config for `batch-delivery oracle-loop`.
+#
+# Designed to finish ~3 iterations within ~20 minutes on a laptop with
+# VROOM+Valhalla running locally. Coverage: 3 providers × 8 PLZ in
+# Hannover-Mitte × 1 base day × 2 agg_k × 2 scales × 2 p_keeps × 1 noise.
+# Per iteration ~3 fresh seeds → ~192 combinations; cache reuses prior runs.
+
+providers: [DHL, Amazon, UPS]
+base_days: [0]                        # Monday only
+agg_ks: [1, 2]
+plzs: ["30161", "30163", "30165", "30167", "30169", "30171", "30173", "30175"]
+
+scales:       [0.7, 1.0]
+p_keeps:      [1.0, 0.9]
+noise_sigmas: [0.0]
+seeds:        [42, 123, 456]          # baseline seeds (oracle-loop adds more)
+
+out_dir: results/sweep_oracle_smoke
+out_csv: training_matrix.csv
+out_parquet: training_matrix.parquet
+
+max_combinations: null
+parallel_jobs: 8
+parallel_backend: threading
+use_cache: true
+progress: false
+
+min_parcels: 1
+min_stops: 2

@@ -1,0 +1,47 @@
+﻿# Default pipeline configuration. Validated against
+# :class:`batch_delivery.config.schema.PipelineConfig`.
+# Scenario YAMLs only need to override what they actually change.
+
+seed: 42
+cost_level: 0.75
+
+providers: [DHL, Amazon, DPD, FedEx, GLS, Hermes, UPS]
+
+routing:
+  vroom_url: "http://localhost:3000"
+  http_timeout: 1800
+  parallel_workers: 8
+  max_jobs_per_request: 500
+  max_retries: 5
+  vehicle_capacity: 230
+  fixed_cost_eur: 189.15
+  cost_per_km_eur: 0.3864
+  delivery_window: [28800, 72000]
+  vehicle_time_window: [25200, 75600]
+  break_duration: 1800
+  break_window: [39600, 50400]
+
+surrogate:
+  seeds: [42, 123, 456, 789, 2024]
+  hidden_layers: [512, 512, 256, 128]
+  alpha: 0.001
+  max_iter: 2000
+  early_stopping: true
+  cv_folds: 5
+  benchmark_models: [lr, rf, gbm, mlp_single, mlp_ensemble, daganzo]
+
+optimization:
+  max_holding_days: 3
+  optimizer: coordinate_descent
+  cd_max_passes: 50
+  cd_random_restarts: 20
+  fleet_balance_enabled: true
+  fleet_balance_max_swaps: 5000
+  fleet_balance_cost_budget: 0.01
+
+scenarios:
+  - { name: Baseline,            kind: baseline,        enabled: true,  description: "Daily delivery, no batching" }
+  - { name: "Fixed + Express",   kind: fixed_express,   enabled: true,  description: "Carrier fixed schedule with express overlay" }
+  - { name: "SA_ML + Express",   kind: sa_ml_express,   enabled: true,  description: "ML-surrogate batching with express overlay" }
+  - { name: "Fixed Batch-Only",  kind: fixed_batch,     enabled: true,  description: "Carrier fixed schedule, no express" }
+  - { name: "SA_ML Batch-Only",  kind: sa_ml_batch,     enabled: true,  description: "ML-surrogate batching, no express" }

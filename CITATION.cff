@@ -1,0 +1,50 @@
+cff-version: 1.2.0
+title: >-
+  batch-delivery: Machine-Learning Surrogate Optimization for Time-Based
+  Consolidation in Last-Mile Parcel Delivery
+message: >-
+  If you use this software, please cite both the software itself and the
+  EWGT 2026 paper referenced in the preferred-citation field.
+type: software
+authors:
+  - family-names: Bienzeisler
+    given-names: Lasse
+    email: lasse.bienzeisler@tu-braunschweig.de
+    affiliation: >-
+      Technische Universität Braunschweig, Niedersächsisches
+      Forschungszentrum für Mobilität (NFM)
+    orcid: 'https://orcid.org/0000-0002-4318-2998'
+  - family-names: Friedrich
+    given-names: Bernhard
+    affiliation: >-
+      Technische Universität Braunschweig, Institut für
+      Verkehr und Stadtbauwesen
+repository-code: 'https://github.com/<org>/vroom-valhalla-lmd-hannover'
+license: MIT
+version: 1.0.0
+date-released: '2026-05-31'
+keywords:
+  - last-mile delivery
+  - time-based consolidation
+  - vehicle routing
+  - surrogate optimization
+  - machine learning
+  - LightGBM
+  - willingness-to-wait
+  - VROOM
+  - Valhalla
+  - Hanover Region
+preferred-citation:
+  type: conference-paper
+  title: >-
+    Machine-Learning Surrogate Optimization for Time-Based Consolidation
+    in Last-Mile Parcel Delivery
+  authors:
+    - family-names: Bienzeisler
+      given-names: Lasse
+    - family-names: Friedrich
+      given-names: Bernhard
+  collection-title: 'Transportation Research Procedia (EWGT 2026)'
+  year: 2026
+  notes: >-
+    Hanover Region case study; preprint 2026-05-31.

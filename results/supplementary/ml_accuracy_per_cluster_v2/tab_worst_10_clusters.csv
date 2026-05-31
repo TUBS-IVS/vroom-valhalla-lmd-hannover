@@ -1,0 +1,11 @@
+cluster_id,n_cells,mean_actual_cost,mean_pred_cost,cost_mape_pct,cost_median_ape_pct,cost_bias_pct,total_actual_cost_eur,cost_r2,n_providers_saving,mean_actual_saving_pct,mean_predicted_saving_pct,saving_bias_pp,saving_mae_pp,n_members,is_merged,member_plz_list,raumtyp_3,raumtyp_8,raumtyp_8_name,einwohner
+30159,49,2270.949,3413.931,57.298,51.851,48.491,111276.49,-1.035,7,9.611,-30.662,-40.273,49.808,4,True,"30159,30171,30173,30175",urban,2,Zentrumsnah hochverdichtete Wohnnutzung,59203.0
+30167,29,1609.915,2487.284,53.341,52.554,53.341,46687.53,-0.844,7,15.624,-28.922,-44.546,44.546,2,True,"30167,30451",urban,3,Zentrumsnah verdichtete Mischnutzung,33453.0
+30449,55,1553.991,1828.712,31.34,20.136,22.297,85469.49,0.203,7,13.117,-5.301,-18.418,27.521,3,True,"30169,30449,30459",urban,3,Zentrumsnah verdichtete Mischnutzung,52274.0
+30163,92,1672.693,1761.548,18.459,3.917,6.587,153887.79,0.633,7,12.93,8.293,-4.637,16.847,4,True,"30163,30165,30177,30179",suburban,5,Städtisch mit gewerblicher Prägung,74338.0
+30625,51,1314.293,1308.614,16.607,12.519,0.398,67028.94,0.889,7,11.565,14.873,3.308,14.841,2,True,"30625,30627",suburban,4,Städtisch mit Verdichtungsansätzen,33250.0
+30853,53,1446.18,1430.201,13.111,10.376,-1.134,76647.55,0.92,7,10.602,12.147,1.545,11.246,2,True,"30851,30853",suburban,6,Umland Verstädtert,30958.0
+30559,102,1803.44,1719.012,12.729,8.464,-3.16,183950.9,0.963,7,13.454,17.871,4.417,10.937,4,True,"30559,30629,30655,30659",suburban,4,Städtisch mit Verdichtungsansätzen,71927.0
+30457,30,1364.724,1226.303,12.106,8.253,-11.528,40941.73,0.943,7,9.018,21.918,12.9,12.9,1,False,30457,suburban,4,Städtisch mit Verdichtungsansätzen,18093.0
+30982,29,1482.677,1332.59,10.273,10.551,-9.796,42997.64,0.941,7,23.772,31.194,7.422,7.835,1,False,30982,rural,8,Umland dörflich ohne gewerblichen Einfluss,13750.0
+30453,28,1714.773,1571.78,9.438,6.506,-8.684,48013.65,0.955,7,20.179,28.156,7.977,7.977,1,False,30453,suburban,4,Städtisch mit Verdichtungsansätzen,17864.0

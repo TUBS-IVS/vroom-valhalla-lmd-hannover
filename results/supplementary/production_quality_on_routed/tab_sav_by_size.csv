@@ -1,0 +1,4 @@
+schedule_size,n,mean_bias_pp,median_bias_pp,mean_actual_saving_pct,mean_predicted_saving_pct
+2,280,9.74,8.38,17.66,27.4
+3,30,13.61,12.53,10.96,24.57
+4,2,10.97,10.97,3.65,14.61

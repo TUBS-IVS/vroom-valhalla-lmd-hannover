@@ -1,0 +1,49 @@
+LGB residual %% of Pure Daganzo (alpha=1.343), R2=0.737
+residual mean=2.24%, std=16.62%
+
+|--- n_parcels <= 692.00
+|   |--- area_km2 <= 28.95
+|   |   |--- n_parcels <= 230.50
+|   |   |   |--- area_km2 <= 5.51
+|   |   |   |   |--- value: [8.14]
+|   |   |   |--- area_km2 >  5.51
+|   |   |   |   |--- value: [17.16]
+|   |   |--- n_parcels >  230.50
+|   |   |   |--- area_km2 <= 5.07
+|   |   |   |   |--- value: [-2.93]
+|   |   |   |--- area_km2 >  5.07
+|   |   |   |   |--- value: [3.04]
+|   |--- area_km2 >  28.95
+|   |   |--- n_parcels <= 231.50
+|   |   |   |--- n_parcels <= 191.50
+|   |   |   |   |--- value: [30.49]
+|   |   |   |--- n_parcels >  191.50
+|   |   |   |   |--- value: [79.13]
+|   |   |--- n_parcels >  231.50
+|   |   |   |--- area_km2 <= 156.30
+|   |   |   |   |--- value: [13.85]
+|   |   |   |--- area_km2 >  156.30
+|   |   |   |   |--- value: [41.12]
+|--- n_parcels >  692.00
+|   |--- hub_dist_km <= 11.36
+|   |   |--- hub_dist_km <= 5.96
+|   |   |   |--- n_parcels <= 2081.50
+|   |   |   |   |--- value: [-11.35]
+|   |   |   |--- n_parcels >  2081.50
+|   |   |   |   |--- value: [-16.71]
+|   |   |--- hub_dist_km >  5.96
+|   |   |   |--- n_parcels <= 1589.50
+|   |   |   |   |--- value: [-4.56]
+|   |   |   |--- n_parcels >  1589.50
+|   |   |   |   |--- value: [-9.92]
+|   |--- hub_dist_km >  11.36
+|   |   |--- area_km2 <= 13.19
+|   |   |   |--- n_stops <= 94.50
+|   |   |   |   |--- value: [-6.20]
+|   |   |   |--- n_stops >  94.50
+|   |   |   |   |--- value: [-2.69]
+|   |   |--- area_km2 >  13.19
+|   |   |   |--- n_parcels <= 1164.50
+|   |   |   |   |--- value: [7.76]
+|   |   |   |--- n_parcels >  1164.50
+|   |   |   |   |--- value: [0.69]

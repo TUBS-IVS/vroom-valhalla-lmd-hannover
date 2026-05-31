@@ -1,0 +1,69 @@
+cluster_id,member_plz_list,n_members,einwohner,raumtyp_8,raumtyp_8_name,raumtyp_3,main_area_share,coverage_ok
+29313,29313,1,10075.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.30345863682609797,False
+29323,29323,1,8072.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.23392659677554709,False
+29336,29336,1,6406.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.8162091371087598,True
+29339,29339,1,6151.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.31082139613001936,False
+29352,29352,1,2482.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.2199132449375476,False
+29356,29356,1,1791.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.5769759281962968,True
+29364,29364,1,2270.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.07646985544224882,False
+29690,29690,1,12929.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.3870518747983878,False
+30159,"30159,30171,30173,30175",4,59203.0,2,Zentrumsnah hochverdichtete Wohnnutzung,urban,0.38283756750613895,False
+30161,30161,1,50684.0,2,Zentrumsnah hochverdichtete Wohnnutzung,urban,0.7456194837726648,True
+30163,"30163,30165,30177,30179",4,74338.0,5,Städtisch mit gewerblicher Prägung,suburban,0.45085637063773504,False
+30167,"30167,30451",2,33453.0,3,Zentrumsnah verdichtete Mischnutzung,urban,0.8033868629180803,True
+30419,30419,1,40538.0,5,Städtisch mit gewerblicher Prägung,suburban,0.8381674492010093,True
+30449,"30169,30449,30459",3,52274.0,3,Zentrumsnah verdichtete Mischnutzung,urban,0.6773891431704135,True
+30453,30453,1,17864.0,4,Städtisch mit Verdichtungsansätzen,suburban,0.31750210770164083,False
+30455,30455,1,21665.0,4,Städtisch mit Verdichtungsansätzen,suburban,0.9967467302434695,True
+30457,30457,1,18093.0,4,Städtisch mit Verdichtungsansätzen,suburban,0.8041563849902899,True
+30519,"30519,30521",2,31405.0,3,Zentrumsnah verdichtete Mischnutzung,urban,0.454986530655141,False
+30539,30539,1,19961.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.4584993773941337,False
+30559,"30559,30629,30655,30659",4,71927.0,4,Städtisch mit Verdichtungsansätzen,suburban,0.5490105390351068,True
+30625,"30625,30627",2,33250.0,4,Städtisch mit Verdichtungsansätzen,suburban,0.6299961068049671,True
+30657,30657,1,16117.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.6747209741882092,True
+30823,30823,1,26279.0,4,Städtisch mit Verdichtungsansätzen,suburban,0.4691854467936948,False
+30827,"30826,30827",2,33231.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.5079119318618089,True
+30853,"30851,30853",2,30958.0,6,Umland Verstädtert,suburban,0.9878383271989195,True
+30855,"30669,30855",2,19799.0,4,Städtisch mit Verdichtungsansätzen,suburban,0.6159833575115979,True
+30880,30880,1,38878.0,6,Umland Verstädtert,suburban,0.31397480703725783,False
+30890,30890,1,33084.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.4922930803744983,False
+30900,30900,1,28240.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.5946640446856509,True
+30916,30916,1,22743.0,6,Umland Verstädtert,suburban,0.5635394120519126,True
+30926,30926,1,31847.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.3864664163120905,False
+30938,30938,1,20356.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.7619586842591053,True
+30952,30952,1,23156.0,4,Städtisch mit Verdichtungsansätzen,suburban,0.3531171193649204,False
+30966,30966,1,18413.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.5738267115966268,True
+30974,30974,1,13901.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.5280758746275026,True
+30982,30982,1,13750.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.5160662609374094,True
+30989,30989,1,14121.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.7182255388514937,True
+31008,31008,1,9015.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.08699821500395648,False
+31020,31020,1,9692.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.08785708254330128,False
+31157,31157,1,18193.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.3265264015986901,False
+31171,31171,1,12269.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.08090847168108488,False
+31191,31191,1,8019.0,6,Umland Verstädtert,suburban,0.019378197344914118,False
+31226,31226,1,14070.0,6,Umland Verstädtert,suburban,0.4020577212979183,False
+31228,31228,1,16574.0,6,Umland Verstädtert,suburban,0.34631997797532416,False
+31234,31234,1,12374.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.24297458788688941,False
+31249,31249,1,9059.0,6,Umland Verstädtert,suburban,0.13669782968517769,False
+31275,31275,1,42686.0,6,Umland Verstädtert,suburban,0.5607199205262813,True
+31303,31303,1,28877.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.4973843134686194,False
+31311,31311,1,19975.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.7093788057512238,True
+31319,31319,1,23036.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.5327857182637412,True
+31515,31515,1,40666.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.43824875807376423,False
+31535,31535,1,43634.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.4384989309139261,False
+31542,31542,1,10102.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.03351764743637469,False
+31547,31547,1,10209.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.32056345877307035,False
+31553,31553,1,3288.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.7595414196122369,True
+31558,31558,1,4527.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.0598094923599452,False
+31559,31559,1,4821.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.2811413870302292,False
+31628,31628,1,2782.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.008268713358976158,False
+31632,31632,1,2356.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.24533945415472158,False
+31634,31634,1,2549.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.6040816958889379,True
+31636,31636,1,921.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.1646484630821631,False
+31637,31637,1,2561.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.4316339431950495,False
+31638,31638,1,1338.0,8,Umland dörflich ohne gewerblichen Einfluss,rural,0.3603193482543207,False
+31832,31832,1,28627.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.5244252875044891,True
+31848,31848,1,17696.0,6,Umland Verstädtert,suburban,0.20498477325296707,False
+31863,31863,1,7421.0,6,Umland Verstädtert,suburban,0.10914350519823078,False
+31867,31867,1,6860.0,4,Städtisch mit Verdichtungsansätzen,suburban,0.19569962356556697,False
+38536,38536,1,8273.0,7,Umland dörflich mit geringem gewerblichem Einfluss,rural,0.5542708679329822,True

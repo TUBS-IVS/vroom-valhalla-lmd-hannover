@@ -1,0 +1,3 @@
+scenario,n,mean_actual_eur,mean_pred_eur,mae_eur,rmse_eur,mape_pct,median_ape_pct,bias_eur,bias_pct,r2
+Fixed Batch-Only,625.0,2149.486,2135.073,231.032,451.692,12.897,6.387,-14.413,0.174,0.89
+SA_ML Batch-Only,658.0,2247.047,2194.167,267.368,517.018,14.478,7.998,-52.88,-0.475,0.918

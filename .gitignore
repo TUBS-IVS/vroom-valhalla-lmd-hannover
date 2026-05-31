@@ -1,18 +1,127 @@
-valhalla/custom_files/*
-!valhalla/custom_files/.gitkeep
+# =============================================================================
+# .gitignore — batch-delivery / EWGT 2026 paper repository
+# =============================================================================
+# Strategy: track code, small reference artifacts, paper-figure outputs.
+# Ignore everything that can be regenerated from code + data, and everything
+# that is bulk data. Large reproducible artifacts are fetched via the data
+# download script (see docs/REPRODUCING_PAPER.md).
+# =============================================================================
 
+# ─── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+pip-wheel-metadata/
+
+# ─── Bulk inputs (fetched via scripts/data/download_inputs.py) ───────────────
+# HAGRID demand shapefiles, PLZ geodata, hub CSVs are ~400 MB.
+# See docs/REPRODUCING_PAPER.md for the canonical download source.
+data/*
+!data/README.md
+!data/MANIFEST.md
+
+# ─── Bulk outputs (regenerable via the pipeline) ─────────────────────────────
+# Default-ignore everything under results/, then explicitly un-ignore the
+# canonical and supplementary paper outputs. The _archive/ tree stays
+# gitignored — it is preserved locally for review provenance but not shipped.
+# Bulk binary patterns (*.pkl, *.parquet, *.npz) further down still apply
+# inside the un-ignored paths.
+results/*
+!results/README.md
+!results/CANONICAL.md
+!results/paper_ewgt_2026/
+!results/paper_ewgt_2026/**
+!results/paper_outputs_2026_05_30/
+!results/paper_outputs_2026_05_30/**
+!results/paper_results_2026_05_30/
+!results/paper_results_2026_05_30/**
+!results/runs/
+!results/runs/**
+!results/supplementary/
+!results/supplementary/**
+
+# Large binary artifacts that can always be regenerated
+*.pkl
+*.pickle
+*.joblib
+*.parquet
+*.feather
+*.npz
+*.npy
+*.h5
+*.hdf5
+
+# Large geospatial binaries (shapefile bundles, tiles)
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.sbn
+*.sbx
 *.osm.pbf
+*.osm
+*.mbtiles
+
+# Compressed archives — track sources, not bundles
 *.tar
 *.tar.gz
+*.tgz
 *.zip
+*.7z
+*.rar
+
+# Elevation tiles
 *.hgt
+
+# ─── Routing service runtime ─────────────────────────────────────────────────
+valhalla/custom_files/*
+!valhalla/custom_files/.gitkeep
+vroom/*.json
+vroom/access.log
+
+# ─── Hash registry (regenerated on demand) ───────────────────────────────────
 .file_hashes.txt
 
-outputs/
-results/
-logs/
+# ─── Frozen legacy snapshot (already preserved offline) ──────────────────────
+archive/
 
-.DS_Store
-Thumbs.db
+# ─── Local agent / IDE state (not for upstream) ──────────────────────────────
+.claude/
+memory/
 .vscode/
 .idea/
+.cursor/
+.aider*
+.windsurf/
+.DS_Store
+Thumbs.db
+
+# ─── AI-agent session artefacts (ephemeral, not shared knowledge) ────────────
+# Plans/specs written by agents during a session live here; they are not
+# project documentation. CLAUDE.md / AGENTS.md / GEMINI.md ARE tracked
+# (shared repo instructions) — only the per-session output is ignored.
+docs/superpowers/
+docs/codebase/
+docs/_paper_patches_*.md
+
+# ─── Generic runtime ─────────────────────────────────────────────────────────
+outputs/
+logs/
+tmp/
+*.log
+!vroom/access.log.example
+
+# ─── Notebook checkpoints ────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*-checkpoint.ipynb
