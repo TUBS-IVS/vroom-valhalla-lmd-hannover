@@ -1,0 +1,118 @@
+\begin{figure}[h]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\sffamily, >=Latex,
+  cardbox/.style 2 args={
+     rounded corners=1.3mm, draw=outline, line width=0.5pt, fill=white,
+     minimum width=#1, minimum height=1.6cm,
+     path picture={\fill[#2] (path picture bounding box.north west)
+        rectangle ([yshift=-6.2mm]path picture bounding box.north east);},
+     blur shadow={shadow blur steps=5, shadow xshift=0.3mm, shadow yshift=-0.3mm, shadow opacity=15}},
+  hdr/.style={anchor=north, text=white, font=\sffamily\bfseries\footnotesize, inner sep=0pt, yshift=-2.1mm},
+  bdy/.style={anchor=north, text=textdark, font=\sffamily\scriptsize, align=center, inner sep=0pt, yshift=-8.0mm},
+  flow/.style={-{Latex[length=2.4mm,width=1.9mm]}, line width=0.9pt, draw=outline},
+  thin/.style={-{Latex[length=2.0mm,width=1.5mm]}, line width=0.55pt, draw=outline},
+  fb/.style={-{Latex[length=2.1mm,width=1.6mm]}, line width=0.6pt, draw=outline, dashed}
+]
+\def\W{2.75cm}
+\def\P{3.15}
+
+% ===== top pipeline =====
+\node[cardbox={\W}{inputBand}] (input) at (0,0) {};
+\node[hdr] at (input.north) {Input data};
+\node[bdy, text width=2.5cm] at (input.north) {weekly parcel \\ volumes (HAGRID), \\depots, network};
+
+\node[cardbox={\W}{surrBand}] (surrogate) at ({1*\P},0) {};
+\node[hdr] at (surrogate.north) {ML surrogate};
+\node[bdy, text width=2.45cm] at (surrogate.north) {$\tilde C=\alpha\hat C_{\mathrm{Dag}}+g(\mathbf{x})$\\Daganzo \& LightGBM};
+
+\node[cardbox={\W}{schedBand}] (schedule) at ({2*\P},0) {};
+\node[hdr] at (schedule.north) {Scheduling};
+\node[bdy, text width=2.45cm] at (schedule.north) {pick least-cost\\weekly pattern};
+
+\node[cardbox={\W}{fleetBand}] (fleet) at ({3*\P},0) {};
+\node[hdr] at (fleet.north) {Fleet balancing};
+\node[bdy, text width=2.45cm] at (fleet.north) {smooth daily\\vehicle peaks};
+
+\node[cardbox={\W}{valBand}] (validation) at ({4*\P},0) {};
+\node[hdr] at (validation.north) {VROOM / Valhalla};
+\node[bdy, text width=2.45cm] at (validation.north) {re-solve chosen\\schedules};
+
+\node[cardbox={\W}{outBand}] (outcome) at ({5*\P},0) {};
+\node[hdr] at (outcome.north) {Outcome};
+\node[bdy, text width=2.45cm] at (outcome.north) {cost savings \&\\operational KPIs};
+
+\draw[flow] (input.east) -- (surrogate.west);
+\draw[flow] (surrogate.east) -- (schedule.west);
+\draw[flow] (schedule.east) -- (fleet.west);
+\draw[flow] (fleet.east) -- (validation.west);
+\draw[flow] (validation.east) -- (outcome.west);
+
+% Feedback arc from validation to surrogate, positioned slightly lower.
+\draw[fb] (validation.north)
+   .. controls ([yshift=5mm]validation.north) and ([yshift=5mm]surrogate.north) ..
+   (surrogate.north);
+
+\node[font=\sffamily\scriptsize, text=textdark, fill=white, inner sep=1pt]
+   at (7.875,1.25) {validation};
+
+% Control parameters.
+\node[
+  rounded corners=1.2mm,
+  draw=outline,
+  line width=0.4pt,
+  fill=ctrlFill,
+  align=center,
+  font=\sffamily\scriptsize,
+  text=textdark,
+  inner sep=1.4mm,
+  minimum width=2.25cm
+] (knobs) at ({2*\P},-1.5)
+   {Service penalty $P$\\Willingness-to-wait share $\theta$};
+
+\draw[fb] (knobs.north) -- (schedule.south);
+
+% ===== surrogate training block, shifted upward by 0.25 cm =====
+\begin{scope}[yshift=2.5mm]
+
+\fill[panelFill, rounded corners=2.2mm] (-1.95,-2.35) rectangle (10.00,-4.85);
+\draw[outline, line width=1.0pt, rounded corners=2.2mm] (-1.95,-2.35) rectangle (10.00,-4.85);
+
+\node[anchor=west, font=\sffamily\bfseries\footnotesize, text=surrBand]
+   at (-1.75,-2.55) {Surrogate training on solver-labelled postal-code-area samples};
+
+\node[cardbox={4.3cm}{perturbBand}] (pert) at (0.55,-3.7) {};
+\node[hdr] at (pert.north) {Perturbation};
+\node[bdy, text width=4.0cm] at (pert.north) {augment postal-code-area samples:\\aggregated days, parcel volumes ($\pm$30\%), stops, jitter};
+
+\node[cardbox={2.9cm}{valBand}] (route) at (4.725,-3.7) {};
+\node[hdr] at (route.north) {VROOM / Valhalla};
+\node[bdy, text width=2.65cm] at (route.north) {route perturbed\\PLZ-area samples\\and compute costs};
+
+\node[cardbox={2.9cm}{poolBand}] (pool) at (8.20,-3.7) {};
+\node[hdr] at (pool.north) {Training pool};
+\node[bdy, text width=2.65cm] at (pool.north) {2733 solver-labelled\\cost samples};
+
+\coordinate (trainingTop) at ({1*\P},-2.35);
+
+\node[anchor=east, font=\sffamily\scriptsize\itshape, text=surrBand, align=center]
+   at (2.95,-1.62) {fit: $\alpha$-calibration + LightGBM\\residual (group $k$-fold)};
+
+\end{scope}
+
+% Input data to perturbation.
+\draw[thin] (input.west) -- ++(-1.10,0) |- (pert.west);
+
+% Training chain.
+\draw[thin] (pert.east) -- (route.west);
+\draw[thin] (route.east) -- (pool.west);
+
+% Training output to surrogate.
+\draw[flow, draw=surrBand] (trainingTop) -- (surrogate.south);
+
+\end{tikzpicture}%
+}
+\caption{Surrogate-based optimization and validation pipeline for TBC.}
+\label{fig:framework}
+\end{figure}
