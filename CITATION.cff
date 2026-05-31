@@ -3,23 +3,35 @@ title: >-
   batch-delivery: Machine-Learning Surrogate Optimization for Time-Based
   Consolidation in Last-Mile Parcel Delivery
 message: >-
-  If you use this software, please cite both the software itself and the
-  EWGT 2026 paper referenced in the preferred-citation field.
+  If you use this software, please cite the software itself via this
+  file. The companion paper is currently under review at EWGT 2026 — see
+  the preferred-citation field below for how to refer to the submitted
+  manuscript until acceptance.
 type: software
 authors:
   - family-names: Bienzeisler
     given-names: Lasse
     email: lasse.bienzeisler@tu-braunschweig.de
     affiliation: >-
-      Technische Universität Braunschweig, Niedersächsisches
-      Forschungszentrum für Mobilität (NFM)
+      Institute of Transportation and Urban Engineering,
+      Technische Universität Braunschweig
     orcid: 'https://orcid.org/0000-0002-4318-2998'
+  - family-names: Petre
+    given-names: Felix
+    affiliation: >-
+      Institute of Transportation and Urban Engineering,
+      Technische Universität Braunschweig
+  - family-names: Wage
+    given-names: Oskar
+    affiliation: >-
+      Institute of Cartography and Geoinformatics,
+      Leibniz University Hannover
   - family-names: Friedrich
     given-names: Bernhard
     affiliation: >-
-      Technische Universität Braunschweig, Institut für
-      Verkehr und Stadtbauwesen
-repository-code: 'https://github.com/<org>/vroom-valhalla-lmd-hannover'
+      Institute of Transportation and Urban Engineering,
+      Technische Universität Braunschweig
+repository-code: 'https://github.com/TUBS-IVS/vroom-valhalla-lmd-hannover'
 license: MIT
 version: 1.0.0
 date-released: '2026-05-31'
@@ -34,17 +46,35 @@ keywords:
   - VROOM
   - Valhalla
   - Hanover Region
+references:
+  - type: software
+    title: >-
+      HAGRID — agent-based parcel-demand generation for last-mile
+      logistics research
+    authors:
+      - family-names: Bienzeisler
+        given-names: Lasse
+    repository-code: 'https://github.com/TUBS-IVS/HAGRID'
+    notes: >-
+      Sister project from the same author group. Generates the weekly
+      per-postal-code parcel-demand vectors consumed under data/demand/
+      by this repository.
 preferred-citation:
-  type: conference-paper
+  type: generic
   title: >-
     Machine-Learning Surrogate Optimization for Time-Based Consolidation
     in Last-Mile Parcel Delivery
   authors:
     - family-names: Bienzeisler
       given-names: Lasse
+    - family-names: Petre
+      given-names: Felix
+    - family-names: Wage
+      given-names: Oskar
     - family-names: Friedrich
       given-names: Bernhard
-  collection-title: 'Transportation Research Procedia (EWGT 2026)'
   year: 2026
   notes: >-
-    Hanover Region case study; preprint 2026-05-31.
+    Manuscript submitted to Transportation Research Procedia (EWGT 2026);
+    currently under review. The citation entry will be upgraded to an
+    @inproceedings record with venue + DOI once the paper is accepted.

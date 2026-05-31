@@ -100,7 +100,7 @@ def test_every_paper_artefact_exists(manifest_paths: list[str]) -> None:
 
 def test_main_tex_compiles_resolvable_paths() -> None:
     """Every \\includegraphics in the main TeX must resolve under figures/."""
-    tex = PAPER_DIR / "TRPRO_EWGT2026.tex"
+    tex = PAPER_DIR / "tbc_preprint_main.tex"
     assert tex.exists(), f"main TeX file missing: {tex}"
     text = tex.read_text(encoding="utf-8")
     fig_refs = re.findall(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}", text)

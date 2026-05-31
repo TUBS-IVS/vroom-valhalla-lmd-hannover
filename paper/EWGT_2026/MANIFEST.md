@@ -1,21 +1,25 @@
-# EWGT 2026 — Submitted Paper
+# EWGT 2026 — Submitted Paper (Preprint, Under Review)
 
-Frozen copy of the EWGT 2026 paper preprint:
+Frozen copy of the **submitted** EWGT 2026 paper:
 
-> *Bienzeisler, L. and Friedrich, B.*, **"Machine-Learning Surrogate
-> Optimization for Time-Based Consolidation in Last-Mile Parcel Delivery"**,
-> Transportation Research Procedia (EWGT 2026), preprint 2026-05-31.
+> *Bienzeisler, L., Petre, F., Wage, O., and Friedrich, B.*, **"Machine-Learning
+> Surrogate Optimization for Time-Based Consolidation in Last-Mile Parcel
+> Delivery"**, submitted to Transportation Research Procedia (EWGT 2026),
+> preprint 2026-05-31. **Manuscript currently under review — not yet
+> accepted.**
 
 This folder is the canonical submission record. The TeX source compiles
-to a byte-identical preprint PDF (`TRPRO_EWGT2026.pdf`) using the
-Elsevier `elsarticle` class.
+to the preprint PDF (`EWGT26_Full_Paper_LB_preprint.pdf`) using the Elsevier
+`elsarticle` class. The PDF is the **submitted manuscript**, not the
+final typeset version (which Elsevier produces during production after
+acceptance).
 
 ## Directory layout
 
 ```
 paper/EWGT_2026/
-├── TRPRO_EWGT2026.tex            ← main paper source
-├── TRPRO_EWGT2026.pdf            ← compiled preprint (reference)
+├── tbc_preprint_main.tex          ← main paper source
+├── EWGT26_Full_Paper_LB_preprint.pdf            ← compiled preprint (reference)
 ├── FullPaperLMDPCLiteratur.bib   ← bibliography
 ├── ABSTRACT.md                   ← submitted abstract (markdown form)
 ├── MANIFEST.md                   ← this file
@@ -50,13 +54,13 @@ it's redundant once the contents are unpacked into the tracked layout.
 cd paper/EWGT_2026
 
 # Either via pdflatex directly:
-pdflatex TRPRO_EWGT2026
-bibtex   TRPRO_EWGT2026
-pdflatex TRPRO_EWGT2026
-pdflatex TRPRO_EWGT2026
+pdflatex tbc_preprint_main
+bibtex   tbc_preprint_main
+pdflatex tbc_preprint_main
+pdflatex tbc_preprint_main
 
 # Or via latexmk (cleaner — handles bib + cross-refs automatically):
-latexmk -pdf TRPRO_EWGT2026.tex
+latexmk -pdf tbc_preprint_main.tex
 ```
 
 The TeX file's `\input@path` is set so it finds the class files in
@@ -117,8 +121,7 @@ step-by-step recipe and shortcuts for reduced-scope reproduction.
 * Pipeline run: `results/runs/path2_2026_05_29/` (88-cell grid,
   2026-05-29 22:07 → 2026-05-30 14:12, 16 h 5 m wall-clock).
 * VROOM validation: `results/paper_results_2026_05_30/07_validation/`
-  (3 of 4 cells completed: P ∈ {0, 0.25, 0.5} at θ = 1; sufficient
-  for the conservatism claim).
+  (three cells completed: P ∈ {0, 0.25, 0.5} at θ = 1).
 * Bibliography: `FullPaperLMDPCLiteratur.bib`.
 
 The figures and tables in this folder are **frozen at submission**. Do

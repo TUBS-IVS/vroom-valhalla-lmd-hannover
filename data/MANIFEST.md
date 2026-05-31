@@ -17,8 +17,11 @@ gitignored — see [`README.md`](README.md) for how to obtain the inputs.
 
 ## Provenance
 
-* HAGRID model output: provided by NFM (Niedersächsisches Forschungs-
-  zentrum für Mobilität), unpublished internal dataset.
+* HAGRID model output: produced by our sister project
+  [HAGRID](https://github.com/TUBS-IVS/HAGRID) (same author group, TU
+  Braunschweig — Institute of Transportation and Urban Engineering).
+  The specific snapshot bundled here is the May 2025 run used by the
+  EWGT 2026 paper.
 * PLZ geometry: derived from OpenStreetMap via Geofabrik
   Niedersachsen-Bremen extract, May 2025.
 * `cluster_raumtyp.csv`: BBSR Raumtyp 2017 classification at the

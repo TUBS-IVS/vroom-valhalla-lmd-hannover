@@ -12,7 +12,9 @@ The project is a scientific transportation-research pipeline for the Region
 Hannover last-mile parcel-delivery setting. It studies time-based delivery
 consolidation across logistics service providers (LSPs) using:
 
-- HAGRID parcel-demand data and PLZ-level geodata.
+- Parcel-demand data from our sister project
+  [HAGRID](https://github.com/TUBS-IVS/HAGRID) (same institute, TU
+  Braunschweig — IVS) and PLZ-level geodata.
 - Hub/depot assignment for DHL, Amazon, DPD, FedEx, GLS, Hermes, and UPS.
 - VROOM with Valhalla routing for operational route costs.
 - A 5-seed MLP surrogate model trained on routing-derived samples.

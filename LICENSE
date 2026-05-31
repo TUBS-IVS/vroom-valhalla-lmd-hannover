@@ -1,8 +1,9 @@
 MIT License
 
-Copyright (c) 2026 Lasse Bienzeisler, Bernhard Friedrich
-Technische Universität Braunschweig, Niedersächsisches Forschungszentrum
-für Mobilität (NFM)
+Copyright (c) 2026 Lasse Bienzeisler, Felix Petre, Oskar Wage,
+                   Bernhard Friedrich
+TU Braunschweig (Institute of Transportation and Urban Engineering) and
+Leibniz University Hannover (Institute of Cartography and Geoinformatics)
 
 Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the "Software"),
@@ -25,7 +26,9 @@ other dealings in the Software.
 ----
 
 NOTE on data licensing:
-The HAGRID parcel-demand dataset and the Region Hannover postal-code
-geodata are NOT distributed with this software. They have their own
-licensing terms; consult `data/README.md` (after fetching the inputs)
-for the source URLs and license attribution.
+This repository consumes the output of HAGRID
+(https://github.com/TUBS-IVS/HAGRID), the parcel-demand generation
+pipeline from the same author group, plus Region Hannover postal-code
+geodata derived from OpenStreetMap. Neither input is distributed with
+this software — see `data/README.md` (after fetching the inputs) for
+the source URLs and license attribution.
