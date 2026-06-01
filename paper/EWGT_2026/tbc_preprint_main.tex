@@ -19,6 +19,12 @@
 \usepackage[T1]{fontenc}
 \usepackage{mathptmx}
 
+% Page geometry: widen the text block. The elsarticle "preprint" option does
+% not load geometry itself, so it falls back to the default article margins
+% (narrow column, wide margins). We override with a wider text block while
+% staying in the clean preprint layout (no Procedia/CRC chrome).
+\usepackage[a4paper,left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm]{geometry}
+
 % Mathematics and symbols
 \usepackage{amsmath}
 \usepackage{amssymb}
