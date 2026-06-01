@@ -53,7 +53,13 @@ it's redundant once the contents are unpacked into the tracked layout.
 ```powershell
 cd paper/EWGT_2026
 
-# Either via pdflatex directly:
+# Recommended — Tectonic (single self-contained binary, fetches packages on
+# demand, resolves bib + cross-refs in one pass). Produces
+# EWGT26_Full_Paper_LB_preprint.pdf:
+tectonic -X compile tbc_preprint_main.tex
+Copy-Item tbc_preprint_main.pdf EWGT26_Full_Paper_LB_preprint.pdf -Force
+
+# Or via a classic TeX distribution (MiKTeX / TeX Live) with pdflatex directly:
 pdflatex tbc_preprint_main
 bibtex   tbc_preprint_main
 pdflatex tbc_preprint_main
