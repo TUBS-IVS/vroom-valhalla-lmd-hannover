@@ -59,6 +59,30 @@ def _append(key: str, rows: list[dict]) -> None:
                               index=False)
 
 
+def _prune_partial(completed: list[list[float]]) -> None:
+    """Self-heal: drop rows of any cell not recorded as completed.
+
+    The four _append() calls per cell are not atomic; a kill between them
+    leaves a partially-appended cell that is absent from state_recompute.json
+    and would be fully redone on resume, duplicating its rows. Pruning all
+    non-completed cells at startup makes the resume deterministic.
+    """
+    for path in OUT_FILES.values():
+        if not path.exists():
+            continue
+        df = pd.read_csv(path)
+        if len(df) == 0:
+            continue
+        mask = np.zeros(len(df), dtype=bool)
+        for P, s in completed:
+            mask |= (np.isclose(df.penalty, P)
+                     & np.isclose(df.share_willing, s))
+        if not mask.all():
+            print(f"[self-heal] {path.name}: dropping {int((~mask).sum())} "
+                  f"row(s) from partially-appended cell(s)", flush=True)
+            df[mask].to_csv(path, index=False)
+
+
 def main() -> None:
     provider_data, optim_data = C.load_checkpoints()
     model = C.load_model()
@@ -96,6 +120,7 @@ def main() -> None:
 
     # --- resume support: skip cells already completed in a previous run ---
     completed = _load_state()
+    _prune_partial(completed)
     n_target = len(cells)
     todo = [c for c in cells if not any(
         np.isclose(c[0], w[0]) and np.isclose(c[1], w[1]) for w in completed
