@@ -9,6 +9,13 @@ median alpha. Three variants are compared:
   - per_lsp_median: alpha = median per LSP (DHL, Amazon, DPD, FedEx, GLS, Hermes, UPS)
 
 Expected output: global_median MAPE ≈ 2.95% (±0.3pp, reproduces paper training).
+
+Notes:
+- Re-running recomputes all three variants from scratch (~20–40 min) and
+  overwrites tab_alpha_sensitivity.csv — there is deliberately no resume
+  logic for this 3-row analysis.
+- Do not run while other heavy python jobs (e.g. oracle_loop_gui.py or the
+  stage-3 recompute) are active — LGB fits use 4 threads and several GB RAM.
 """
 from __future__ import annotations
 
