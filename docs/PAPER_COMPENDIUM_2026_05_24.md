@@ -3139,3 +3139,131 @@ Saving-pro-Wartetag-eingespart entlang der Pareto-Frontier:
 - `results/sensitivity_2d/tab_pareto_optimal.csv` (34 Pareto-Optimale Cells)
 - `results/sensitivity_2d/fig_pareto_2d.{png,pdf}` (2D Pareto-Frontier mit Labels)
 - `results/sensitivity_2d/fig_heatmap_cost.{png,pdf}` (Cost-Heatmap über Grid)
+
+---
+
+## 38. Stage-3-Revision, Preprint-Mirror und Präsentations-Figurensatz (2026-08-18)
+
+Ergänzung nach der EWGT-Revision. Alles hier bezieht sich auf **Stage 3**
+(per-hub balancing + system-wide fleet smoothing), nicht auf die Stage-2-Zahlen
+der Abschnitte oben. Kanonische Daten: `results/revision_2026_07/`.
+
+### 38.1 Was Stage 3 an den Kernzahlen ändert
+
+| Größe | Submission (Stage 2) | Revision (Stage 3) |
+|---|---|---|
+| Validierte Betriebspunkte | 3 (P ∈ {0, 0.25, 0.5}) | **4** (+ P = 0.75) |
+| Konservativitätsband | 1.3–2.1 pp | **0.9–2.7 pp** |
+| VROOM-Ist bei P = 0 | 24.3 % | **23.7 %** |
+| VROOM-Ist bei P = 0.25 | — | **19.8 %** (Prognose 18.5 %) |
+| VROOM-Ist bei P = 0.75 | — | **13.0 %** (Prognose 10.2 %) |
+| Ø Wartezeit bei P = 0.25 | 0.45 d | **0.46 d** |
+| Mo–Sa Flotten-CV-Reduktion | bis 60 % / 71 % | **54 % bei (0.5, 1), bis 78 % im Gitter** |
+
+Unverändert bestätigt: 22.8 % max Saving bei (0, 1), Peak-Flotte −12.9 % bei
+(0.5, 1), Baseline-Flotten-CV 0.135, α = 1.343, 2.95 % OOF-MAPE.
+
+Flottenprofil bei (P = 0.25, θ = 1): Peak 1239 → 1064 (Stage 2) → **1007**
+(Stage 3), CV 0.135 → 0.056 → **0.029**.
+
+### 38.2 Zwei harte Analyse-Regeln (sonst falsche Zahlen)
+
+**(a) Per-PLZ-Zerlegung nur bei θ = 1.** Die Express-Komponente ist
+**hub-gebündelt** und nicht auf Flächen zerlegbar. Bei `share_willing = 1.0` ist
+sie über alle P und Provider **exakt 0.0** (verifiziert, 56 Zeilen) — nur dort
+gilt `total = dd_cost` und eine per-PLZ-Zerlegung ist exakt. Deshalb ist der
+ganze per-Fläche-Einsparungskomplex auf θ = 1 beschränkt.
+
+**(b) PARTIAL-VROOM-Zellen MITZÄHLEN.** Zwei von 4 230 Routing-Zellen (DHL,
+PLZ 30855, Tag 0 und 3 bei P = 0) liefern `vroom_status = PARTIAL`. Die
+publizierte Validierung (1 457 294.20 € = 23.69 % bei P = 0) enthält sie. Wer
+sie herausfiltert, erhält **24.92 %** und 2 058 km weniger — also Zahlen, die dem
+Paper widersprechen. `scripts/revision/41_op_kpi_tables_smoothed.py` hat dafür
+ein Gate gegen `tab_savings_pred_vs_actual_smoothed.csv`.
+
+### 38.3 Warum `tab_sensitivity_master_plz.csv` nicht mit Stage 3 kombinierbar ist
+
+Diese Tabelle (`results/supplementary/sensitivity_break_even/`) sieht aus wie die
+perfekte Quelle für per-PLZ-Einsparungen: sie hat VROOM-Baseline, SA_ML, Fixed
+plus alle Strukturfeatures. Ihre Baseline sitzt aber auf einer **anderen
+Nachfrageallokation**: Amazon 30159 hat dort 3 562 Pakete, in Stage 3 sind es
+9 019, weil Cluster-Merge-Forwarding Nachfrage umverteilt. Kombination mit
+Stage-3-Routen ⇒ frei erfundene Einsparungen. Stattdessen erzeugt
+`scripts/presentation/00_recompute_per_plz_costs.py` Baseline und optimierte
+Kosten aus **einer** Rechnung (8 Zellen, ~11 min, resumable, zwei Gates).
+
+### 38.4 Wo Konsolidierung sich räumlich lohnt (Stage 3, θ = 1, P = 0.25)
+
+Euro-gewichtet je Raumtyp:
+
+| Raumtyp | Einsparung | absolut | n (Fläche×Provider) |
+|---|---|---|---|
+| rural | **24.7 %** | 196 k€/Woche | 118 |
+| suburban | 16.1 % | 115 k€/Woche | 124 |
+| urban | 10.4 % | 42 k€/Woche | 70 |
+
+Rural führt **auf beiden Achsen** — relativ und absolut. Achtung: der
+*ungewichtete* per-Fläche-Mittelwert (26.7 % bei P = 0) liegt über der
+Systemeinsparung (22.8 %), weil kleine periphere Einheiten proportional mehr
+sparen. Verteilungen immer als per-Fläche kennzeichnen, Summen immer aus
+absoluten Euro rechnen, nie Prozente mitteln.
+
+Strukturtreiber (Spearman gegen per-Fläche-Einsparung): Paketmenge/Woche
+**−0.76**, Pakete/km² **−0.74**, Stops/Tag −0.61, Hub-Distanz **+0.61**,
+Fläche +0.37, B2C-Anteil −0.19. Also: dünn und weit vom Depot.
+
+Einsparung wird bei **P = 5 €/Pkt/Tag** für jeden Raumtyp auf 0 getrieben.
+
+### 38.5 Lieferfrequenz ist nie 1/Woche
+
+Bei `MAX_HOLDING_DAYS = 3` hat eine Einmal-pro-Woche-Zustellung eine Lücke von 6
+> 3 und ist unzulässig. `enumerate_schedules()` liefert Größen
+**{2: 3, 3: 14, 4: 15, 5: 6, 6: 1} = 39**. Eine „1 day/wk"-Klasse in einer
+Legende ist ein Fehler, keine Beobachtung.
+
+Frequenzinvarianz Stage 2 ≡ Stage 3 ist über alle 27 456 Zeilen verifiziert:
+Smoothing verschiebt **welche** Wochentage, nie **wie viele**. Bei (0.25, 1)
+wandern netto 2.9 pp der Flächentage — Montag 60.3 → 59.6 %, Samstag
+51.6 → 53.2 %. Das ist der Mechanismus hinter der CV-Reduktion zu Nullkosten in
+der Lieferfrequenz.
+
+### 38.6 CO₂ und Fahrleistung (4 validierte Punkte, echte Routen)
+
+| P | km/Woche | CO₂ t/Woche | vs. P = 0.75 |
+|---|---|---|---|
+| 0 | 214 101 | 53.5 | **−18.5 %** |
+| 0.25 | 231 053 | 57.8 | −12.1 % |
+| 0.5 | 249 661 | 62.4 | −5.0 % |
+| 0.75 | 262 771 | 65.7 | — |
+
+CO₂-Faktor 0.25 kg/Fahrzeug-km (externe Annahme, kein Modellergebnis). Bezug ist
+die am wenigsten konsolidierte **validierte** Zelle, nicht die Tageszustellung —
+für Letztere existiert kein VROOM-Baseline-Solve auf dieser Allokation.
+
+### 38.7 Präsentations-Figurensatz
+
+`results/presentation_2026_08/` (gitignored), erzeugt von
+`scripts/presentation/`: 37 Figuren, je in Paper- (serif/PDF) und Slide-Stil
+(sans/16:9/PNG) aus **einem** Code-Pfad, sieben Akte. `MANIFEST.md` wird aus
+Provenienz-Sidecars generiert und listet auch das Ausgeschlossene mit Begründung.
+
+Dauerhaft ausgeschlossen: alles auf `penalty_sweep/sched_cost_cache.npz`
+(Stage-2, unbundled Selektionspfad — vgl. Abschnitt zu `dd_cost` +
+`_hub_express_day_ml`), die Cluster-Bias-Karten (30159 zeigt −30.7 % predicted
+vs. +9.6 % actual, ein PLZ-Merge-Artefakt), alles aus `tab_vroom_path2.csv`
+(jede Zeile `ERR:TypeError: solve_single_plz() ... 'seed_key'`), und
+`_fig_maps_per_share_P04.py` (rechnet P = 0.5, beschriftet P = 0.4).
+
+### 38.8 Paper-Ablage auf GitHub
+
+Zwei Ordner nebeneinander, beide im **Preprint-Layout**
+(`elsarticle[preprint,12pt]`): `paper/EWGT_2026/` = eingereichte Fassung,
+unverändert; `paper/EWGT_2026_rev1/` = Revision. Das Elsevier-Camera-Ready
+(`elsevier_source/`) ist die beim Venue liegende Fassung und **gitignored** —
+nie publizieren.
+
+Fallstrick, der dreimal zugeschlagen hat: der Revisionsordner enthielt
+`figures/fig4,5,6`, **alle sechs** `tables/*.csv`, das Preprint-PDF und die
+`MANIFEST.md` als md5-identische Kopien der Submission. Bei jeder neuen Revision
+gegen `../EWGT_2026/` und gegen `results/revision_*/` md5-prüfen, statt
+anzunehmen, dass der Ordner die Revision enthält.
