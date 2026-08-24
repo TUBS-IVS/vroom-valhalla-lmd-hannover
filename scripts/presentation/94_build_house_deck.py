@@ -766,6 +766,8 @@ def part_method(prs):
             "Per-provider α made it worse: 3.2 % against 2.9 %")],
           draw=split, t=BODY_T + 1.90)
 
+    part_formulas(prs)
+
     s = hslide(prs, SEC_METH, "What the formula ignores, and who repairs it",
                "Point inaccuracy of continuum approximations: Figliozzi (2008). "
                "Feature taxonomy after Akkerman et al. (2025).")
@@ -980,6 +982,118 @@ def part_method(prs):
                          "network, so the peak falls without touching delivery "
                          "frequency")],
                  fig=(L, BODY_T, W, 3.85), t=BODY_T + 4.05)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 4b · The three formulas, each broken into the parts it is made of
+# ═══════════════════════════════════════════════════════════════════════════
+def _formula_panel(s, parts, *, t=BODY_T, h=1.15, size=27):
+    """The framed equation the rest of the slide then takes apart."""
+    rect(s, L, t, W, h, PANEL, line_col=None)
+    rect(s, L, t, 0.09, h, RED)
+    H.mathline(s, L + 0.30, t, W - 0.60, h, parts, size)
+    return t + h
+
+
+def part_formulas(prs):
+    # ── 1 · the objective ────────────────────────────────────────────────
+    def objective(s):
+        y = _formula_panel(s, [
+            ("σ", ""), ("★", "sup"), ("z", "sub"), ("  =  arg min", ""),
+            ("σ", "sub"), ("   [   ", ""), ("Σ", ""), ("d", "sub"),
+            (" C̃", "hi"), ("z,d", "sub"), ("(σ | σ", ""), ("−z", "sub"),
+            (")   +   ", ""), ("P", "hi"), (" · ", ""), ("θ", "hi"),
+            ("z", "sub"), (" · ", ""), ("p", "hi"), ("z", "sub"), (" · ", ""),
+            ("w̄", "hi"), ("(σ)   ]", "")])
+        H.term_notes(s, [
+            ("σ★z", "the weekly pattern this cell ends up with, one of 39"),
+            ("C̃z,d", "surrogate cost of the cell on weekday d"),
+            ("σ−z", "what the other cells at the same depot chose"),
+            ("P", "service penalty, a shadow price in € per parcel per day"),
+            ("θz · pz", "the willing share of the cell's weekly volume"),
+            ("w̄(σ)", "average added wait the pattern imposes")], y + 0.22)
+
+    build(prs, SEC_METH, "What we minimise: routing cost plus a steering term",
+          "Objective evaluated per cell inside the coordinate-descent sweep; "
+          "P enters as a steering term only and is never booked as cost.",
+          [("Gears", BLACK,
+            [("Only σ is free. ", True),
+             ("Everything else is either data or what the neighbours already "
+              "decided", False)]),
+           ("Truck", RED,
+            [("The first term is money: ", True),
+             ("what the tours actually cost once this pattern is flown",
+              False)]),
+           ("GroupOfPeople", AMBER,
+            [("The second term is not: ", True),
+             ("P prices waiting so the optimum slides along the cost–service "
+              "curve, but no customer is charged it", False)])],
+          draw=objective, t=BODY_T + 2.70)
+
+    # ── 2 · the cost estimate ────────────────────────────────────────────
+    def surrogate(s):
+        y = _formula_panel(s, [
+            ("C̃", "hi"), ("z,d", "sub"), ("   =   ", ""), ("α", "hi"),
+            (" · Ĉ", ""), ("z,d", "sub"), ("   +   ", ""), ("g", "hi"),
+            ("(x", ""), ("z,d", "sub"), (")", "")])
+        H.term_notes(s, [
+            ("α = 1.343", "one global scalar, fitted once on the training pool"),
+            ("Ĉz,d", "the Daganzo backbone — continuum routing physics"),
+            ("g(xz,d)", "LightGBM residual over 44 engineered features"),
+            ("C̃z,d", "2.95 % error on postal-code areas never seen in "
+                     "training")], y + 0.22)
+        for i, (lab, val, col) in enumerate([
+                ("Ĉ raw", "26 % off", H.CRIM),
+                ("α · Ĉ", "9.7 % off", AMBER),
+                ("α · Ĉ + g", "2.95 % off", H.GREEN)]):
+            x = L + 1.45 + i * 3.35
+            rect(s, x, BODY_T + 2.95, 2.95, 0.10, col)
+            txt(s, x, BODY_T + 3.12, 2.95, 0.36, lab, SZ_BODY, bold=True,
+                color=INK, align=PP_ALIGN.CENTER)
+            txt(s, x, BODY_T + 3.52, 2.95, 0.36, val, SZ_LEAD, bold=True,
+                color=col, align=PP_ALIGN.CENTER)
+
+    build(prs, SEC_METH, "What the cost estimate is made of",
+          "2 733 VROOM samples · GroupKFold by postal-code area · R² = 0.997. "
+          "α re-verified against the shipped production model by the figure "
+          "script's gate.",
+          [("HeadWithGears", RED,
+            "Physics sets the shape, one scalar sets the level, and the "
+            "learner cleans up what is left")],
+          draw=surrogate, t=BODY_T + 4.20)
+
+    # ── 3 · the backbone ─────────────────────────────────────────────────
+    def backbone(s):
+        y = _formula_panel(s, [
+            ("Ĉ", "hi"), ("   =   ", ""), ("m", "hi"), ("  ·  [   ", ""),
+            ("F", "hi"), ("   +   (  2 ", ""), ("r", "hi"), (" λ  +  ", ""),
+            ("k", "hi"), (" √( ", ""), ("s", "hi"), (" · ", ""), ("A", "hi"),
+            (" )  )  ·  ", ""), ("c", "hi"), ("km", "sub"), ("   ]", "")])
+        H.term_notes(s, [
+            ("m = p / Q, rounded up", "tours needed, Q = 230 parcels per "
+                                      "van — rounding up is why cost "
+                                      "climbs in steps"),
+            ("F = 189.15 €", "one van-day, including eight hours of labour"),
+            ("2 r λ", "out to the area and back, r = depot distance at "
+                      "50 km/h"),
+            ("k √(s · A)", "Beardwood local tour length, k = 0.7124, over "
+                           "s stops in area A"),
+            ("c per km = 0.3864 €", "operating cost per kilometre")],
+                     y + 0.22)
+
+    build(prs, SEC_METH, "What the backbone is made of",
+          "Daganzo/Beardwood continuum approximation as implemented in "
+          "batch_delivery.legacy.daganzo; 120 s service time per parcel enters "
+          "through the tour-count time constraint.",
+          [("UpwardTrend_LTR", RED,
+            [("This is why batching pays: ", True),
+             ("m is a ceiling, so a cell that halves its delivery days does "
+              "not halve its tours — it drops whole van-days", False)]),
+           ("Checkmark", GREEN,
+            [("And why we keep it: ", True),
+             ("√ and ⌈ ⌉ keep rising outside the training range, where a tree "
+              "ensemble would flatten out", False)])],
+          draw=backbone, t=BODY_T + 3.30)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1345,6 +1459,29 @@ def part_backup(prs):
     txt(s, L, BODY_B - 0.85, W, 0.7,
         "Neither bound changes the direction of the result.", SZ_LEAD,
         bold=True, color=RED)
+
+    # Answers the question the frequency-mix figure provokes: why is there a
+    # bump of consolidation at theta = 10 % even at a punitive penalty?
+    s = hslide(prs, SEC_BAK,
+               "Why consolidation survives at θ = 10 % even at P = 10",
+               "Derived from the Stage-3 grid "
+               "(_tab_chosen_with_system_smoothing.csv, 27 456 rows). Share = "
+               "cells choosing fewer than six delivery days.")
+    y = H.B.table(s, ["Operating point", "P · θ", "Cells consolidating"],
+                  [[("P = 10, θ = 0.1", "key"), ("1.0", "num"), "41.7 %"],
+                   [("P = 1, θ = 1.0", "key"), ("1.0", "num"), "45.8 %"],
+                   [("P = 10, θ = 0.2", "key"), ("2.0", "num"), "10.9 %"],
+                   [("P = 2, θ = 1.0", "key"), ("2.0", "num"), "9.9 %"]],
+                  BODY_T, widths=[4.2, 2.4, 4.4], sz=SZ_BODY, reserve=2.35)
+    badges(s, [("Gears", RED,
+                [("The penalty scales with θ, the routing gain does not: ",
+                  True),
+                 ("at θ = 10 % the batched stream is a median 92 parcels a "
+                  "service day — well under one 230-parcel van", False)]),
+               ("MagnifyingGlass", BLACK,
+                "So the effective knob is the product P · θ: Spearman −0.97 "
+                "against −0.95 for P alone and −0.19 for θ alone")],
+           y + 0.24)
 
     extras = [
         (A / "fig14_headline.png", "Headline result at a glance",

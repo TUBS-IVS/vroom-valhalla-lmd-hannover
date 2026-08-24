@@ -309,6 +309,46 @@ def badges(slide, items, t=BODY_T, *, x=BADGE_X, tx=TEXT_X, tw=TEXT_W,
     return y - gap
 
 
+def mathline(slide, l, t, w, h, parts, size, *, align=PP_ALIGN.CENTER,
+             color=INK, accent=RED):
+    """One line of formula, as real editable text with real sub/superscripts.
+
+    `parts` is a list of (text, kind); kind is "" for the base line, "sub" or
+    "sup" for the shifted positions, and "hi" to colour a term in the accent.
+    PowerPoint carries the shift in the run's `baseline` attribute, which
+    python-pptx does not expose, so it is set on the XML directly.
+    """
+    box, tf = B._frame(slide, l, t, w, h, anchor=MSO_ANCHOR.MIDDLE)
+    p = tf.paragraphs[0]
+    p.alignment = align
+    for text, kind in parts:
+        run = B._para(p, text, size * (0.62 if kind in ("sub", "sup") else 1.0),
+                      bold=True, color=accent if kind == "hi" else color,
+                      font="Cambria Math")
+        if kind == "sub":
+            run.font._rPr.set("baseline", "-25000")
+        elif kind == "sup":
+            run.font._rPr.set("baseline", "30000")
+    return box
+
+
+def term_notes(slide, items, t, *, l=L, w=W, gap=0.24, size=13.0,
+               head=13.5):
+    """The legend under a formula: the symbol in red, its reading beneath.
+
+    The note column is sized to the longest note, so one wordy term cannot
+    push its own text out of its box while the others sit half empty.
+    """
+    n = len(items)
+    cw = (w - gap * (n - 1)) / n
+    nh = max(text_height(note, cw, size, 1.22) for _, note in items) + 0.06
+    for i, (sym, note) in enumerate(items):
+        x = l + i * (cw + gap)
+        txt(slide, x, t, cw, 0.30, sym, head, bold=True, color=RED)
+        txt(slide, x, t + 0.32, cw, nh, note, size, color=DIM, line=1.22)
+    return t + 0.32 + nh
+
+
 def sub_items(slide, lines, t, *, x=TEXT_X, w=TEXT_W, size=SZ_SUB,
               pitch=0.34):
     """The 16 pt detail lines he hangs under a bullet."""
