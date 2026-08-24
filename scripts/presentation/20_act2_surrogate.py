@@ -109,6 +109,7 @@ def fig21_progression():
         fig, axes = plt.subplots(1, 3, sharex=True, sharey=True,
                                  figsize=S.figsize(style, (11.5, 4.1),
                                                    (16.0, 5.6)))
+        # Coloured by LSP, as the paper's fig 3 is, using the same PROV_COLOR.
         colors = np.array([D.PROVIDER_COLOR.get(p, "#888888")
                            for p in pool.provider])
         for ax, (title, pred) in zip(axes, panels):
@@ -132,8 +133,8 @@ def fig21_progression():
         axes[0].set_ylabel("Predicted cost [€]")
         fig.supxlabel("VROOM cost per postal-code area [€]")
         handles = [plt.Line2D([], [], marker="o", linestyle="", color=c,
-                              label=p, markersize=S.scale(style, 5, 1.4))
-                   for p, c in D.PROVIDER_COLOR.items()]
+                              label=pv, markersize=S.scale(style, 5, 1.4))
+                   for pv, c in D.PROVIDER_COLOR.items()]
         axes[2].legend(handles=handles, fontsize=None, framealpha=0.9,
                        loc="upper left", ncol=2)
         fig.tight_layout(rect=[0, 0.04, 1, 1])

@@ -32,7 +32,7 @@ ACT = "1 - Setting"
 BASIS = "Structural inputs (HAGRID demand, PLZ geodata, unbatched baseline)"
 
 RT_ORDER = ["urban", "suburban", "rural"]
-RT_COLOR = {"urban": "#1d3557", "suburban": "#2a9d8f", "rural": "#e9c46a"}
+RT_COLOR = D.RT_COLOR   # paper fig 6 settlement palette, via _data
 
 
 def _view(units):
@@ -131,7 +131,7 @@ def fig12_map_demand():
         fig, axes = plt.subplots(1, 2,
                                  figsize=S.figsize(style, (9.6, 5.0), (13.0, 6.0)))
         for ax, col, label, cmap in (
-                (axes[0], "parcels", "Weekly parcels per area", "Blues"),
+                (axes[0], "parcels", "Weekly parcels per area", S.CMAP_DEMAND),
                 (axes[1], "density", "Weekly parcels per km²", "Purples")):
             m = view.merge(per[["unit", col]], on="unit", how="left")
             norm = LogNorm(vmin=max(1.0, float(per[col].min())),
@@ -183,8 +183,10 @@ def fig13_map_raumtyp():
                    for rt_ in RT_ORDER]
         ax.legend(handles=handles, loc="upper right", framealpha=0.9,
                   title="Settlement type")
-        P.footnote(fig, "Classification from plz_raumtyp.csv. Act 7 shows the "
-                        "saving differs sharply between these classes.", style)
+        # No cross-reference to the deck's internal act numbering here: the
+        # footnote is baked into the PNG and the audience never sees that map.
+        P.footnote(fig, "Settlement type per postal-code area, BBSR "
+                        "classification (plz_raumtyp.csv).", style)
         fig.tight_layout(rect=[0, 0.04, 1, 1])
         S.save(fig, "fig13_map_raumtyp", style, S.TIER_B)
 

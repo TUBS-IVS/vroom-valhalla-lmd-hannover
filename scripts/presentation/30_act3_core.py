@@ -48,7 +48,7 @@ def fig31_saving_grid():
     for style in S.styles():
         S.apply(style)
         fig, ax = plt.subplots(figsize=S.figsize(style, (7.2, 5.4), (11.0, 6.2)))
-        P.heat(ax, piv, "viridis",
+        P.heat(ax, piv, S.CMAP_SAVING,
                "Weekly cost saving against daily-delivery baseline",
                vmin=0, vmax=float(np.ceil(piv.values.max() / 5) * 5),
                cbar_label="Saving [%]", style=style)
@@ -78,7 +78,7 @@ def fig32_wait_grid():
     for style in S.styles():
         S.apply(style)
         fig, ax = plt.subplots(figsize=S.figsize(style, (7.2, 5.4), (11.0, 6.2)))
-        P.heat(ax, piv, "YlOrRd",
+        P.heat(ax, piv, S.CMAP_WAIT,
                "Mean additional customer wait per parcel",
                vmin=0, vmax=float(np.ceil(piv.values.max() * 10) / 10),
                fmt="{:.2f}", cbar_label="Wait [d]", invert_thr=True,
@@ -139,16 +139,16 @@ def fig33_fleet_grid():
         fig, axes = plt.subplots(1, 3,
                                  figsize=S.figsize(style, (16.0, 4.6),
                                                    (19.0, 6.0)))
-        P.heat(axes[0], pk, "magma", "(a) Peak-fleet reduction",
+        P.heat(axes[0], pk, S.CMAP_FLEET, "(a) Peak-fleet reduction",
                vmin=float(np.floor(min(0, pk.values.min()) / 5) * 5),
                vmax=float(np.ceil(pk.values.max() / 5) * 5),
                cbar_label="Reduction [%]", style=style)
-        P.heat(axes[1], cv, "magma",
+        P.heat(axes[1], cv, S.CMAP_FLEET,
                "(b) Mon–Sat fleet CV reduction",
                vmin=0, vmax=float(np.ceil(cv.values.max() / 10) * 10),
                cbar_label="Reduction [%]", style=style)
         lim = float(np.ceil(max(abs(tc.values.min()), abs(tc.values.max()))))
-        P.heat(axes[2], tc, "RdBu_r", "(c) Total weekly fleet change",
+        P.heat(axes[2], tc, S.CMAP_CHANGE, "(c) Total weekly fleet change",
                norm=TwoSlopeNorm(vmin=-lim, vcenter=0.0, vmax=lim),
                cbar_label="Change [%]", style=style)
         for ax in axes:
@@ -188,11 +188,12 @@ def fig34_pareto():
         S.apply(style)
         fig, ax = plt.subplots(figsize=S.figsize(style, (7.4, 5.4), (11.0, 6.2)))
         pens = sorted(m.penalty.unique())
-        cmap = plt.get_cmap("viridis", len(pens))
+        cmap = plt.get_cmap(S.CMAP_PENALTY)
+        _lv = (lambda k: cmap(0.05 + 0.90 * k / max(1, len(pens) - 1)))
         for k, pen in enumerate(pens):
             sub = m[np.isclose(m.penalty, pen)].sort_values("share_willing")
             ax.plot(sub.avg_wait_d_stage3, sub.saving_pct, "-o",
-                    color=cmap(k), markersize=S.scale(style, 4.0, 1.5),
+                    color=_lv(k), markersize=S.scale(style, 4.0, 1.5),
                     linewidth=S.scale(style, 1.2, 1.8),
                     label=rf"$P={pen:g}$", alpha=0.9, zorder=2)
         ax.plot(fr.avg_wait_d_stage3, fr.saving_pct, "--",
@@ -263,16 +264,31 @@ def fig35_schedule_mix():
             r, c = divmod(idx, ncols)
             axes[r, c].set_visible(False)
 
+        from matplotlib import rcParams as rcp
         sizes = sorted(set(sched[col].unique()))
         handles = [Patch(facecolor=D.FREQ_COLOR[s], label=f"{s} day/wk")
                    for s in sizes]
-        fig.supxlabel(r"Willingness-to-wait share $\theta$ [%]")
-        fig.supylabel("Share of postal-code areas [%]")
+        # Place the shared labels and the legend off the measured axes boxes,
+        # exactly as the paper's fig 4 does. A fixed supxlabel position works on
+        # the tall paper canvas but lands on top of the legend at 16:9.
+        fig.tight_layout(rect=[0.05, 0.16, 1, 1], pad=0.4, w_pad=0.3, h_pad=0.6)
+        fig.canvas.draw()
+        rend = fig.canvas.get_renderer()
+        inv = fig.transFigure.inverted()
+        cx = (axes[0, 0].get_position().x0 + axes[-1, -1].get_position().x1) / 2
+        cy = (axes[-1, -1].get_position().y0 + axes[0, 0].get_position().y1) / 2
+        xlab_y = axes[-1, 0].get_tightbbox(rend).transformed(inv).y0 - 0.030
+        fig.text(cx, xlab_y, r"Willingness-to-wait share $\theta$ [%]",
+                 ha="center", va="top", fontsize=rcp["axes.labelsize"])
+        lb = axes[0, 0].get_tightbbox(rend).transformed(inv)
+        fig.text(lb.x0 - 0.004, cy, "Share of postal-code areas [%]",
+                 rotation=90, ha="right", va="center",
+                 fontsize=rcp["axes.labelsize"])
         fig.legend(handles=handles, title="Delivery days per week",
-                   loc="lower center", ncol=len(handles), frameon=True,
+                   loc="upper center", ncol=len(handles), frameon=True,
                    framealpha=0.9, edgecolor="0.8",
-                   bbox_to_anchor=(0.5, -0.02))
-        fig.tight_layout(rect=[0.02, 0.07, 1, 1])
+                   bbox_to_anchor=(cx, xlab_y - 0.055),
+                   handlelength=1.4, columnspacing=1.3, borderpad=0.4)
         S.save(fig, "fig35_schedule_mix", style, S.TIER_A)
 
     D.prov.write("fig35_schedule_mix",

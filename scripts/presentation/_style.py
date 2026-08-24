@@ -32,6 +32,81 @@ STYLES = ("paper", "slides")
 TIER_A = "tierA"
 TIER_B = "tierB"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Colour system — the paper is the reference
+# ─────────────────────────────────────────────────────────────────────────────
+# The deck and the manuscript must be indistinguishable, so every colour here is
+# taken from the figure scripts that produce the paper:
+#
+#   scripts/revision/30_fig5_heatmap_smoothed.py   fig 5 heatmaps
+#   scripts/revision/31_fig6_structural_smoothed.py fig 6 pareto + structure
+#   scripts/revision/32_fig4_mix.py                 fig 4 frequency mix
+#   scripts/paper/paper_final_v2.py                 PROV_COLOR, used by fig 1/3
+#
+# Do not "improve" these values in isolation. If a colour changes, it changes in
+# the paper first and is copied here, otherwise the two drift apart again.
+
+BRAND = "#BE1E3C"          # TU red: deck chrome only, never inside a figure
+BRAND_DARK = "#8f142b"
+INK = "#15181d"
+INK_SOFT = "#5c616b"
+GRID = "#d9d9de"
+MISSING = "#e6e6e6"        # areas outside the model, as in the paper's maps
+
+# Colormaps, per quantity, exactly as the paper uses them.
+CMAP_SAVING = "viridis"    # fig 5 (a), (b): cost saving
+CMAP_WAIT = "YlOrRd"       # fig 5 (c): additional customer wait
+CMAP_FLEET = "magma"       # fig 5 (d), (e): peak-fleet and CV reduction
+CMAP_CHANGE = "RdBu_r"     # fig 5 (f): signed total fleet change
+CMAP_THETA = "viridis"     # fig 6: adoption levels
+CMAP_PENALTY = "plasma"    # fig 6: service-penalty levels
+CMAP_QUARTILE = "YlOrBr"   # fig 6: structural quartiles
+CMAP_DEMAND = CMAP_SAVING  # maps have no paper counterpart, so they
+                           # follow the paper's magnitude convention
+
+# Settlement type — paper fig 6 RAUMTYP_PAL. (Note: the paper's fig 1 uses a
+# different assignment for the same three classes; fig 6 is the results figure
+# the deck's structural slides correspond to, so fig 6 wins here.)
+RAUMTYP = {"urban": "#1d3557", "suburban": "#2a9d8f", "rural": "#e76f51"}
+
+# Weekly delivery frequency — paper fig 4 FREQ_COLOR.
+FREQ = {2: "#1d3557", 3: "#2a9d8f", 4: "#e9c46a", 5: "#f4a261", 6: "#e76f51"}
+
+# Providers — paper PROV_COLOR (scripts/paper/paper_final_v2.py), the palette
+# behind fig 1 and the LSP colouring of fig 3.
+PROVIDER = {"Amazon": "#003049", "DHL": "#d62828", "DPD": "#f77f00",
+            "FedEx": "#5a189a", "GLS": "#2a9d8f", "Hermes": "#9d4edd",
+            "UPS": "#7d5a50"}
+
+# Pipeline stages have no counterpart in the paper; kept in its colour family.
+STAGE = {"baseline": "#8d99ae", "stage2": "#457b9d", "stage3": "#1d3557"}
+
+
+def seq_cmap(reverse: bool = False):
+    """Magnitude colormap — the paper's saving ramp."""
+    return CMAP_SAVING + ("_r" if reverse else "")
+
+
+def seq_warm_cmap(reverse: bool = False):
+    """Waiting-time colormap — the paper's wait ramp."""
+    return CMAP_WAIT + ("_r" if reverse else "")
+
+
+def fleet_cmap(reverse: bool = False):
+    """Fleet-reduction colormap — the paper's fleet ramp."""
+    return CMAP_FLEET + ("_r" if reverse else "")
+
+
+def div_cmap():
+    """Diverging colormap for signed quantities — the paper's change ramp."""
+    return CMAP_CHANGE
+
+
+def freq_colors(sizes) -> list[str]:
+    """Ordered colours for the given delivery-frequency classes."""
+    return [FREQ[int(s)] for s in sizes]
+
+
 _PAPER = {
     "font.family": "serif",
     "font.size": 11,

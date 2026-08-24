@@ -23,6 +23,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import _style as _S
+
 ROOT = Path(__file__).resolve().parents[2]
 OUT_ROOT = ROOT / "results" / "presentation_2026_08"
 PROV_DIR = OUT_ROOT / "_prov"
@@ -52,26 +54,28 @@ VROOM_CELLS = [(0.0, 1.0), (0.25, 1.0), (0.5, 1.0), (0.75, 1.0)]
 CO2_KG_PER_KM = 0.25
 
 PALETTE = {
-    "baseline": "#8d99ae",
-    "stage2": "#457b9d",
-    "stage3": "#1d3557",
+    "baseline": _S.STAGE["baseline"],
+    "stage2": _S.STAGE["stage2"],
+    "stage3": _S.STAGE["stage3"],
     "accent": "#e76f51",
     "accent2": "#2a9d8f",
     "warn": "#e9c46a",
 }
+# Settlement type and delivery frequency follow the paper's figures 6 and 4.
+RT_ORDER = ["urban", "suburban", "rural"]
+RT_COLOR = _S.RAUMTYP
+
 # Delivery frequencies run 2..6, never 1: MAX_HOLDING_DAYS = 3 makes a
 # once-weekly schedule inadmissible (its gap of 6 days exceeds the cap), and
 # enumerate_schedules() accordingly yields sizes {2:3, 3:14, 4:15, 5:6, 6:1}.
 # Listing a 1 day/wk class would invent a category the model cannot produce.
 FREQ_SIZES = [2, 3, 4, 5, 6]
-FREQ_COLOR = {2: "#1d3557", 3: "#2a9d8f", 4: "#e9c46a",
-              5: "#f4a261", 6: "#e76f51"}
-PROVIDER_COLOR = {
-    "DHL": "#ffcc00", "Amazon": "#ff9900", "DPD": "#a5063e",
-    "FedEx": "#4d148c", "GLS": "#0a4b9b", "Hermes": "#0091d2",
-    "UPS": "#644117",
-}
+FREQ_COLOR = _S.FREQ
 
+# Providers use the paper's PROV_COLOR, so a provider is the same colour in the
+# deck as in figures 1 and 3 of the manuscript.
+PROVIDER_COLOR = dict(_S.PROVIDER)
+PROVIDER_FILL = _S.STAGE["stage2"]
 
 # --------------------------------------------------------------------------
 # provenance

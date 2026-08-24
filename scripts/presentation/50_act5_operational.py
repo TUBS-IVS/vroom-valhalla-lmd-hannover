@@ -230,14 +230,15 @@ def fig54_load_factor():
         pens = sorted(per.penalty.unique())
         x = np.arange(len(D.PROVIDERS))
         w = 0.8 / len(pens)
-        cmap = plt.get_cmap("viridis", len(pens))
+        cmap = plt.get_cmap(S.CMAP_PENALTY)
+        _lv = (lambda k: cmap(0.05 + 0.90 * k / max(1, len(pens) - 1)))
         for k, pen in enumerate(pens):
             g = (per[np.isclose(per.penalty, pen)]
                  .set_index("provider").reindex(D.PROVIDERS))
             off = (k - (len(pens) - 1) / 2) * w
-            axes[0].bar(x + off, g.parcels_per_route, w, color=cmap(k),
+            axes[0].bar(x + off, g.parcels_per_route, w, color=_lv(k),
                         label=rf"$P={pen:g}$")
-            axes[1].bar(x + off, g.eur_per_parcel, w, color=cmap(k),
+            axes[1].bar(x + off, g.eur_per_parcel, w, color=_lv(k),
                         label=rf"$P={pen:g}$")
         for ax, ylab, title in (
                 (axes[0], "Parcels per route", "(a) Vehicle load factor"),

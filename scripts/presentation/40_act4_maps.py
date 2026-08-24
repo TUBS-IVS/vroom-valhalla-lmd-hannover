@@ -238,9 +238,9 @@ def fig44_map_wait():
         from matplotlib.colors import Normalize
         norm = Normalize(vmin=0.0, vmax=vmax)
         for ax, th, vals in zip(np.atleast_1d(axes), THETA_PANELS, frames):
-            _paint(ax, view, vals, "wait", cmap="YlOrRd", norm=norm,
+            _paint(ax, view, vals, "wait", cmap=S.CMAP_WAIT, norm=norm,
                    title=rf"$\theta = {th * 100:.0f}\%$", style=style)
-        sm = plt.cm.ScalarMappable(cmap="YlOrRd", norm=norm)
+        sm = plt.cm.ScalarMappable(cmap=S.CMAP_WAIT, norm=norm)
         cb = fig.colorbar(sm, ax=list(np.atleast_1d(axes)), fraction=0.025,
                           pad=0.02)
         cb.set_label("Mean added wait [d]")

@@ -42,7 +42,7 @@ BASIS = ("Stage-3 per-PLZ direct-delivery cost vs daily-delivery reference, "
 P_REF = 0.25
 P_PANELS = [0.0, 0.25, 0.5, 0.75, 1.0, 2.0]
 RT_ORDER = ["urban", "suburban", "rural"]
-RT_COLOR = {"urban": "#1d3557", "suburban": "#2a9d8f", "rural": "#e9c46a"}
+RT_COLOR = D.RT_COLOR   # paper fig 6 settlement palette, via _data
 
 
 def _load():
@@ -85,7 +85,10 @@ def fig71_map_saving():
     vmin = float(min(0.0, np.floor(agg.saving_pct.min() / 5) * 5))
     norm = (TwoSlopeNorm(vmin=vmin, vcenter=0.0, vmax=vmax) if vmin < 0
             else Normalize(vmin=0, vmax=vmax))
-    cmap = "RdYlGn" if vmin < 0 else "YlGn"
+    # Signed saving diverges around zero; unsigned is plain magnitude.
+    # Same convention as the paper: signed quantities diverge around
+    # zero on RdBu_r, unsigned magnitude uses the saving ramp.
+    cmap = S.CMAP_CHANGE if vmin < 0 else S.CMAP_SAVING
     print(f"  per-area saving range {agg.saving_pct.min():.1f}% .. "
           f"{agg.saving_pct.max():.1f}%")
 
@@ -277,7 +280,7 @@ def fig74_regime_map():
         fig, ax = plt.subplots(figsize=S.figsize(style, (7.6, 5.6), (11.0, 6.4)))
         data = piv.values.astype(float)
         norm = Normalize(vmin=float(np.nanmin(data)), vmax=float(np.nanmax(data)))
-        im = ax.imshow(data, cmap="YlGn", norm=norm, aspect="auto",
+        im = ax.imshow(data, cmap=S.CMAP_SAVING, norm=norm, aspect="auto",
                        origin="lower")
         for i in range(data.shape[0]):
             for j in range(data.shape[1]):
@@ -381,7 +384,7 @@ def fig76_provider_raumtyp():
         fig, ax = plt.subplots(figsize=S.figsize(style, (6.8, 5.2), (9.5, 6.0)))
         data = piv.values.astype(float)
         norm = Normalize(vmin=float(np.nanmin(data)), vmax=float(np.nanmax(data)))
-        im = ax.imshow(data, cmap="YlGn", norm=norm, aspect="auto")
+        im = ax.imshow(data, cmap=S.CMAP_SAVING, norm=norm, aspect="auto")
         for i in range(data.shape[0]):
             for j in range(data.shape[1]):
                 if not np.isfinite(data[i, j]):

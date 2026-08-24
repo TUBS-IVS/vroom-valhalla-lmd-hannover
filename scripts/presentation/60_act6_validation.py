@@ -43,11 +43,12 @@ def fig61_vroom_scatter():
         S.apply(style)
         fig, ax = plt.subplots(figsize=S.figsize(style, (6.2, 5.6), (8.4, 6.4)))
         pens = sorted(mv.penalty.unique())
-        cmap = plt.get_cmap("viridis", len(pens))
+        cmap = plt.get_cmap(S.CMAP_PENALTY)
+        _lv = (lambda k: cmap(0.05 + 0.90 * k / max(1, len(pens) - 1)))
         for k, pen in enumerate(pens):
             g = mv[np.isclose(mv.penalty, pen)]
             ax.scatter(g.vroom_cost_eur / 1000, g.ml_dd_cost_eur / 1000,
-                       s=S.scale(style, 16, 2.0), color=cmap(k), alpha=0.75,
+                       s=S.scale(style, 16, 2.0), color=_lv(k), alpha=0.75,
                        edgecolor="none", label=rf"$P={pen:g}$")
         lim = [0, float(max(mv.vroom_cost_eur.max(),
                            mv.ml_dd_cost_eur.max()) / 1000) * 1.05]

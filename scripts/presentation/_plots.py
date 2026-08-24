@@ -8,15 +8,16 @@ from matplotlib.colors import Normalize
 import _style as S
 
 
-def heat(ax, piv: pd.DataFrame, cmap: str, title: str, *,
+def heat(ax, piv: pd.DataFrame, cmap, title: str, *,
          vmin=None, vmax=None, norm=None, fmt="{:.1f}",
          cbar_label: str = "", annotate: bool = True,
          invert_thr: bool = False, style: str = "paper"):
     """Annotated heatmap over a (penalty x share_willing) pivot.
 
-    Annotation colour flips on the darker half of the colour range so labels
-    stay readable at both ends; `invert_thr` flips which end counts as dark
-    (needed for sequential maps that run light-to-dark the other way).
+    Annotation colour is chosen from the *measured* luminance of the cell fill
+    rather than from a hand-set threshold, so labels stay readable whichever
+    direction the colormap runs. `invert_thr` is accepted for backwards
+    compatibility and no longer needed.
     """
     data = piv.values.astype(float)
     if norm is None:
@@ -38,10 +39,12 @@ def heat(ax, piv: pd.DataFrame, cmap: str, title: str, *,
                 v = data[i, j]
                 if not np.isfinite(v):
                     continue
-                frac = float(norm(v))
-                dark = frac < 0.45 if not invert_thr else frac > 0.55
+                r, g, b, _ = im.cmap(im.norm(v))
+                # Relative luminance of the fill decides the ink.
+                lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
                 ax.text(j, i, fmt.format(v), ha="center", va="center",
-                        fontsize=fs, color="white" if dark else "#111111")
+                        fontsize=fs,
+                        color="white" if lum < 0.55 else S.INK)
 
     cb = ax.figure.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
     if cbar_label:
