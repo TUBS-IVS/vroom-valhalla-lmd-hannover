@@ -10,7 +10,7 @@ The deck is generated into the institutional template, so master, theme, fonts
 and furniture are inherited rather than re-implemented.
 
 Usage:
-    python scripts/presentation/94_build_house_deck.py [--out PATH]
+    python scripts/presentation/94_build_house_deck.py [--out PATH] [--hero NAME]
 """
 from __future__ import annotations
 
@@ -44,11 +44,28 @@ SEC_RES = "Results"
 SEC_IMP = "Implications and Outlook"
 SEC_BAK = "Backup"
 
+# The opening image. These are the study's own results rendered chrome-free by
+# 95_title_heroes.py — the talk no longer opens on a generated illustration.
+HERO = H.ROOT / "results" / "presentation_2026_08" / "heroes"
+HEROES = {
+    "week": (HERO / "hero_week.png",
+             "The 312 optimized weekly schedules · P = 0.25 €/parcel/day, "
+             "θ = 100 %"),
+    "region": (HERO / "hero_region.png",
+               "Delivery frequency per area at three adoption levels · "
+               "P = 0.25 €/parcel/day"),
+    "frontier": (HERO / "hero_frontier.png",
+                 "All 88 Stage-3 operating points; the efficient front in red"),
+    "wave": (H.ASSET / "parcel-wave.png",
+             "Illustration generated with OpenAI ImageGen"),
+}
 
-def title_slide(prs):
-    """His opening: a full-bleed photograph over a band carrying the title."""
+
+def title_slide(prs, hero_name="week"):
+    """His opening: a full-bleed image over a band carrying the title."""
     s = prs.slides.add_slide(prs.slide_layouts[H.LAYOUT_BLANK])
-    H.pic_cover(s, ASSET / "parcel-wave.png", 0, 0.93, SW, 4.42, focus=0.55)
+    hero, credit = HEROES[hero_name]
+    H.pic_cover(s, hero, 0, 0.93, SW, 4.42)
     rect(s, 0, 5.35, SW, 0.10, RED)
     txt(s, 5.18, 0.27, 3.0, 0.37, "EWGT 2026", 16, bold=True, color=INK)
     txt(s, 1.08, 5.62, 11.4, 1.00,
@@ -58,9 +75,7 @@ def title_slide(prs):
     txt(s, 1.08, 6.62, 7.05, 0.32,
         "Lasse Bienzeisler, Felix Petre, Oskar Wage, and Bernhard Friedrich",
         16, color=INK2)
-    txt(s, 8.30, 6.66, 4.55, 0.26,
-        "Illustration generated with OpenAI ImageGen", 9, color=DIM,
-        align=PP_ALIGN.RIGHT)
+    txt(s, 8.30, 6.66, 4.55, 0.26, credit, 9, color=DIM, align=PP_ALIGN.RIGHT)
     return s
 
 
@@ -1376,7 +1391,7 @@ def part_backup(prs):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-def build_deck(out: Path) -> Path:
+def build_deck(out: Path, hero: str = "week") -> Path:
     prs = Presentation(str(H.TEMPLATE))
 
     # The template master's footer still names the previous talk.
@@ -1392,7 +1407,7 @@ def build_deck(out: Path) -> Path:
     for i in range(len(prs.slides) - 1, -1, -1):
         H.delete_slide(prs, i)
 
-    title_slide(prs)
+    title_slide(prs, hero)
     part_background(prs)
     part_concepts(prs)
     part_concept(prs)
@@ -1415,8 +1430,10 @@ def main() -> int:
     ap.add_argument("--out", type=Path,
                     default=H.TEMPLATE.parent /
                     "EWGT_26_Bienzeisler_TBC_deck.pptx")
+    ap.add_argument("--hero", choices=sorted(HEROES), default="week",
+                    help="which opening image to use (default: week)")
     a = ap.parse_args()
-    p = build_deck(a.out)
+    p = build_deck(a.out, a.hero)
     print(f"wrote {p}")
     print(f"  {len(Presentation(str(p)).slides)} slides")
     return 0
