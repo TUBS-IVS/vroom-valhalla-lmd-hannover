@@ -12,7 +12,7 @@ For an editable deck, use 91_build_pptx.py, which emits native shapes.
 Usage:
     python scripts/presentation/92_export_html_deck_pptx.py
     python scripts/presentation/92_export_html_deck_pptx.py --src DECK.html --out OUT.pptx
-    python scripts/presentation/92_export_html_deck_pptx.py --scale 2   # 3840x2160
+    python scripts/presentation/92_export_html_deck_pptx.py --scale 2   # 2x raster
 """
 from __future__ import annotations
 
@@ -80,7 +80,11 @@ def render(src: Path, out: Path, scale: int, keep: bool) -> Path:
                         "<meta charset=\"utf-8\">" + base, 1)
 
     work = Path(tempfile.mkdtemp(prefix="deck_export_"))
-    px_w, px_h = int(1920 * scale), int(1080 * scale)
+    # The viewport stays at 1920x1080 CSS pixels whatever the scale: the deck's
+    # type and padding are in fixed px, so widening the window to 3840 shrinks
+    # every element relative to the canvas instead of sharpening it. Resolution
+    # comes from the device scale factor, which multiplies the output raster
+    # while leaving layout untouched.
     pngs: list[Path] = []
     try:
         for i, sec in enumerate(sections, 1):
@@ -92,7 +96,8 @@ def render(src: Path, out: Path, scale: int, keep: bool) -> Path:
             png = work / f"s{i:03d}.png"
             subprocess.run(
                 [chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
-                 "--hide-scrollbars", f"--window-size={px_w},{px_h}",
+                 "--hide-scrollbars", "--window-size=1920,1080",
+                 f"--force-device-scale-factor={scale}",
                  f"--virtual-time-budget={4000 + 1500 * scale}",
                  f"--screenshot={png}", page.as_uri()],
                 check=False, capture_output=True, timeout=180,
@@ -123,14 +128,18 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--src", type=Path, default=DEFAULT_SRC)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
-    ap.add_argument("--scale", type=int, default=1,
-                    help="1 = 1920x1080 per slide, 2 = 3840x2160")
+    ap.add_argument("--scale", type=int, default=2,
+                    help="device pixel ratio: 1 = 1920x1080 per slide, "
+                         "2 = 3840x2160. The CSS viewport stays 1920x1080 "
+                         "either way, so raising this sharpens the image "
+                         "without shrinking the deck's type.")
     ap.add_argument("--keep-renders", action="store_true")
     a = ap.parse_args()
     if not a.src.exists():
         print(f"source deck not found: {a.src}", file=sys.stderr)
         return 1
-    print(f"exporting {a.src.name} at {1920 * a.scale}x{1080 * a.scale} per slide")
+    print(f"exporting {a.src.name} at {1920 * a.scale}x{1080 * a.scale} "
+          f"per slide (1920x1080 CSS px at {a.scale}x)")
     p = render(a.src, a.out, a.scale, a.keep_renders)
     print(f"wrote {p}")
     print(f"  {len(Presentation(str(p)).slides)} slides, "
