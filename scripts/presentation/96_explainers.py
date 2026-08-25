@@ -129,26 +129,63 @@ def divider(prs, num, kicker, headline, body):
     return B.divider(prs, num, kicker, headline, body)
 
 
+
 # ═══════════════════════════════════════════════════════════════════════════
-# 32 · the frequency mix — the bulge at theta = 10 %
+# the backup as a chain of questions
+# ═══════════════════════════════════════════════════════════════════════════
+# Each slide answers exactly one question, and the question is the headline.
+# The order is the order somebody actually asks them in: first what looks odd,
+# then whether it is real, then why, then whether the numbers can be trusted.
+# `chapter()` records where each part starts so the contents slide can be
+# filled in with real slide numbers once everything has been laid down.
+
+_CHAPTERS: list = []
+_CONTENTS = None
+
+
+def chapter(prs, title, sub):
+    _CHAPTERS.append((title, sub, len(prs.slides) + 1))
+
+
+def block_contents(prs):
+    """A map of the backup, filled in with real numbers once it is built."""
+    global _CONTENTS
+    s = hslide(prs, "Backup", "What is in here, and what each part answers",
+               "Every slide in this section answers one question. Jump "
+               "straight to the one you were asked.")
+    _CONTENTS = s
+    return s
+
+
+def fill_contents():
+    """Write the recorded chapters onto the contents slide."""
+    if _CONTENTS is None:
+        return
+    y = BODY_T + 0.22
+    for title, sub, num in _CHAPTERS:
+        label_box(_CONTENTS, L, y, 0.95, 0.54, RED,
+                  [(str(num), 21, True, WHITE)])
+        txt(_CONTENTS, L + 1.18, y - 0.03, W - 1.18, 0.34, title, 20,
+            bold=True, color=INK)
+        txt(_CONTENTS, L + 1.18, y + 0.31, W - 1.18, 0.30, sub, 15, color=DIM)
+        y += 0.70
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# part 1 · the odd thing in the frequency picture
 # ═══════════════════════════════════════════════════════════════════════════
 def block_mix(prs):
-    # The two plain-language slides come first: they carry the argument,
-    # everything after them is the evidence for it.
-    DUM.slide_two_price_tags(prs, xslide)
-    DUM.slide_the_proof(prs, xslide)
+    chapter(prs, "The odd thing in the frequency picture",
+            "Why bundling survives a huge fee when almost nobody takes part")
 
-    # ── 1 · the observation ──────────────────────────────────────────────
-    s = xslide(prs, "mix", "Backup: The frequency mix",
-               "Even the harshest fee does not stop bundling at 10 % participation",
-               "Share of the 312 cells choosing fewer than six delivery days · "
+    # ── 1 · what looks odd ───────────────────────────────────────────────
+    s = xslide(prs, "mix", "Part 1 · The odd thing", "What looks odd here?",
+               "Share of the 312 delivery areas that give up daily delivery · "
                "Stage-3 grid.")
-    # The table's header row is set in caps, and a capitalised theta reads as
-    # a different letter entirely — so the symbol goes above the table instead.
     txt(s, L + 2.30, BODY_T + 0.06, W - 2.30, 0.28,
-        "share of parcels willing to wait  ·  θ", 12, color=DIM, spc=0.8)
-    y = B.table(s, ["Penalty", "10 %", "20 %", "30 %", "40 %", "100 %"],
-                [[("P = 0", "key"), "87.5 %", "92.0 %", "94.2 %", "96.2 %",
+        "share of customers willing to wait", 12, color=DIM, spc=0.8)
+    y = B.table(s, ["Fee", "10 %", "20 %", "30 %", "40 %", "100 %"],
+                [[("none", "key"), "87.5 %", "92.0 %", "94.2 %", "96.2 %",
                   "100 %"],
                  [("P = 5", "key"), ("49.7 %", "num"), ("42.9 %", "num"),
                   "14.7 %", "0 %", "0 %"],
@@ -157,118 +194,271 @@ def block_mix(prs):
                 BODY_T + 0.40, widths=[2.3, 2.0, 2.0, 2.0, 2.0, 2.0],
                 reserve=2.6)
     label_box(s, L, y + 0.30, W, 0.85, H.BLUSH,
-              [("More participation means less bundling — as soon as a fee is "
-                "in play.", 22, True, RED)], line_col=RED)
-    vbullets(s, ["Even at the harshest fee, four areas in ten still bundle when "
-                 "only 10 % of customers join in.",
-                 "From 30 % participation upwards, not one of them does.",
-                 "The size of the fee is not what decides it. What decides "
-                 "it is how many parcels the fee is charged on."],
+              [("Follow the bottom row from left to right. The more people "
+                "join in, the less gets bundled.", 22, True, RED)],
+              line_col=RED)
+    vbullets(s, ["That feels backwards. More volunteers should make bundling "
+                 "easier, not harder.",
+                 "And the top row, with no fee at all, does exactly what you "
+                 "expect: it climbs.",
+                 "The next slides work out why the two rows point in opposite "
+                 "directions."],
              y + 1.30)
 
-    # ── 2 · who they are ─────────────────────────────────────────────────
+    # ── 2 + 3 · the argument, in pictures ────────────────────────────────
+    DUM.slide_two_price_tags(prs, xslide)
+    DUM.slide_the_proof(prs, xslide)
+
+    # ── 4 · are they outliers? ───────────────────────────────────────────
     # An earlier version of this block claimed the saving came from dropping
-    # whole van-days. It does not: the measured vehicle-day saving is 24 of
-    # 6 397, and 107 of the 130 consolidating cells drop none at all. The
-    # slides below carry what is actually in the data.
-    s = xslide(prs, "mix", "Backup: The frequency mix",
-               "The cells that consolidate are ordinary in size",
-               "Cells choosing fewer than six delivery days at P = 10 "
-               "€/p/d, θ = 10 %, against their weekly parcel volume.")
+    # whole van-days. It does not: 24 of 6 397 are saved and 107 of the 130
+    # areas drop none. The slides below carry what is in the data.
+    s = xslide(prs, "mix", "Part 1 · The odd thing",
+               "Are these just a few tiny areas we should throw out?",
+               "The areas that give up daily delivery at the harshest fee and "
+               "10 % participation, by their weekly parcel volume.")
     pic(s, FIG / "figB1_who_consolidates.png", L, BODY_T + 0.24, W, 3.35)
-    vbullets(s, ["These are 130 delivery areas — a quarter of all parcels in the "
-                 "region.",
-                 [("Even the smallest handles ", False), ("774 parcels a week", True),
-                  (", the typical one 2 172. None of them is a tiny "
-                   "special case.", False)],
-                 "Only Hermes, GLS, Amazon and DPD show up here — never DHL, the "
-                 "carrier with the densest network."],
+    vbullets(s, ["No. There are 130 of them, and together they carry a "
+                 "quarter of all parcels in the region.",
+                 [("The smallest still handles ", False),
+                  ("774 parcels a week", True),
+                  (", the typical one 2 172. Not one is a curiosity.", False)],
+                 "Throwing them out would delete a quarter of the study area."],
              BODY_T + 3.75)
 
-    # ── 3 · what the saving is not ───────────────────────────────────────
-    s = xslide(prs, "mix", "Backup: The frequency mix",
-               "The saving is not dropped vehicles",
-               "Vehicle-days from tab_chosen_schedules.csv; system saving is "
-               "the bundled path (dd + hub-bundled express) against the "
-               "1 909 748 € baseline.")
+    # ── 5 · do we save vans? ─────────────────────────────────────────────
+    s = xslide(prs, "mix", "Part 1 · The odd thing",
+               "So do we save delivery vans? No.",
+               "Vehicle-days from the chosen schedules; the network saving is "
+               "measured against the 1 909 748 € weekly baseline.")
     pic(s, FIG / "figB2_where_the_money_is.png", L, BODY_T + 0.24, W, 3.35)
-    vbullets(s, [[("Barely any vans are saved: ", False), ("24 out of 6 397", True),
-                  (" van-days, and 107 of the 130 areas save none at all.",
+    vbullets(s, [[("Almost none: ", False), ("24 of 6 397", True),
+                  (" van-days, and 107 of the 130 areas save not a single one.",
                    False)],
-                 "What is saved is driving: fewer trips out to the area and "
-                 "back, and shorter tours in total.",
-                 [("Counted area by area it looks like 251 823 €. Counted "
-                   "for the whole network it is ", False), ("68 425 €", True),
-                  (" — the rest is eaten by the daily tours that still run.",
-                   False)]],
+                 "The van still drives there daily for everyone who did not "
+                 "join in. What gets shorter is the driving, not the fleet.",
+                 "Counted area by area it looks like 251 823 €. For the whole "
+                 "network it is 68 425 €."],
              BODY_T + 3.75)
 
-    # ── 4 · the effective knob ───────────────────────────────────────────
-    s = xslide(prs, "mix", "Backup: The frequency mix",
-               "The effective knob is the product P · θ",
-               "Each point is one (P, θ) cell of the Stage-3 grid, θ > 0. "
-               "Spearman over all 80 points.")
+    # ── 6 · what decides it ──────────────────────────────────────────────
+    s = xslide(prs, "mix", "Part 1 · The odd thing",
+               "What decides it, then?",
+               "Each dot is one setting of fee and participation from the "
+               "Stage-3 grid.")
     pic(s, FIG / "figB3_ptheta_collapse.png", L, BODY_T + 0.24, W, 3.35)
-    vbullets(s, ["The fee is charged per waiting parcel. Twice as many people "
-                 "joining means twice the bill — but not twice the gain.",
-                 "So neither number decides on its own. What decides is fee "
-                 "times participation: the bill you actually pay.",
-                 "A fee of 10 with 10 % joining behaves just like a fee of "
-                 "1 with everybody joining."],
+    vbullets(s, ["Not the fee on its own, and not the participation on its "
+                 "own — the two multiplied.",
+                 "That product is simply the bill you end up paying.",
+                 "A fee of 10 with one in ten joining behaves just like a fee "
+                 "of 1 with everybody joining."],
              BODY_T + 3.75)
 
-    # ── 5 · the threshold, measured ──────────────────────────────────────
-    s = xslide(prs, "mix", "Backup: The frequency mix",
-               "Small cells consolidate, large cells stay daily",
-               "Weekly parcel volume of the cells choosing each takt, at three "
-               "effective penalties. Boxes are quartiles.")
+    # ── 7 · which areas ──────────────────────────────────────────────────
+    s = xslide(prs, "mix", "Part 1 · The odd thing",
+               "Why do small areas bundle and big ones not?",
+               "Weekly parcel volume of the areas choosing each number of "
+               "delivery days. The boxes cover the middle half of them.")
     pic(s, FIG / "figB4_size_vs_takt.png", L, BODY_T + 0.24, W, 3.35)
-    vbullets(s, ["The fewer delivery days an area picks, the smaller that area "
-                 "is. Big areas stay daily.",
-                 "Double the participation and the size limit halves — so "
-                 "the two-day option empties out first.",
-                 "Five days a week survives longest: it saves a little and "
-                 "costs almost no waiting."],
+    vbullets(s, ["The fewer delivery days an area picks, the smaller it is. "
+                 "Big areas stay daily.",
+                 "Double the participation and the size limit halves, so the "
+                 "two-day option empties out first.",
+                 "Five days a week lasts longest: it saves a little and costs "
+                 "hardly any waiting."],
              BODY_T + 3.75)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# per-carrier splits of the aggregated results figures
+# part 2 · what a fee buys
+# ═══════════════════════════════════════════════════════════════════════════
+def block_trade(prs):
+    chapter(prs, "What a fee actually buys",
+            "Why the middle of the range beats both ends")
+
+    s = xslide(prs, "trade", "Part 2 · What a fee buys",
+               "What does each step of the fee cost us, and what does it buy?",
+               "Everyone taking part. Saving measured against the 1 909 748 € "
+               "weekly baseline; waiting averaged over all parcels, including "
+               "those that never wait.")
+    y = B.table(s, ["Fee", "We save", "People wait", "Saving given up",
+                    "Waiting removed"],
+                [[("none", "key"), ("22.8 %", "num"), "0.98 d", "—", "—"],
+                 [("P = 0.25", "key"), ("18.5 %", "num"), "0.46 d",
+                  "4.3 points", ("half of it", "good")],
+                 [("P = 0.5", "key"), ("13.5 %", "num"), "0.23 d",
+                  "9.3 points", ("three quarters", "good")],
+                 [("P = 0.75", "key"), "10.2 %", "0.14 d", "12.6 points",
+                  "86 %"],
+                 [("P = 1", "key"), "7.5 %", "0.09 d", "15.3 points", "91 %"],
+                 [("P = 2", "key"), "1.2 %", "0.01 d", "21.6 points", "99 %"]],
+                BODY_T + 0.20, widths=[2.2, 2.0, 2.2, 2.6, 2.6], reserve=1.6)
+    txt(s, L, y + 0.24, W, 1.32,
+        "The first step is the bargain: give up a fifth of the saving and "
+        "half the waiting disappears.\nEvery step after that buys less and "
+        "costs more.", 22, bold=True, color=RED, line=1.28)
+
+    s = xslide(prs, "range", "Part 2 · What a fee buys",
+               "Why not simply take the biggest saving?",
+               "Fleet figures are for the balanced and smoothed schedules; "
+               "15 of the 80 settings sit on the efficient front.")
+    for i, (nm, sav, wait, note, hot) in enumerate([
+            ("No fee", "22.8 %", "0.98 d",
+             "the cheapest week — but a full day of waiting", False),
+            ("P = 0.25", "18.5 %", "0.46 d",
+             "half the waiting for a fifth of the saving", True),
+            ("P = 0.5", "13.5 %", "0.23 d",
+             "peak fleet down 12.9 %, weekday swings down 54 %", True)]):
+        x = L + i * (W / 3 + 0.02)
+        cw = W / 3 - 0.30
+        rect(s, x, BODY_T + 0.30, cw, 0.10, RED if hot else LINE)
+        txt(s, x, BODY_T + 0.52, cw, 0.44, nm, 24, bold=True,
+            color=RED if hot else INK)
+        txt(s, x, BODY_T + 1.05, cw, 0.60, sav, 40, bold=True,
+            color=RED if hot else INK)
+        txt(s, x, BODY_T + 1.72, cw, 0.40, f"+{wait} waiting", 20, color=DIM)
+        txt(s, x, BODY_T + 2.20, cw, 0.90, note, 20, color=INK2, line=1.22)
+    vbullets(s, ["Push the fee to zero and you get the most money — and the "
+                 "longest wait.",
+                 "Push it high and the waiting vanishes, but so does the point "
+                 "of doing it.",
+                 "Which of the middle settings is right is a service decision, "
+                 "not a modelling one."],
+             BODY_T + 3.35)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# part 3 · where it happens
+# ═══════════════════════════════════════════════════════════════════════════
+def block_maps(prs):
+    chapter(prs, "Where it happens first",
+            "Why the countryside changes and the city centre does not")
+
+    s = xslide(prs, "maps", "Part 3 · Where it happens",
+               "Why does the countryside change first?",
+               "Delivery days chosen per area at P = 0.25, everyone taking "
+               "part, grouped by settlement type.")
+    y = B.table(s, ["Type of area", "How many", "Typical",
+                    "Average", "On two days a week"],
+                [[("Countryside", "key"), "118", ("2 days", "num"), "2.58",
+                  ("60.2 %", "num")],
+                 [("Suburb", "key"), "124", "3 days", "3.12", "29.0 %"],
+                 [("City", "key"), "70", "3 days", "3.77", ("4.3 %", "num")]],
+                BODY_T + 0.20, widths=[2.8, 1.6, 2.4, 2.0, 3.0], reserve=2.5)
+    for i, (nm, pct, col) in enumerate([("countryside", 60.2, S6),
+                                        ("suburb", 29.0, S4),
+                                        ("city", 4.3, S1)]):
+        yy = y + 0.30 + i * 0.52
+        txt(s, L, yy, 1.9, 0.36, nm, 20, color=INK2)
+        rect(s, L + 2.0, yy + 0.03, 8.6 * pct / 100.0, 0.30, col)
+        txt(s, L + 2.15 + 8.6 * pct / 100.0, yy, 1.6, 0.36, f"{pct:.1f} %", 20,
+            bold=True, color=INK)
+    txt(s, L, y + 1.90, W, 0.48,
+        "Fourteen rural areas drop to two days for every one city area that "
+        "does.", 22, bold=True, color=RED)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# part 4 · why some areas gain nothing
+# ═══════════════════════════════════════════════════════════════════════════
+def block_where(prs):
+    chapter(prs, "Why dense areas gain nothing",
+            "The three things that decide whether an area profits")
+
+    s = xslide(prs, "where", "Part 4 · Why dense areas gain nothing",
+               "What makes one area profit and its neighbour not?",
+               "How strongly each property moves together with the saving, "
+               "across all 312 areas. +1 would be a perfect match, −1 a "
+               "perfect opposite.")
+    y = B.table(s, ["Property of the area", "Link", "What it means"],
+                [[("Far from the depot", "key"), ("+0.53", "num"),
+                  "Every tour drives out and back. Bundling spreads that trip "
+                  "over more parcels"],
+                 [("Large area", "key"), ("+0.31", "num"),
+                  "Long tours inside the area. Merging days makes them denser"],
+                 [("Many parcels per address", "key"), ("−0.72", "num"),
+                  "The tour is already full and short. There is nothing left "
+                  "to win"]],
+                BODY_T + 0.20, widths=[3.4, 1.6, 7.0], reserve=2.4)
+    label_box(s, L, y + 0.28, W, 0.85, H.BLUSH,
+              [("The strongest link is the negative one: bundling pays where "
+                "density is missing.", 22, True, RED)], line_col=RED)
+    vbullets(s, ["The typical rural area saves 25 %, the typical city area 9 %.",
+                 "That gap is geography, not modelling — which is why a "
+                 "uniform rollout wastes it."],
+             y + 1.26)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# part 5 · can we trust the numbers
+# ═══════════════════════════════════════════════════════════════════════════
+def block_valid(prs):
+    chapter(prs, "Can the numbers be trusted",
+            "What happens when a real routing solver checks the answer")
+
+    s = xslide(prs, "valid", "Part 5 · Can we trust it",
+               "What happens when a real routing solver checks the answer?",
+               "Four settings recomputed from scratch with VROOM/Valhalla on "
+               "1 248 observations the model had never seen.")
+    y = B.table(s, ["Setting", "The model promised", "The solver delivered",
+                    "Difference"],
+                [[("No fee", "key"), "22.8 %", ("23.7 %", "good"),
+                  "+0.9 points"],
+                 [("P = 0.25", "key"), "18.5 %", ("19.8 %", "good"),
+                  "+1.3 points"],
+                 [("P = 0.5", "key"), "13.5 %", ("15.6 %", "good"),
+                  "+2.1 points"],
+                 [("P = 0.75", "key"), "10.2 %", ("13.0 %", "good"),
+                  "+2.8 points"]],
+                BODY_T + 0.20, widths=[3.0, 3.0, 3.4, 2.4], reserve=2.4)
+    vbullets(s, ["Every one of the four came out better than promised.",
+                 "So the model is wrong in the direction that is safe: it "
+                 "under-promises.",
+                 "What this does not prove is that the routing solver matches "
+                 "the real street."],
+             y + 0.28)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# part 6 · the seven carriers
 # ═══════════════════════════════════════════════════════════════════════════
 def block_providers(prs):
-    """The four results figures, split per carrier."""
+    chapter(prs, "The seven carriers, side by side",
+            "Why one average curve describes none of them")
     for key, subject, fig_name, src, bullets in [
-        ("mix", "The frequency mix, per carrier", "figP1_mix_by_provider",
-         "Chosen delivery frequency of each carrier's areas across adoption, "
-         "at P = 0.25 €/p/d.",
-         ["DHL is the outlier: it keeps most of its network on five and six "
-          "days a week.",
+        ("mix", "Do all seven carriers behave the same? No.",
+         "figP1_mix_by_provider",
+         "Delivery days chosen by each carrier's areas as participation rises, "
+         "at P = 0.25.",
+         ["DHL is the odd one out: most of its network keeps five or six "
+          "delivery days.",
           "DPD, GLS and FedEx put roughly half their areas on two days.",
-          "The aggregated figure averages these two behaviours into one "
-          "curve that describes neither."]),
-        ("range", "The saving grid, per carrier", "figP2_saving_by_provider",
-         "Each carrier measured against its own daily-delivery baseline, not "
-         "against the system total.",
-         [[("The spread is wide: DHL peaks at ", False), ("10.6 %", True),
-           (", GLS at ", False), ("33.4 %", True), (".", False)],
+          "The single curve in the talk is the average of these two — and "
+          "describes neither."]),
+        ("range", "How much can each of them actually save?",
+         "figP2_saving_by_provider",
+         "Each carrier measured against its own daily-delivery cost, not "
+         "against the regional total.",
+         ["The best DHL can do is 10.6 %. GLS reaches 33.4 %.",
           "The shape is the same everywhere — only the ceiling differs.",
-          "A single system-wide operating point is therefore a compromise, "
-          "not an optimum for anybody."]),
-        ("where", "Where it pays, per carrier", "figP3_map_saving_provider",
-         "Cost saving per postal-code area at P = 0.25 €/p/d, θ = 1. Common "
-         "colour scale across carriers.",
-         ["Median saving runs from 3.7 % (DHL) to 32.6 % (FedEx).",
-          "The spatial pattern is the same for all of them: the periphery "
-          "gains, the core does not.",
-          "What differs is how much of each network sits in the periphery."]),
-        ("maps", "The delivery days, per carrier", "figP4_map_freq_provider",
-         "Median chosen frequency per area at P = 0.25 €/p/d, θ = 1.",
-         ["DHL holds a median of five delivery days; DPD, GLS and FedEx drop "
-          "to two.",
-          "The dense core stays on a high frequency for every carrier.",
-          "Consolidation is a network property, not a regional one."]),
+          "So one shared operating point is a compromise for everybody."]),
+        ("where", "Does each carrier gain in the same places?",
+         "figP3_map_saving_provider",
+         "Saving per area at P = 0.25 with everyone taking part. Same colour "
+         "scale for all seven.",
+         ["Typical saving runs from 3.7 % for DHL to 32.6 % for FedEx.",
+          "But the pattern is identical: the outside gains, the centre does "
+          "not.",
+          "What differs is how much of each network sits on the outside."]),
+        ("maps", "And do they end up with the same delivery days?",
+         "figP4_map_freq_provider",
+         "Typical delivery days per area at P = 0.25, everyone taking part.",
+         ["DHL holds five days; DPD, GLS and FedEx drop to two.",
+          "Every carrier keeps a high frequency in the dense centre.",
+          "How often you can deliver is a property of the network, not of the "
+          "region."]),
     ]:
-        sl = xslide(prs, key, "Backup: Per carrier", subject, src)
+        sl = xslide(prs, key, "Part 6 · The seven carriers", subject, src)
         pic(sl, FIG / f"{fig_name}.png", L, BODY_T + 0.24, W, 3.35)
         vbullets(sl, bullets, BODY_T + 3.75)
 
@@ -311,6 +501,8 @@ FAMILIES = [
 
 
 def block_carrier_full(prs):
+    chapter(prs, "Every figure, one carrier at a time",
+            "The same four pictures, redrawn for each of the seven")
     for key, stem, subject, source, how in FAMILIES:
         for carrier in CARRIERS:
             path = FIG / f"{stem}_{carrier}.png"
@@ -326,142 +518,6 @@ def block_carrier_full(prs):
                 line=1.22)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 33 / 34 · the trade and the efficient range
-# ═══════════════════════════════════════════════════════════════════════════
-def block_trade(prs):
-    s = xslide(prs, "trade", "Backup: The cost–service trade",
-               "What each penalty step actually costs and buys",
-               "Stage-3 grid at θ = 1. Saving against the 1 909 748 € weekly "
-               "baseline; wait is averaged over all parcels, including those "
-               "that never wait.")
-    y = B.table(s, ["Penalty", "Saving", "Added wait", "Saving given up",
-                    "Wait removed"],
-                [[("P = 0", "key"), ("22.8 %", "num"), "0.98 d", "—", "—"],
-                 [("P = 0.25", "key"), ("18.5 %", "num"), "0.46 d",
-                  "4.3 pp", ("53 %", "good")],
-                 [("P = 0.5", "key"), ("13.5 %", "num"), "0.23 d",
-                  "9.3 pp", ("77 %", "good")],
-                 [("P = 0.75", "key"), "10.2 %", "0.14 d", "12.6 pp", "86 %"],
-                 [("P = 1", "key"), "7.5 %", "0.09 d", "15.3 pp", "91 %"],
-                 [("P = 2", "key"), "1.2 %", "0.01 d", "21.6 pp", "99 %"]],
-                BODY_T + 0.30, widths=[2.2, 2.0, 2.2, 2.6, 2.4], reserve=1.6)
-    txt(s, L, y + 0.24, W, 1.32,
-        "The first step is the bargain: it hands back a fifth of the saving "
-        "and removes half of the waiting.\nEvery step after that buys less "
-        "and costs more.", 22, bold=True, color=RED, line=1.28)
-
-    s = xslide(prs, "range", "Backup: The cost–service trade",
-               "Why the knee and not the extreme is the operating point",
-               "15 of 80 grid points lie on the efficient front. Fleet figures "
-               "are Stage-3, per-hub balanced and system-smoothed.")
-    for i, (nm, sav, wait, note, hot) in enumerate([
-            ("P = 0", "22.8 %", "0.98 d",
-             "the cost-optimal extreme — a full day of waiting", False),
-            ("P = 0.25", "18.5 %", "0.46 d",
-             "wait halves for 4.3 pp of saving", True),
-            ("P = 0.5", "13.5 %", "0.23 d",
-             "12.9 % peak-fleet cut, 54 % less weekday variation", True)]):
-        x = L + i * (W / 3 + 0.02)
-        cw = W / 3 - 0.30
-        rect(s, x, BODY_T + 0.30, cw, 0.10, RED if hot else LINE)
-        txt(s, x, BODY_T + 0.52, cw, 0.44, nm, 24, bold=True,
-            color=RED if hot else INK)
-        txt(s, x, BODY_T + 1.05, cw, 0.60, sav, 40, bold=True,
-            color=RED if hot else INK)
-        txt(s, x, BODY_T + 1.72, cw, 0.40, f"+{wait} waiting", 20, color=DIM)
-        txt(s, x, BODY_T + 2.20, cw, 0.90, note, 20, color=INK2, line=1.22)
-    vbullets(s, ["Beyond the knee, waiting grows faster than saving.",
-                  "The efficient front is where no point gives more saving at "
-                  "the same wait.",
-                  "Which knee is right is a service decision, not a modelling "
-                  "one."],
-              BODY_T + 3.35)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 35 · where the days land
-# ═══════════════════════════════════════════════════════════════════════════
-def block_maps(prs):
-    s = xslide(prs, "maps", "Backup: Where the days land",
-               "The periphery consolidates first, and by a wide margin",
-               "Chosen delivery frequency per provider–area cell at P = 0.25, "
-               "θ = 1, by BBSR settlement class (plz_raumtyp.csv).")
-    y = B.table(s, ["Settlement type", "Cells", "Median takt",
-                    "Mean takt", "On two days a week"],
-                [[("Rural", "key"), "118", ("2 days", "num"), "2.58",
-                  ("60.2 %", "num")],
-                 [("Suburban", "key"), "124", "3 days", "3.12", "29.0 %"],
-                 [("Urban", "key"), "70", "3 days", "3.77", ("4.3 %", "num")]],
-                BODY_T + 0.30, widths=[2.8, 1.6, 2.4, 2.0, 3.0], reserve=2.5)
-    # a bar showing the 2-day share per class, so the gap is visible at a glance
-    for i, (nm, pct, col) in enumerate([("rural", 60.2, S6),
-                                        ("suburban", 29.0, S4),
-                                        ("urban", 4.3, S1)]):
-        yy = y + 0.34 + i * 0.52
-        txt(s, L, yy, 1.9, 0.36, nm, 20, color=INK2)
-        rect(s, L + 2.0, yy + 0.03, 8.6 * pct / 100.0, 0.30, col)
-        txt(s, L + 2.15 + 8.6 * pct / 100.0, yy, 1.6, 0.36, f"{pct:.1f} %", 20,
-            bold=True, color=INK)
-    txt(s, L, y + 1.92, W, 0.48,
-        "Fourteen times the rural share of the urban one.", 22, bold=True,
-        color=RED)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 36 · where it pays
-# ═══════════════════════════════════════════════════════════════════════════
-def block_where(prs):
-    s = xslide(prs, "where", "Backup: Where it pays",
-               "Three structural drivers, and what each one means",
-               "How strongly each property moves together with the saving, "
-               "across all 312 areas. +1 would be a perfect match, −1 a "
-               "perfect opposite.")
-    y = B.table(s, ["Driver", "ρ", "Why it works that way"],
-                [[("Distance to the depot", "key"), ("+0.53", "num"),
-                  "Every tour pays the stem twice; batching amortises it over "
-                  "more parcels"],
-                 [("Area size", "key"), ("+0.31", "num"),
-                  "A large area means long local tours, which get denser when "
-                  "days are merged"],
-                 [("Parcels per drop site", "key"), ("−0.72", "num"),
-                  "Where many parcels already arrive at one address, the tour "
-                  "is dense — nothing left to win"]],
-                BODY_T + 0.30, widths=[3.2, 1.6, 7.0], reserve=2.4)
-    label_box(s, L, y + 0.28, W, 0.85, H.BLUSH,
-              [("The strongest driver is negative: consolidation pays where "
-                "density is missing.", 22, True, RED)], line_col=RED)
-    vbullets(s, ["The median rural area saves 25 %, the median urban area 9 %.",
-                 "Structural, not an artefact — and why a uniform rollout "
-                 "wastes the mechanism."],
-             y + 1.26)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 38 · validation
-# ═══════════════════════════════════════════════════════════════════════════
-def block_valid(prs):
-    s = xslide(prs, "valid", "Backup: Validation",
-               "The surrogate is wrong in the direction that is safe",
-               "Four out-of-sample Stage-3 operating points at θ = 1, "
-               "re-routed with VROOM/Valhalla. n = 1 248 · R² = 0.997 · "
-               "bias +2.73 %.")
-    y = B.table(s, ["Operating point", "Predicted", "Realised by the solver",
-                    "Gap"],
-                [[("P = 0", "key"), "22.8 %", ("23.7 %", "good"), "+0.9 pp"],
-                 [("P = 0.25", "key"), "18.5 %", ("19.8 %", "good"), "+1.3 pp"],
-                 [("P = 0.5", "key"), "13.5 %", ("15.6 %", "good"), "+2.1 pp"],
-                 [("P = 0.75", "key"), "10.2 %", ("13.0 %", "good"),
-                  "+2.8 pp"]],
-                BODY_T + 0.30, widths=[3.0, 2.4, 3.4, 2.2], reserve=2.4)
-    vbullets(s, ["Every validated point beats its own prediction.",
-                  "The gap widens with the penalty, so the margin is largest "
-                  "where service is protected most.",
-                  [("A schedule chosen on the surrogate therefore does ",
-                    False), ("at least as well", True), (" in reality.", False)],
-                  "What this does not prove: that VROOM matches the street."],
-              y + 0.28)
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 def build(out: Path) -> Path:
@@ -469,15 +525,17 @@ def build(out: Path) -> Path:
     n_before = len(prs.slides)
     _RESOLVED.update(resolve_targets(prs))
     divider(prs, "B", "Backup", "Why the results\nlook like this",
-            "One to three slides behind each results slide — the questions a "
-            "close reader asks")
-    block_mix(prs)
-    block_providers(prs)
-    block_trade(prs)
-    block_maps(prs)
-    block_where(prs)
-    block_valid(prs)
-    block_carrier_full(prs)
+            "Seven parts, each answering the questions a close reader asks — "
+            "in the order they come up")
+    block_contents(prs)
+    block_mix(prs)         # 1 · the odd thing in the frequency picture
+    block_trade(prs)       # 2 · what a fee actually buys
+    block_maps(prs)        # 3 · where it happens first
+    block_where(prs)       # 4 · why dense areas gain nothing
+    block_valid(prs)       # 5 · can the numbers be trusted
+    block_providers(prs)   # 6 · the seven carriers, side by side
+    block_carrier_full(prs)  # 7 · every figure, one carrier at a time
+    fill_contents()
     out.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(out))
     print(f"  {n_before} original slides kept, "

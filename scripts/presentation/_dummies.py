@@ -50,52 +50,66 @@ def _coins(slide, x, y, n, *, colour=RED, d=0.30, gap=0.10, per_row=5):
 
 
 def slide_two_price_tags(prs, xslide):
-    """Why more participants means less bundling — the whole argument."""
+    """Why more participants can make bundling stop paying.
+
+    An earlier version of this slide drew six vans with four crossed out. That
+    is what full participation looks like, not 10 % — at 10 % the van still
+    goes out daily for the 90 % who did not opt in, which is exactly why only
+    24 of 6 397 vehicle-days are ever saved. The saving side now shows the
+    measured figure instead of a picture that is true only at the far end.
+    """
     s = xslide(prs, "mix", "Backup: The frequency mix",
-               "The one thing to understand",
-               "Schematic. The numbers behind it are on the following slides.")
-    txt(s, L, BODY_T + 0.02, W, 0.52,
-        "You save per TRIP.   You pay per PARCEL.", 30, bold=True, color=INK,
-        align=PP_ALIGN.CENTER)
+               "Ten times the people, but not ten times the saving",
+               "Weekly cost saving of the whole region against daily delivery, "
+               "with no service fee applied at all (P = 0) · Stage-3 grid.")
+    txt(s, L, BODY_T + 0.02, W, 0.34,
+        "Two separate scenarios — not two things happening at the same time.",
+        17, color=DIM, align=PP_ALIGN.CENTER)
+    txt(s, L, BODY_T + 0.40, W, 0.50,
+        "The bill grows with every person. The saving does not.", 28,
+        bold=True, color=INK, align=PP_ALIGN.CENTER)
 
     cw = (W - 0.55) / 2
     xr = L + cw + 0.55
+    lab_w, bar_x = 2.30, 3.05
+    rows = [("10 % join in", "the other 90 % keep daily delivery", 7.6, 1),
+            ("everyone joins", "every parcel can be held back", 22.8, 10)]
 
-    # ── left: what a skipped trip is worth ───────────────────────────────
-    rect(s, L, BODY_T + 0.72, cw, 3.05, WHITE, line_col=LINE)
-    rect(s, L, BODY_T + 0.72, cw, 0.09, GREEN)
-    txt(s, L + 0.28, BODY_T + 0.92, cw - 0.56, 0.36, "What you save", 20,
+    # ── left: what it is actually worth ──────────────────────────────────
+    rect(s, L, BODY_T + 1.02, cw, 2.85, WHITE, line_col=LINE)
+    rect(s, L, BODY_T + 1.02, cw, 0.09, GREEN)
+    txt(s, L + 0.28, BODY_T + 1.22, cw - 0.56, 0.36, "What you save", 20,
         bold=True, color=GREEN, spc=1.2, caps=True)
-    vw, vg = 0.70, 0.14
-    x0 = L + (cw - (6 * vw + 5 * vg)) / 2
-    for i, (day, skip) in enumerate(zip("MTWTFS",
-                                        [False, True, True, False, True, True])):
-        _van(s, x0 + i * (vw + vg), BODY_T + 1.44, vw, 0.72, skipped=skip,
-             day=day)
-    txt(s, L + 0.28, BODY_T + 2.56, cw - 0.56, 1.05,
-        "Four trips fall away. A skipped trip saves the same whether the van "
-        "would have been full or nearly empty.", 19, color=INK2, line=1.25)
+    for i, (name, sub, val, _) in enumerate(rows):
+        y = BODY_T + 1.72 + i * 0.86
+        txt(s, L + 0.28, y, lab_w, 0.32, name, 17, bold=True, color=INK)
+        txt(s, L + 0.28, y + 0.30, lab_w, 0.46, sub, 13, color=DIM,
+            line=1.18)
+        rect(s, L + bar_x, y + 0.06, (cw - bar_x - 1.35) * val / 22.8, 0.40,
+             GREEN)
+        txt(s, L + cw - 1.30, y + 0.02, 1.05, 0.40, f"{val:.1f} %", 22,
+            bold=True, color=GREEN)
+    txt(s, L + 0.28, BODY_T + 3.36, cw - 0.56, 0.42,
+        "10 × the people, 3 × the saving.", 21, bold=True, color=INK2)
 
     # ── right: what the waiting costs ────────────────────────────────────
-    rect(s, xr, BODY_T + 0.72, cw, 3.05, WHITE, line_col=LINE)
-    rect(s, xr, BODY_T + 0.72, cw, 0.09, RED)
-    txt(s, xr + 0.28, BODY_T + 0.92, cw - 0.56, 0.36, "What you pay", 20,
+    rect(s, xr, BODY_T + 1.02, cw, 2.85, WHITE, line_col=LINE)
+    rect(s, xr, BODY_T + 1.02, cw, 0.09, RED)
+    txt(s, xr + 0.28, BODY_T + 1.22, cw - 0.56, 0.36, "What you pay", 20,
         bold=True, color=RED, spc=1.2, caps=True)
-    txt(s, xr + 0.28, BODY_T + 1.40, 2.05, 0.32, "10 % join in", 17,
-        color=INK2)
-    _coins(s, xr + 2.45, BODY_T + 1.38, 1)
-    txt(s, xr + 0.28, BODY_T + 1.90, 2.05, 0.32, "everyone joins", 17,
-        color=INK2)
-    _coins(s, xr + 2.45, BODY_T + 1.88, 10)
-    txt(s, xr + 0.28, BODY_T + 2.56, cw - 0.56, 1.05,
-        "Every parcel that waits pays the fee. Ten times the people, ten "
-        "times the bill.", 19, color=INK2, line=1.25)
+    for i, (name, sub, _, coins) in enumerate(rows):
+        y = BODY_T + 1.72 + i * 0.86
+        txt(s, xr + 0.28, y, lab_w, 0.32, name, 17, bold=True, color=INK)
+        txt(s, xr + 0.28, y + 0.30, lab_w, 0.46, sub, 13, color=DIM,
+            line=1.18)
+        _coins(s, xr + bar_x, y + 0.04, coins)
+    txt(s, xr + 0.28, BODY_T + 3.36, cw - 0.56, 0.42,
+        "10 × the people, 10 × the bill.", 21, bold=True, color=RED)
 
     # ── the asymmetry, spelled out ───────────────────────────────────────
-    label_box(s, L, BODY_T + 3.94, W, 1.10, H.BLUSH,
-              [("Six days a week — so at most four trips can go. "
-                "The saving has a ceiling.", 21, True, INK),
-               ("The bill has none. It grows with every extra person.",
+    label_box(s, L, BODY_T + 4.06, W, 0.95, H.BLUSH,
+              [("The bill grows tenfold, the saving threefold. That is why "
+                "more participants can make bundling stop paying.",
                 21, True, RED)], line_col=RED)
     return s
 
