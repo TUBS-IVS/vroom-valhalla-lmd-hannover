@@ -152,10 +152,11 @@ def block_mix(prs):
     label_box(s, L, y + 0.30, W, 0.85, H.BLUSH,
               [("More participation, less consolidation — the opposite of "
                 "what a penalty should do.", 22, True, RED)], line_col=RED)
-    vbullets(s, ["At P = 10 four cells in ten still batch at θ = 10 %.",
-                 "From θ = 30 % upwards not a single one does.",
-                 "It is not the penalty rate — it is what the rate is "
-                 "charged on."],
+    vbullets(s, ["Even at the harshest fee, four areas in ten still bundle when "
+                 "only 10 % of customers join in.",
+                 "From 30 % participation upwards, not one of them does.",
+                 "The size of the fee is not what decides it. What decides "
+                 "it is how many parcels the fee is charged on."],
              y + 1.30)
 
     # ── 2 · who they are ─────────────────────────────────────────────────
@@ -168,12 +169,13 @@ def block_mix(prs):
                "Cells choosing fewer than six delivery days at P = 10 "
                "€/p/d, θ = 10 %, against their weekly parcel volume.")
     pic(s, FIG / "figB1_who_consolidates.png", L, BODY_T + 0.24, W, 3.35)
-    vbullets(s, ["130 cells in 45 postal-code areas — 26 % of the region's "
-                 "parcels.",
-                 [("The smallest carries ", False), ("774 parcels a week", True),
-                  (", the median 2 172. There is no outlier tail to remove.",
-                   False)],
-                 "Only Hermes, GLS, Amazon and DPD appear — no DHL."],
+    vbullets(s, ["These are 130 delivery areas — a quarter of all parcels in the "
+                 "region.",
+                 [("Even the smallest handles ", False), ("774 parcels a week", True),
+                  (", the typical one 2 172. None of them is a tiny "
+                   "special case.", False)],
+                 "Only Hermes, GLS, Amazon and DPD show up here — never DHL, the "
+                 "carrier with the densest network."],
              BODY_T + 3.75)
 
     # ── 3 · what the saving is not ───────────────────────────────────────
@@ -183,14 +185,15 @@ def block_mix(prs):
                "the bundled path (dd + hub-bundled express) against the "
                "1 909 748 € baseline.")
     pic(s, FIG / "figB2_where_the_money_is.png", L, BODY_T + 0.24, W, 3.35)
-    vbullets(s, [[("Only ", False), ("24 of 6 397 vehicle-days", True),
-                  (" fall away — 107 of the 130 cells drop none at all.",
+    vbullets(s, [[("Barely any vans are saved: ", False), ("24 out of 6 397", True),
+                  (" van-days, and 107 of the 130 areas save none at all.",
                    False)],
-                 "What the cell gains is tour-days and distance: fewer "
-                 "line-haul round trips, shorter tours in total.",
-                 [("And the per-cell signal overstates it: 251 823 € "
-                   "unbundled against ", False), ("68 425 €", True),
-                  (" once the express stream is bundled.", False)]],
+                 "What is saved is driving: fewer trips out to the area and "
+                 "back, and shorter tours in total.",
+                 [("Counted area by area it looks like 251 823 €. Counted "
+                   "for the whole network it is ", False), ("68 425 €", True),
+                  (" — the rest is eaten by the daily tours that still run.",
+                   False)]],
              BODY_T + 3.75)
 
     # ── 4 · the effective knob ───────────────────────────────────────────
@@ -199,13 +202,12 @@ def block_mix(prs):
                "Each point is one (P, θ) cell of the Stage-3 grid, θ > 0. "
                "Spearman over all 80 points.")
     pic(s, FIG / "figB3_ptheta_collapse.png", L, BODY_T + 0.24, W, 3.35)
-    vbullets(s, [[("The penalty is charged per waiting parcel, so the bill "
-                   "scales with ", False), ("θ", True),
-                  (" — the routing gain does not.", False)],
-                 "θ on its own explains almost nothing (ρ = −0.19); the "
-                 "product explains nearly everything (ρ = −0.97).",
-                 "P = 10 at θ = 10 % therefore behaves like P = 1 at full "
-                 "adoption."],
+    vbullets(s, ["The fee is charged per waiting parcel. Twice as many people "
+                 "joining means twice the bill — but not twice the gain.",
+                 "So neither number decides on its own. What decides is fee "
+                 "times participation: the bill you actually pay.",
+                 "A fee of 10 with 10 % joining behaves just like a fee of "
+                 "1 with everybody joining."],
              BODY_T + 3.75)
 
     # ── 5 · the threshold, measured ──────────────────────────────────────
@@ -214,11 +216,12 @@ def block_mix(prs):
                "Weekly parcel volume of the cells choosing each takt, at three "
                "effective penalties. Boxes are quartiles.")
     pic(s, FIG / "figB4_size_vs_takt.png", L, BODY_T + 0.24, W, 3.35)
-    vbullets(s, ["The deeper the takt, the smaller the cell that chooses it.",
-                 "Doubling adoption halves the size threshold, so the "
-                 "two-day takt empties out first.",
-                 "The gentle five-day takt survives longest — it costs almost "
-                 "no waiting."],
+    vbullets(s, ["The fewer delivery days an area picks, the smaller that area "
+                 "is. Big areas stay daily.",
+                 "Double the participation and the size limit halves — so "
+                 "the two-day option empties out first.",
+                 "Five days a week survives longest: it saves a little and "
+                 "costs almost no waiting."],
              BODY_T + 3.75)
 
 
@@ -264,13 +267,67 @@ def block_providers(prs):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# each results figure, in full, once per carrier
+# ═══════════════════════════════════════════════════════════════════════════
+# The small multiples in block_providers compare the seven carriers at one
+# operating point. This section gives each carrier the *whole* figure, so a
+# question about one carrier can be answered with the same picture the talk
+# already showed, just for that network. 4 families x 7 carriers = 28 slides.
+
+CARRIERS = ["DHL", "Amazon", "Hermes", "UPS", "DPD", "GLS", "FedEx"]
+
+FAMILIES = [
+    ("mix", "figQ1_mix", "How often each area is served",
+     "Eight panels, one per service fee. Left to right in each panel: more "
+     "customers willing to wait. Dark blue = two delivery days a week, red = "
+     "still daily.",
+     "Read it as: how much of this network leaves daily delivery as the "
+     "fee and the participation change."),
+    ("range", "figQ2_saving", "What it saves, fee by fee",
+     "Every square is one setting: a service fee (down the side) and a "
+     "participation level (across the bottom). The number is the weekly cost "
+     "saving against this carrier delivering daily.",
+     "Read it as: bright is good. The bright corner is where this carrier "
+     "would want to operate."),
+    ("maps", "figQ3_freqmap", "Where the delivery days go",
+     "The same region four times, as more customers join in. Colour is how "
+     "often that area gets served.",
+     "Read it as: the outside of the region turns dark first — that is where "
+     "delivery days are dropped."),
+    ("where", "figQ4_savingmap", "Where the money is saved",
+     "The same region six times, one per service fee. Darker green = more "
+     "saving in that area. The number above each map is what the whole "
+     "network saves.",
+     "Read it as: the greener the ring around the city, the more this carrier "
+     "gains outside the core."),
+]
+
+
+def block_carrier_full(prs):
+    for key, stem, subject, source, how in FAMILIES:
+        for carrier in CARRIERS:
+            path = FIG / f"{stem}_{carrier}.png"
+            if not path.exists():
+                print(f"  ! missing {path.name}")
+                continue
+            s = xslide(prs, key, f"Backup: {carrier}", subject, source)
+            # The figure is the slide; give it the whole body and keep the
+            # reading aid to one line underneath.
+            pic(s, path, L, BODY_T + 0.10, W, 4.45)
+            hh = H.text_height(how, W, 20, 1.22) + 0.06
+            txt(s, L, BODY_T + 4.66, W, hh, how, 20, color=INK2,
+                line=1.22)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # 33 / 34 · the trade and the efficient range
 # ═══════════════════════════════════════════════════════════════════════════
 def block_trade(prs):
     s = xslide(prs, "trade", "Backup: The cost–service trade",
                "What each penalty step actually costs and buys",
                "Stage-3 grid at θ = 1. Saving against the 1 909 748 € weekly "
-               "baseline; wait is the volume-weighted average over all parcels.")
+               "baseline; wait is averaged over all parcels, including those "
+               "that never wait.")
     y = B.table(s, ["Penalty", "Saving", "Added wait", "Saving given up",
                     "Wait removed"],
                 [[("P = 0", "key"), ("22.8 %", "num"), "0.98 d", "—", "—"],
@@ -350,8 +407,9 @@ def block_maps(prs):
 def block_where(prs):
     s = xslide(prs, "where", "Backup: Where it pays",
                "Three structural drivers, and what each one means",
-               "Spearman correlations across the 312 provider–area cells, each "
-               "at its provider's own P*.")
+               "How strongly each property moves together with the saving, "
+               "across all 312 areas. +1 would be a perfect match, −1 a "
+               "perfect opposite.")
     y = B.table(s, ["Driver", "ρ", "Why it works that way"],
                 [[("Distance to the depot", "key"), ("+0.53", "num"),
                   "Every tour pays the stem twice; batching amortises it over "
@@ -412,6 +470,7 @@ def build(out: Path) -> Path:
     block_maps(prs)
     block_where(prs)
     block_valid(prs)
+    block_carrier_full(prs)
     out.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(out))
     print(f"  {n_before} original slides kept, "
