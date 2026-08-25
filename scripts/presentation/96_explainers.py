@@ -209,6 +209,22 @@ def block_mix(prs):
     DUM.slide_two_price_tags(prs, xslide)
     DUM.slide_the_proof(prs, xslide)
 
+    # ── 3b · why 10 % beats 20 % ─────────────────────────────────────────
+    s = xslide(prs, "mix", "Part 1 · The odd thing",
+               "Why is 10 % better than 20 %?",
+               "The prize is what the region would save if waiting cost "
+               "nothing. What it keeps is measured at the harshest fee. Both "
+               "from the Stage-3 grid.")
+    pic(s, FIG / "figB5_prize_and_bill.png", L, BODY_T + 0.24, W, 3.35)
+    vbullets(s, [[("Twice as many people join, so the fee bill nearly doubles: "
+                   "76 616 € becomes ", False), ("144 037 €", True),
+                  (" a week.", False)],
+                 [("But the prize only grows a tenth: 145 041 € becomes ",
+                   False), ("159 146 €", True), (".", False)],
+                 "So at 20 % the bill has eaten almost everything — 15 109 € "
+                 "left instead of 68 425 €. At 30 % nothing is left at all."],
+             BODY_T + 3.75)
+
     # ── 4 · are they outliers? ───────────────────────────────────────────
     # An earlier version of this block claimed the saving came from dropping
     # whole van-days. It does not: 24 of 6 397 are saved and 107 of the 130
@@ -576,6 +592,21 @@ def audit() -> int:
     for cls, want in (("rural", 60.2), ("suburban", 29.0), ("urban", 4.3)):
         m = sub[sub.raumtyp_3 == cls]
         check(f"two-day share, {cls}", 100 * (m[col] == 2).mean(), want, 0.15)
+
+    c = D.load_costs()
+    t = (c.groupby(["penalty", "share_willing"], as_index=False)
+          .total_stage3_eur.sum())
+    t["saved"] = D.BASE_TOTAL - t.total_stage3_eur
+
+    def at(pen, th):
+        return float(t[np.isclose(t.penalty, pen)
+                       & np.isclose(t.share_willing, th)].saved.iloc[0])
+
+    for th, want_prize, want_kept in ((0.1, 145041, 68425), (0.2, 159146, 15109)):
+        check(f"prize at θ={th:g} (no fee)", at(0.0, th), want_prize, 60)
+        check(f"kept at θ={th:g}, P=10", at(10.0, th), want_kept, 60)
+        check(f"the fee costs at θ={th:g}", at(0.0, th) - at(10.0, th),
+              want_prize - want_kept, 90)
 
     g = D.saving_grid().merge(D.load_wait(), on=["penalty", "share_willing"])
     at1 = g[np.isclose(g.share_willing, 1.0)]

@@ -244,5 +244,68 @@ def main() -> int:
     return 0
 
 
+
+
+# ── B5 · why 10 % beats 20 %, in three bars ─────────────────────────────────
+def figB5_prize_and_bill(pick=None):
+    """The prize barely grows; what the fee costs nearly doubles.
+
+    Total bar height is what the region could save if waiting were free. The
+    green part is what it actually keeps at the harshest fee; the rest is what
+    the fee costs it. Doubling participation doubles the second part and adds
+    a tenth to the first, which is the whole reason 10 % beats 20 %.
+    """
+    c = D.load_costs()
+    tot = (c.groupby(["penalty", "share_willing"], as_index=False)
+             .total_stage3_eur.sum())
+    tot["saved"] = D.BASE_TOTAL - tot.total_stage3_eur
+    free = tot[np.isclose(tot.penalty, 0.0)].set_index("share_willing").saved
+    thetas = [0.1, 0.2, 0.3]
+    prize = [float(free.loc[t]) for t in thetas]
+    kept = [float(tot[np.isclose(tot.penalty, 10.0)
+                      & np.isclose(tot.share_willing, t)].saved.iloc[0])
+            for t in thetas]
+    cost = [p - k for p, k in zip(prize, kept)]
+    print(f"  prize {[f'{v:,.0f}' for v in prize]}")
+    print(f"  kept  {[f'{v:,.0f}' for v in kept]}")
+    print(f"  the fee costs {[f'{v:,.0f}' for v in cost]} — "
+          f"×{cost[1] / cost[0]:.2f} from 10 % to 20 %, while the prize grows "
+          f"×{prize[1] / prize[0]:.2f}")
+
+    S.apply(STYLE)
+    fig, ax = plt.subplots(figsize=(14.0, 6.4))
+    x = np.arange(len(thetas))
+    ax.bar(x, kept, 0.52, color="#00B050", label="what the region keeps")
+    ax.bar(x, cost, 0.52, bottom=kept, color=S.GRID,
+           label="what the fee costs it")
+    for i, (p, k) in enumerate(zip(prize, kept)):
+        ax.text(i, p + 4000, f"{p:,.0f} €".replace(",", " "), ha="center",
+                fontsize=16, fontweight="bold")
+        if k > 6000:
+            ax.text(i, k / 2, f"{k:,.0f} €".replace(",", " "), ha="center",
+                    va="center", fontsize=15, color="white", fontweight="bold")
+        else:
+            ax.text(i, k + 6000, f"{k:,.0f} €".replace(",", " "), ha="center",
+                    fontsize=15, color="#00B050", fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{t:.0%} join in" for t in thetas])
+    ax.set_ylabel("€ per week")
+    ax.set_ylim(0, max(prize) * 1.22)
+    ax.legend(loc="upper left", fontsize=15)
+    ax.grid(alpha=0.25, axis="y")
+    ax.annotate("", xy=(2.32, prize[2]), xytext=(2.32, prize[0]),
+                arrowprops=dict(arrowstyle="<->", color=S.INK, lw=2.0))
+    ax.text(2.40, (prize[0] + prize[2]) / 2,
+            f"the prize grows\nonly ×{prize[2] / prize[0]:.2f}", fontsize=15,
+            va="center")
+    ax.set_title("The prize barely grows. What the fee costs nearly doubles.\n"
+                 "Whole region, per week, at the harshest fee (P = 10 €/p/d)")
+    fig.tight_layout()
+    S.save(fig, "figB5_prize_and_bill", STYLE, TIER)
+
+
+FIGURES["figB5_prize_and_bill"] = figB5_prize_and_bill
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
