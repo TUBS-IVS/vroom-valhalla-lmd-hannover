@@ -44,6 +44,8 @@ from _house import (AMBER, BODY_T, CRIM, DIM, GREEN, INK, INK2, L, LINE,
                     PANEL, RED, S1, S3, S4, S5, S6, SW, TEAL, W, WHITE,
                     hrule, hslide, label_box, pic, rect, txt)      # noqa: E402
 
+import _dummies as DUM                                            # noqa: E402
+
 B = H.B
 FIG = H.FIG / "tierB"          # the per-carrier and bulge panels
 SRC = Path(r"C:/Users/bienzeisler/Documents/Präsentationen/EWGT/2026/"
@@ -131,9 +133,14 @@ def divider(prs, num, kicker, headline, body):
 # 32 · the frequency mix — the bulge at theta = 10 %
 # ═══════════════════════════════════════════════════════════════════════════
 def block_mix(prs):
+    # The two plain-language slides come first: they carry the argument,
+    # everything after them is the evidence for it.
+    DUM.slide_two_price_tags(prs, xslide)
+    DUM.slide_the_proof(prs, xslide)
+
     # ── 1 · the observation ──────────────────────────────────────────────
     s = xslide(prs, "mix", "Backup: The frequency mix",
-               "At θ = 10 % the mix consolidates even under a punitive penalty",
+               "Even the harshest fee does not stop bundling at 10 % participation",
                "Share of the 312 cells choosing fewer than six delivery days · "
                "Stage-3 grid.")
     # The table's header row is set in caps, and a capitalised theta reads as
@@ -150,8 +157,8 @@ def block_mix(prs):
                 BODY_T + 0.40, widths=[2.3, 2.0, 2.0, 2.0, 2.0, 2.0],
                 reserve=2.6)
     label_box(s, L, y + 0.30, W, 0.85, H.BLUSH,
-              [("More participation, less consolidation — the opposite of "
-                "what a penalty should do.", 22, True, RED)], line_col=RED)
+              [("More participation means less bundling — as soon as a fee is "
+                "in play.", 22, True, RED)], line_col=RED)
     vbullets(s, ["Even at the harshest fee, four areas in ten still bundle when "
                  "only 10 % of customers join in.",
                  "From 30 % participation upwards, not one of them does.",

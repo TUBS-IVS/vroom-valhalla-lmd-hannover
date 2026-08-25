@@ -130,6 +130,8 @@ weekbar, flow, cell_grid, tour, serpentine = (
     B.weekbar, B.flow, B.cell_grid, B.tour, B.serpentine)
 set_morph, delete_slide, slide_oval, axes = (
     B.set_morph, B.delete_slide, B.slide_oval, B.axes)
+# raw units, for callers that draw connectors themselves
+Inches, Pt = B.Inches, B.Pt
 
 
 # ── icons ───────────────────────────────────────────────────────────────────
