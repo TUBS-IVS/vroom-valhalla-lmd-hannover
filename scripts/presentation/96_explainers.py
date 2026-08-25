@@ -243,6 +243,9 @@ def block_mix(prs):
                  "a fee anybody hands over."],
              BODY_T + 3.25)
 
+    # ── 3b2 · the same thing, with the numbers written out ───────────────
+    DUM.slide_worked_example(prs, xslide)
+
     # ── 3c · why 10 % beats 20 % ─────────────────────────────────────────
     s = xslide(prs, "mix", "Part 1 · The odd thing",
                "Why is 10 % better than 20 %?",

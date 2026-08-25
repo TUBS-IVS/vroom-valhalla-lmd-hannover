@@ -150,3 +150,70 @@ def slide_the_proof(prs, xslide):
         "charged at all.\nSo the fee is what turns the direction around — not "
         "the participation.", 22, bold=True, color=INK, line=1.28)
     return s
+
+
+def _option(slide, x, y, w, name, drive, fee, total, *, wins):
+    """One row of the comparison: what it costs, and what the total comes to."""
+    rect(slide, x, y, w, 0.86, H.BLUSH if wins else PANEL,
+         line_col=GREEN if wins else LINE, line_w=2.0 if wins else 1.0)
+    rect(slide, x, y, 0.09, 0.86, GREEN if wins else LINE)
+    txt(slide, x + 0.26, y + 0.09, w - 2.30, 0.34, name, 19, bold=True,
+        color=INK)
+    txt(slide, x + 0.26, y + 0.45, w - 2.30, 0.32,
+        f"{drive} driving  +  {fee} fee", 15, color=DIM)
+    txt(slide, x + w - 2.00, y + 0.14, 1.80, 0.44, total, 24, bold=True,
+        color=GREEN if wins else INK, align=PP_ALIGN.RIGHT)
+    if wins:
+        txt(slide, x + w - 2.00, y + 0.58, 1.80, 0.24, "← this one wins", 13,
+            bold=True, color=GREEN, align=PP_ALIGN.RIGHT)
+
+
+def slide_worked_example(prs, xslide):
+    """The same area under both scenarios, with the arithmetic written out."""
+    s = xslide(prs, "mix", "Part 1 · The odd thing",
+               "The same area, two scenarios — with the arithmetic",
+               "Illustrative figures for one area of 2 000 parcels a week at a "
+               "fee of 10 € per parcel per day of waiting. The measured "
+               "regional figures follow on the next slide.")
+
+    # ── the rule the optimiser applies ───────────────────────────────────
+    rect(s, L, BODY_T + 0.02, W, 0.86, PANEL, line_col=LINE)
+    rect(s, L, BODY_T + 0.02, 0.09, 0.86, RED)
+    txt(s, L + 0.30, BODY_T + 0.10, W - 0.60, 0.42,
+        "Total  =  driving cost   +   fee × waiting parcels × waiting days",
+        24, bold=True, color=INK, align=PP_ALIGN.CENTER)
+    txt(s, L + 0.30, BODY_T + 0.54, (W - 0.60) * 0.42, 0.28,
+        "real money — this is what gets reported", 14, color=DIM,
+        align=PP_ALIGN.CENTER)
+    txt(s, L + 0.30 + (W - 0.60) * 0.48, BODY_T + 0.54, (W - 0.60) * 0.52,
+        0.28, "never paid — it only decides which line wins", 14, color=RED,
+        align=PP_ALIGN.CENTER)
+
+    # ── the two scenarios, side by side ──────────────────────────────────
+    cw = (W - 0.55) / 2
+    for i, (tag, joiners, waiting, rows) in enumerate([
+            ("A", "10 % join in", "200 parcels would wait",
+             [("deliver daily", "20 000 €", "0 €", "20 000 €", False),
+              ("deliver on 2 days", "17 500 €", "2 000 €", "19 500 €", True)]),
+            ("B", "20 % join in", "400 parcels would wait",
+             [("deliver daily", "20 000 €", "0 €", "20 000 €", True),
+              ("deliver on 2 days", "17 250 €", "4 000 €", "21 250 €", False)]),
+    ]):
+        x = L + i * (cw + 0.55)
+        label_box(s, x, BODY_T + 1.10, 0.62, 0.52, RED,
+                  [(tag, 22, True, WHITE)])
+        txt(s, x + 0.80, BODY_T + 1.10, cw - 0.80, 0.34, joiners, 21,
+            bold=True, color=INK)
+        txt(s, x + 0.80, BODY_T + 1.44, cw - 0.80, 0.30, waiting, 16,
+            color=DIM)
+        for j, (name, drive, fee, total, wins) in enumerate(rows):
+            _option(s, x, BODY_T + 1.86 + j * 0.98, cw, name, drive, fee,
+                    total, wins=wins)
+
+    # ── what actually changed between them ───────────────────────────────
+    label_box(s, L, BODY_T + 4.00, W, 1.00, WHITE,
+              [("Driving saving: 2 500 € → 2 750 €.   Fee number: "
+                "2 000 € → 4 000 €.", 21, True, INK),
+               ("One grew by a tenth, the other doubled. That is why the "
+                "comparison flips.", 21, True, RED)], line_col=RED)
+    return s
