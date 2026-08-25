@@ -44,6 +44,7 @@ from _house import (AMBER, BODY_T, CRIM, DIM, GREEN, INK, INK2, L, LINE,
                     PANEL, RED, S1, S3, S4, S5, S6, SW, TEAL, W, WHITE,
                     hrule, hslide, label_box, pic, rect, txt)      # noqa: E402
 
+import _conclusion as CONC                                        # noqa: E402
 import _dummies as DUM                                            # noqa: E402
 
 B = H.B
@@ -576,6 +577,17 @@ def build(out: Path) -> Path:
     prs = Presentation(str(SRC))
     n_before = len(prs.slides)
     _RESOLVED.update(resolve_targets(prs))
+
+    # The closing summary belongs in the talk, not in the backup: build it,
+    # then move it in front of the contact slide, which is the last one.
+    CONC.slide_conclusion(prs)
+    CONC.slide_takeaway(prs)
+    contact_at = n_before - 1                    # 0-based index of the last
+    H.move_slide(prs, len(prs.slides) - 2, contact_at)
+    H.move_slide(prs, len(prs.slides) - 1, contact_at + 1)
+    print(f"  conclusion + takeaway inserted as slides "
+          f"{contact_at + 1}–{contact_at + 2}, before the contact slide")
+
     divider(prs, "B", "Backup", "Why the results\nlook like this",
             "Seven parts, each answering the questions a close reader asks — "
             "in the order they come up")

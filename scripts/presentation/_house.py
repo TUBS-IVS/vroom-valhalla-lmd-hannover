@@ -410,6 +410,21 @@ def build(prs, section, subject, source, items, *, draw=None, start=1,
     return out
 
 
+def move_slide(prs, old, new):
+    """Move a slide inside the deck, so generated slides can land in place.
+
+    python-pptx only appends. The slide order lives in the presentation's
+    sldIdLst, and moving an entry there is the whole operation — the slide
+    part and its relationships are untouched.
+    """
+    lst = prs.slides._sldIdLst
+    items = list(lst)
+    el = items[old]
+    lst.remove(el)
+    lst.insert(new, el)
+    return prs
+
+
 def statement(prs, text, *, sub=None, size=40):
     """A title-less slide carrying one sentence — his section punctuation."""
     s = prs.slides.add_slide(prs.slide_layouts[LAYOUT_BLANK])
