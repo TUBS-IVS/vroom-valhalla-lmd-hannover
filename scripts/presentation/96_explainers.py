@@ -574,10 +574,81 @@ def block_carrier_full(prs):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# keeping hand-placed figures current
+# ═══════════════════════════════════════════════════════════════════════════
+# The working deck's own slides carry figures pasted in by hand, so a
+# re-rendered figure does not reach them. This walks the inherited slides,
+# checks each large picture against what is on disk now, and swaps the stale
+# ones in place -- same position, same size, same z-order. Slides are found by
+# a fragment of their title, not by index, so the deck can keep being edited.
+#
+# Anything large that matches no current render and is not listed here is
+# reported rather than touched: it may be a photograph or a paper figure.
+
+REFRESH = {
+    # title fragment -> the renders that slide should carry, left to right
+    "service improves faster": ["fig31_saving_grid", "fig32_wait_grid"],
+}
+MIN_FIG_IN = 3.0
+
+
+def _current_renders():
+    import hashlib
+    out = {}
+    for d in ("slides/tierA", "slides/tierB"):
+        for f in (H.ROOT / "results" / "presentation_2026_08" / d).glob("*.png"):
+            out[hashlib.md5(f.read_bytes()).hexdigest()] = f
+    return out
+
+
+def refresh_figures(prs, n_inherited):
+    """Replace stale hand-placed figures with the current render."""
+    import hashlib
+    from pptx.util import Emu
+    known = _current_renders()
+    by_name = {f.stem: f for f in known.values()}
+    swapped = stale = 0
+    for i, sl in enumerate(list(prs.slides)[:n_inherited], 1):
+        ph = [sh for sh in sl.shapes if sh.is_placeholder
+              and sh.placeholder_format.idx == 0 and sh.has_text_frame]
+        title = (ph[0].text_frame.text if ph else "").lower()
+        want = next((v for k, v in REFRESH.items() if k in title), None)
+        pics = [sh for sh in sl.shapes if "PICTURE" in str(sh.shape_type)
+                and sh.width is not None
+                and Emu(sh.width).inches >= MIN_FIG_IN]
+        pics.sort(key=lambda sh: Emu(sh.left).inches)
+        for j, sh in enumerate(pics):
+            fresh = hashlib.md5(sh.image.blob).hexdigest() in known
+            if fresh:
+                continue
+            target = (by_name.get(want[j]) if want and j < len(want) else None)
+            if target is None:
+                stale += 1
+                print(f"  ? slide {i}: a {Emu(sh.width).inches:.1f} in picture "
+                      f"matches no current render and is not mapped — left "
+                      f"alone")
+                continue
+            box = (sh.left, sh.top, sh.width, sh.height)
+            el = sh._element
+            parent = el.getparent()
+            idx = list(parent).index(el)
+            parent.remove(el)
+            new = sl.shapes.add_picture(str(target), *box)
+            parent.remove(new._element)
+            parent.insert(idx, new._element)          # keep the z-order
+            swapped += 1
+            print(f"  ~ slide {i}: swapped in {target.stem} (was stale)")
+    if swapped or stale:
+        print(f"  {swapped} figure(s) refreshed, {stale} unmapped")
+    return swapped
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 def build(out: Path) -> Path:
     prs = Presentation(str(SRC))
     n_before = len(prs.slides)
     _RESOLVED.update(resolve_targets(prs))
+    refresh_figures(prs, n_before)
 
     # The closing summary belongs in the talk, not in the backup: build it,
     # then move it in front of the contact slide, which is the last one.
