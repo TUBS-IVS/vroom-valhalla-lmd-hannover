@@ -248,16 +248,19 @@ def main() -> int:
 
 # ── B5 · why 10 % beats 20 %, in three bars ─────────────────────────────────
 def figB5_prize_and_bill(pick=None):
-    """The prize barely grows; what the fee costs nearly doubles.
+    """What the region saves, and what it gives up to keep waiting short.
 
-    Total bar height is what the region could save if waiting were free. The
-    green part is what it actually keeps at the harshest fee; the rest is what
-    the fee costs it. Doubling participation doubles the second part and adds
-    a tenth to the first, which is the whole reason 10 % beats 20 %.
+    The fee is never added to anybody's cost -- the reported total is routing
+    money only. It steers which schedule wins, nothing else. So the grey part
+    of each bar is not a bill: it is real routing saving the model declines in
+    order to keep the wait down. As participation rises the same fee rate
+    applies to more waiting parcels, the steering hardens, and the model
+    retreats to shorter waits and thinner savings.
     """
     c = D.load_costs()
     tot = (c.groupby(["penalty", "share_willing"], as_index=False)
-             .total_stage3_eur.sum())
+             .total_stage3_eur.sum()
+             .merge(D.load_wait(), on=["penalty", "share_willing"]))
     tot["saved"] = D.BASE_TOTAL - tot.total_stage3_eur
     free = tot[np.isclose(tot.penalty, 0.0)].set_index("share_willing").saved
     thetas = [0.1, 0.2, 0.3]
@@ -266,18 +269,22 @@ def figB5_prize_and_bill(pick=None):
                       & np.isclose(tot.share_willing, t)].saved.iloc[0])
             for t in thetas]
     cost = [p - k for p, k in zip(prize, kept)]
+    wait = [float(tot[np.isclose(tot.penalty, 10.0)
+                      & np.isclose(tot.share_willing, t)]
+                  .avg_wait_d_stage3.iloc[0]) for t in thetas]
     print(f"  prize {[f'{v:,.0f}' for v in prize]}")
     print(f"  kept  {[f'{v:,.0f}' for v in kept]}")
-    print(f"  the fee costs {[f'{v:,.0f}' for v in cost]} — "
+    print(f"  given up  {[f'{v:,.0f}' for v in cost]} — "
           f"×{cost[1] / cost[0]:.2f} from 10 % to 20 %, while the prize grows "
           f"×{prize[1] / prize[0]:.2f}")
 
     S.apply(STYLE)
     fig, ax = plt.subplots(figsize=(14.0, 6.4))
     x = np.arange(len(thetas))
-    ax.bar(x, kept, 0.52, color="#00B050", label="what the region keeps")
+    ax.bar(x, kept, 0.52, color="#00B050",
+           label="what the region actually saves")
     ax.bar(x, cost, 0.52, bottom=kept, color=S.GRID,
-           label="what the fee costs it")
+           label="saving it gives up to keep the wait short")
     for i, (p, k) in enumerate(zip(prize, kept)):
         ax.text(i, p + 4000, f"{p:,.0f} €".replace(",", " "), ha="center",
                 fontsize=16, fontweight="bold")
@@ -287,8 +294,10 @@ def figB5_prize_and_bill(pick=None):
         else:
             ax.text(i, k + 6000, f"{k:,.0f} €".replace(",", " "), ha="center",
                     fontsize=15, color="#00B050", fontweight="bold")
+    # the retreat is the point, so the wait belongs on the axis, not floating
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{t:.0%} join in" for t in thetas])
+    ax.set_xticklabels([f"{t:.0%} join in" + chr(10) + f"they wait {w:.3f} d"
+                        for t, w in zip(thetas, wait)])
     ax.set_ylabel("€ per week")
     ax.set_ylim(0, max(prize) * 1.22)
     ax.legend(loc="upper left", fontsize=15)
@@ -296,10 +305,12 @@ def figB5_prize_and_bill(pick=None):
     ax.annotate("", xy=(2.32, prize[2]), xytext=(2.32, prize[0]),
                 arrowprops=dict(arrowstyle="<->", color=S.INK, lw=2.0))
     ax.text(2.40, (prize[0] + prize[2]) / 2,
-            f"the prize grows\nonly ×{prize[2] / prize[0]:.2f}", fontsize=15,
+            f"what could be saved if\nwaiting counted for nothing\n"
+            f"— grows only ×{prize[2] / prize[0]:.2f}", fontsize=14,
             va="center")
-    ax.set_title("The prize barely grows. What the fee costs nearly doubles.\n"
-                 "Whole region, per week, at the harshest fee (P = 10 €/p/d)")
+    ax.set_title("The more people wait, the harder the fee steers — and the "
+                 "less is left\nWhole region, per week, at the harshest fee "
+                 "(P = 10 €/p/d). The fee itself is never paid by anyone.")
     fig.tight_layout()
     S.save(fig, "figB5_prize_and_bill", STYLE, TIER)
 

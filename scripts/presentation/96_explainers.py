@@ -209,21 +209,54 @@ def block_mix(prs):
     DUM.slide_two_price_tags(prs, xslide)
     DUM.slide_the_proof(prs, xslide)
 
-    # ── 3b · why 10 % beats 20 % ─────────────────────────────────────────
+    # ── 3b · the fee is not a cost ───────────────────────────────────────
+    # A reader stops here and asks: surely the shadow price is not added to
+    # the bill? It is not. It steers the choice and nothing else, and the
+    # slide has to say so before the next one shows what that steering costs.
+    s = xslide(prs, "mix", "Part 1 · The odd thing",
+               "Wait — is the fee added to the cost? No.",
+               "Reported cost at the harshest fee, 10 % taking part: "
+               "1 841 323 € with and without the penalty term. Identical.")
+    for i, (head, body, col, fill, strike) in enumerate([
+            ("What we count", "driving, vehicles, labour — real routing money",
+             INK, PANEL, False),
+            ("What we never count", "the service fee. Nobody is ever charged "
+             "it", RED, H.BLUSH, True)]):
+        x = L + i * (W / 2 + 0.20)
+        cwd = W / 2 - 0.20
+        rect(s, x, BODY_T + 0.35, cwd, 1.45, fill, line_col=LINE)
+        txt(s, x + 0.30, BODY_T + 0.58, cwd - 0.60, 0.42, head, 24, bold=True,
+            color=col)
+        txt(s, x + 0.30, BODY_T + 1.06, cwd - 0.60, 0.60, body, 19, color=INK2,
+            line=1.22)
+        if strike:
+            hrule(s, x + 0.30, BODY_T + 1.22, cwd - 0.60, RED, 2.5)
+    label_box(s, L, BODY_T + 2.10, W, 0.95, WHITE,
+              [("The fee lives only inside the optimiser. It decides which "
+                "weekly plan wins — it is never money.", 22, True, INK)],
+              line_col=LINE)
+    vbullets(s, ["So why does a higher fee reduce the saving at all?",
+                 "Because it makes the optimiser pick gentler plans. Gentler "
+                 "plans deliver more often, and delivering more often costs "
+                 "more.",
+                 "The money that disappears is routing money never saved — not "
+                 "a fee anybody hands over."],
+             BODY_T + 3.25)
+
+    # ── 3c · why 10 % beats 20 % ─────────────────────────────────────────
     s = xslide(prs, "mix", "Part 1 · The odd thing",
                "Why is 10 % better than 20 %?",
-               "The prize is what the region would save if waiting cost "
-               "nothing. What it keeps is measured at the harshest fee. Both "
-               "from the Stage-3 grid.")
+               "Bar height is the most that could be saved; green is what is "
+               "actually saved at the harshest fee.")
     pic(s, FIG / "figB5_prize_and_bill.png", L, BODY_T + 0.24, W, 3.35)
-    vbullets(s, [[("Twice as many people join, so the fee bill nearly doubles: "
-                   "76 616 € becomes ", False), ("144 037 €", True),
-                  (" a week.", False)],
-                 [("But the prize only grows a tenth: 145 041 € becomes ",
-                   False), ("159 146 €", True), (".", False)],
-                 "So at 20 % the bill has eaten almost everything — 15 109 € "
-                 "left instead of 68 425 €. At 30 % nothing is left at all."],
-             BODY_T + 3.75)
+    vbullets(s, [[("Twice as many wait, so the fee steers twice as hard: "
+                   "waiting retreats from ", False),
+                  ("0.125 to 0.017 days", True), (".", False)],
+                 "A gentler plan saves less — the region gives up 76 616 € "
+                 "at 10 %, but 144 037 € at 20 %.",
+                 "But the prize grows only a tenth — so 68 425 € are left, "
+                 "then 15 109 €, then nothing."],
+             BODY_T + 3.66)
 
     # ── 4 · are they outliers? ───────────────────────────────────────────
     # An earlier version of this block claimed the saving came from dropping
