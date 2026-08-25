@@ -42,22 +42,46 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "revision"))
 import _house as H                                                # noqa: E402
 from _house import (AMBER, BODY_T, CRIM, DIM, GREEN, INK, INK2, L, LINE,
                     PANEL, RED, S1, S3, S4, S5, S6, SW, TEAL, W, WHITE,
-                    hrule, hslide, label_box, rect, txt)           # noqa: E402
+                    hrule, hslide, label_box, pic, rect, txt)      # noqa: E402
 
 B = H.B
+FIG = H.FIG / "tierB"          # the per-carrier and bulge panels
 SRC = Path(r"C:/Users/bienzeisler/Documents/Präsentationen/EWGT/2026/"
            r"EWGT_26_Bienzeisler_new.pptx")
 DEFAULT_OUT = SRC.parent / "EWGT_26_Bienzeisler_new_plus_explainers.pptx"
 
-# The results slides in the source deck these blocks belong to.
+# The results slide each block unpacks, matched by a fragment of its title.
+# Not by slide number: the working deck is edited between builds, and a
+# hard-coded index silently starts pointing at the wrong slide. The number is
+# resolved from the deck at build time and simply omitted if the title is gone.
 EXPLAINS = {
-    "mix": (32, "The penalty shifts the delivery-frequency mix"),
-    "trade": (33, "Service improves faster than savings disappear"),
-    "range": (34, "The efficient range sits between P = 0.25 and P = 0.5"),
-    "maps": (35, "Where the delivery days land"),
-    "where": (36, "TBC pays where delivery is sparse and far"),
-    "valid": (38, "Real routing confirms a conservative surrogate"),
+    "mix": "delivery-frequency mix",
+    "trade": "service improves faster",
+    "range": "efficiency range",
+    "maps": "where the delivery days land",
+    "where": "pays where delivery is sparse",
+    "valid": "validation",
 }
+_RESOLVED: dict = {}
+
+
+def resolve_targets(prs) -> dict:
+    """Find each block's results slide in the deck, by title fragment."""
+    titles = []
+    for i, sl in enumerate(prs.slides, 1):
+        ph = [sh for sh in sl.shapes if sh.is_placeholder
+              and sh.placeholder_format.idx == 0 and sh.has_text_frame]
+        titles.append((i, ph[0].text_frame.text.replace("", " ") if ph else ""))
+    out = {}
+    for key, frag in EXPLAINS.items():
+        hit = next(((i, t) for i, t in titles if frag in t.lower()), None)
+        if hit is None:
+            print(f"  ! no slide matches {frag!r} — tag will omit the number")
+        else:
+            print(f"  {key:6s} -> slide {hit[0]:2d}  {hit[1][:60]}")
+        out[key] = hit
+    return out
+
 
 VAN = 189.15        # EUR per van-day, config/constants.py
 CAP = 230           # parcels per van
@@ -67,9 +91,11 @@ CAP = 230           # parcels per van
 def xslide(prs, key, section, subject, source=None):
     """A backup slide, tagged with the results slide it unpacks."""
     s = hslide(prs, section, subject, source)
-    n, title = EXPLAINS[key]
-    txt(s, L, 1.00, W, 0.30, f"explains slide {n}  ·  {title}", 11.5,
-        bold=True, color=RED, spc=1.4, caps=True)
+    hit = _RESOLVED.get(key)
+    tag = (f"explains slide {hit[0]}  ·  {hit[1]}" if hit
+           else f"explains  ·  {EXPLAINS[key]}")
+    txt(s, L, 1.00, W, 0.30, tag, 11.5, bold=True, color=RED, spc=1.4,
+        caps=True)
     return s
 
 
@@ -132,80 +158,109 @@ def block_mix(prs):
                  "charged on."],
              y + 1.30)
 
-    # ── 2 · the two price tags ───────────────────────────────────────────
+    # ── 2 · who they are ─────────────────────────────────────────────────
+    # An earlier version of this block claimed the saving came from dropping
+    # whole van-days. It does not: the measured vehicle-day saving is 24 of
+    # 6 397, and 107 of the 130 consolidating cells drop none at all. The
+    # slides below carry what is actually in the data.
     s = xslide(prs, "mix", "Backup: The frequency mix",
-               "Two price tags decide it: van-days against waiting",
-               "Medians per chosen frequency at P = 5, nominal θ = 10 %. "
-               "Van-day = 189.15 € (config/constants.py); penalty = "
-               "P · local willing share · weekly parcels · added wait.")
-    y = B.table(s, ["Chosen takt", "Cells", "Van-days dropped", "Gain / week",
-                    "Penalty / week", "Margin"],
-                [[("2 days", "key"), "33", "4", ("757 €", "num"), "129 €",
-                  ("5.9 ×", "good")],
-                 [("3 days", "key"), "48", "3", ("567 €", "num"), "164 €",
-                  ("3.5 ×", "good")],
-                 [("4 days", "key"), "37", "2", ("378 €", "num"), "117 €",
-                  ("3.2 ×", "good")],
-                 [("5 days", "key"), "37", "1", ("189 €", "num"), "83 €",
-                  ("2.3 ×", "good")],
-                 [("daily", "key"), "157", "0", "—", "—", "—"]],
-                BODY_T + 0.30, widths=[2.2, 1.4, 2.4, 2.0, 2.2, 1.6],
-                reserve=2.2)
-    vbullets(s, ["A van-day costs the same whether it carries 5 parcels or 230.",
-                  [("So the gain is a fixed ", False), ("189.15 €", True),
-                   (" per dropped delivery day — it barely depends on volume.",
-                    False)],
-                  [("The penalty is charged per waiting parcel, so it scales "
-                    "with ", False), ("θ", True), (".", False)],
-                  "At θ = 10 % the gain outruns the penalty three- to sixfold."],
-              y + 0.28)
+               "The cells that consolidate are ordinary in size",
+               "Cells choosing fewer than six delivery days at P = 10 "
+               "€/p/d, θ = 10 %, against their weekly parcel volume.")
+    pic(s, FIG / "figB1_who_consolidates.png", L, BODY_T + 0.24, W, 3.35)
+    vbullets(s, ["130 cells in 45 postal-code areas — 26 % of the region's "
+                 "parcels.",
+                 [("The smallest carries ", False), ("774 parcels a week", True),
+                  (", the median 2 172. There is no outlier tail to remove.",
+                   False)],
+                 "Only Hermes, GLS, Amazon and DPD appear — no DHL."],
+             BODY_T + 3.75)
 
-    # ── 3 · who actually batches ─────────────────────────────────────────
+    # ── 3 · what the saving is not ───────────────────────────────────────
     s = xslide(prs, "mix", "Backup: The frequency mix",
-               "The cells that batch hardest are the ones nobody opted into",
-               "At nominal θ = 10 %, 45.8 % of business customers accept a "
-               "wait but only 0.1 % of private ones (fs_b2c / fs_b2b).")
-    y = B.table(s, ["Chosen takt", "B2C share", "Locally willing",
-                    "Batched parcels per week"],
-                [[("2 days", "key"), ("97 %", "num"), ("1 %", "num"),
-                  ("26", "num")],
-                 [("3 days", "key"), "95 %", "2 %", "52"],
-                 [("4 days", "key"), "94 %", "3 %", "62"],
-                 [("5 days", "key"), "89 %", "5 %", "99"],
-                 [("daily", "key"), ("73 %", "num"), ("12 %", "num"),
-                  ("512", "num")]],
-                BODY_T + 0.30, widths=[2.6, 2.4, 2.8, 4.0], reserve=2.3)
-    label_box(s, L, y + 0.26, W, 0.85, PANEL,
-              [("26 parcels a week, driven out six times — that is the whole "
-                "story.", 22, True, INK)], line_col=LINE)
-    vbullets(s, ["Almost nobody waits, so the penalty is tiny — but four "
-                 "near-empty van-days still fall away.",
-                 "Business-heavy cells already carry 512 batched parcels; "
-                 "there the vans are needed anyway."],
-             y + 1.28)
+               "The saving is not dropped vehicles",
+               "Vehicle-days from tab_chosen_schedules.csv; system saving is "
+               "the bundled path (dd + hub-bundled express) against the "
+               "1 909 748 € baseline.")
+    pic(s, FIG / "figB2_where_the_money_is.png", L, BODY_T + 0.24, W, 3.35)
+    vbullets(s, [[("Only ", False), ("24 of 6 397 vehicle-days", True),
+                  (" fall away — 107 of the 130 cells drop none at all.",
+                   False)],
+                 "What the cell gains is tour-days and distance: fewer "
+                 "line-haul round trips, shorter tours in total.",
+                 [("And the per-cell signal overstates it: 251 823 € "
+                   "unbundled against ", False), ("68 425 €", True),
+                  (" once the express stream is bundled.", False)]],
+             BODY_T + 3.75)
 
-    # ── 4 · why it dies at 20 % ──────────────────────────────────────────
+    # ── 4 · the effective knob ───────────────────────────────────────────
     s = xslide(prs, "mix", "Backup: The frequency mix",
-               "Why the bulge dies between θ = 10 % and θ = 20 %",
-               "Willingness curves evaluated at both levels; gain and penalty "
-               "as on the previous slide.")
-    B.stats(s, [("45.8 → 72.4 %", "business customers willing", False),
-                ("0.1 → 5.5 %", "private customers willing", False),
-                ("4 ×", "more parcels waiting", True)], BODY_T + 0.30,
-            h=1.15, sz=34)
-    y = B.table(s, ["Chosen takt", "Gain / week", "Penalty at θ = 10 %",
-                    "Penalty at θ = 20 %", "Margin left"],
-                [[("2 days", "key"), "757 €", "129 €", ("544 €", "num"),
-                  ("1.4 ×", "num")],
-                 [("3 days", "key"), "567 €", "164 €", "477 €", "1.2 ×"],
-                 [("4 days", "key"), "378 €", "117 €", "355 €", "1.1 ×"],
-                 [("5 days", "key"), "189 €", "83 €", ("194 €", "num"),
-                  ("gone", "num")]],
-                BODY_T + 1.75, widths=[2.2, 2.2, 2.6, 2.6, 2.2], reserve=1.5)
-    txt(s, L, y + 0.28, W, 0.95,
-        "The gain is fixed; the penalty quadruples. Deep batching goes first, "
-        "the gentle five-day takt survives longest — and at θ = 30 % nothing "
-        "is left.", 22, bold=True, color=RED, line=1.28)
+               "The effective knob is the product P · θ",
+               "Each point is one (P, θ) cell of the Stage-3 grid, θ > 0. "
+               "Spearman over all 80 points.")
+    pic(s, FIG / "figB3_ptheta_collapse.png", L, BODY_T + 0.24, W, 3.35)
+    vbullets(s, [[("The penalty is charged per waiting parcel, so the bill "
+                   "scales with ", False), ("θ", True),
+                  (" — the routing gain does not.", False)],
+                 "θ on its own explains almost nothing (ρ = −0.19); the "
+                 "product explains nearly everything (ρ = −0.97).",
+                 "P = 10 at θ = 10 % therefore behaves like P = 1 at full "
+                 "adoption."],
+             BODY_T + 3.75)
+
+    # ── 5 · the threshold, measured ──────────────────────────────────────
+    s = xslide(prs, "mix", "Backup: The frequency mix",
+               "Small cells consolidate, large cells stay daily",
+               "Weekly parcel volume of the cells choosing each takt, at three "
+               "effective penalties. Boxes are quartiles.")
+    pic(s, FIG / "figB4_size_vs_takt.png", L, BODY_T + 0.24, W, 3.35)
+    vbullets(s, ["The deeper the takt, the smaller the cell that chooses it.",
+                 "Doubling adoption halves the size threshold, so the "
+                 "two-day takt empties out first.",
+                 "The gentle five-day takt survives longest — it costs almost "
+                 "no waiting."],
+             BODY_T + 3.75)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# per-carrier splits of the aggregated results figures
+# ═══════════════════════════════════════════════════════════════════════════
+def block_providers(prs):
+    """The four results figures, split per carrier."""
+    for key, subject, fig_name, src, bullets in [
+        ("mix", "The frequency mix, per carrier", "figP1_mix_by_provider",
+         "Chosen delivery frequency of each carrier's areas across adoption, "
+         "at P = 0.25 €/p/d.",
+         ["DHL is the outlier: it keeps most of its network on five and six "
+          "days a week.",
+          "DPD, GLS and FedEx put roughly half their areas on two days.",
+          "The aggregated figure averages these two behaviours into one "
+          "curve that describes neither."]),
+        ("range", "The saving grid, per carrier", "figP2_saving_by_provider",
+         "Each carrier measured against its own daily-delivery baseline, not "
+         "against the system total.",
+         [[("The spread is wide: DHL peaks at ", False), ("10.6 %", True),
+           (", GLS at ", False), ("33.4 %", True), (".", False)],
+          "The shape is the same everywhere — only the ceiling differs.",
+          "A single system-wide operating point is therefore a compromise, "
+          "not an optimum for anybody."]),
+        ("where", "Where it pays, per carrier", "figP3_map_saving_provider",
+         "Cost saving per postal-code area at P = 0.25 €/p/d, θ = 1. Common "
+         "colour scale across carriers.",
+         ["Median saving runs from 3.7 % (DHL) to 32.6 % (FedEx).",
+          "The spatial pattern is the same for all of them: the periphery "
+          "gains, the core does not.",
+          "What differs is how much of each network sits in the periphery."]),
+        ("maps", "The delivery days, per carrier", "figP4_map_freq_provider",
+         "Median chosen frequency per area at P = 0.25 €/p/d, θ = 1.",
+         ["DHL holds a median of five delivery days; DPD, GLS and FedEx drop "
+          "to two.",
+          "The dense core stays on a high frequency for every carrier.",
+          "Consolidation is a network property, not a regional one."]),
+    ]:
+        sl = xslide(prs, key, "Backup: Per carrier", subject, src)
+        pic(sl, FIG / f"{fig_name}.png", L, BODY_T + 0.24, W, 3.35)
+        vbullets(sl, bullets, BODY_T + 3.75)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -347,10 +402,12 @@ def block_valid(prs):
 def build(out: Path) -> Path:
     prs = Presentation(str(SRC))
     n_before = len(prs.slides)
+    _RESOLVED.update(resolve_targets(prs))
     divider(prs, "B", "Backup", "Why the results\nlook like this",
             "One to three slides behind each results slide — the questions a "
             "close reader asks")
     block_mix(prs)
+    block_providers(prs)
     block_trade(prs)
     block_maps(prs)
     block_where(prs)
@@ -388,7 +445,6 @@ def audit() -> int:
     check("B2C willing at θ=0.1", 100 * C._willing_b2c(0.1), 0.1, 0.05)
     check("B2B willing at θ=0.2", 100 * C._willing_b2b(0.2), 72.4, 0.1)
     check("B2C willing at θ=0.2", 100 * C._willing_b2c(0.2), 5.5, 0.1)
-    check("van-day cost", VAN, 189.15, 0.001)
 
     rt = D.load_raumtyp()
     sub = (s[np.isclose(s.penalty, 0.25) & np.isclose(s.share_willing, 1.0)]
