@@ -1136,7 +1136,7 @@ def part_results(prs):
 
     s = hslide(prs, SEC_RES,
                "The efficient range sits between P = 0.25 and P = 0.5",
-               "All figures predicted by the Stage-3 surrogate at θ = 1; 15 of "
+               "All figures predicted by the Stage-3 surrogate at θ = 1; 18 of "
                "80 grid cells lie on the efficient front.")
     H.B.table(s, ["Penalty", "Cost saving", "Added wait", "What it buys"],
               [[("P = 0", "key"), ("22.8 %", "num"), "0.98 d",

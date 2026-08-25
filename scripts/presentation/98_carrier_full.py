@@ -269,9 +269,11 @@ def figB5_prize_and_bill(pick=None):
                       & np.isclose(tot.share_willing, t)].saved.iloc[0])
             for t in thetas]
     cost = [p - k for p, k in zip(prize, kept)]
-    wait = [float(tot[np.isclose(tot.penalty, 10.0)
-                      & np.isclose(tot.share_willing, t)]
-                  .avg_wait_d_stage3.iloc[0]) for t in thetas]
+    sched = D.load_chosen_stage3()
+    col = "schedule_size_system_smoothed"
+    share = [100 * float((sched[np.isclose(sched.penalty, 10.0)
+                                & np.isclose(sched.share_willing, t)][col]
+                          < 6).mean()) for t in thetas]
     print(f"  prize {[f'{v:,.0f}' for v in prize]}")
     print(f"  kept  {[f'{v:,.0f}' for v in kept]}")
     print(f"  given up  {[f'{v:,.0f}' for v in cost]} — "
@@ -296,8 +298,9 @@ def figB5_prize_and_bill(pick=None):
                     fontsize=15, color="#00B050", fontweight="bold")
     # the retreat is the point, so the wait belongs on the axis, not floating
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{t:.0%} join in" + chr(10) + f"they wait {w:.3f} d"
-                        for t, w in zip(thetas, wait)])
+    ax.set_xticklabels([f"{t:.0%} join in" + chr(10)
+                        + f"{v:.1f} % of areas still bundle"
+                        for t, v in zip(thetas, share)])
     ax.set_ylabel("€ per week")
     ax.set_ylim(0, max(prize) * 1.22)
     ax.legend(loc="upper left", fontsize=15)

@@ -326,60 +326,80 @@ def figB1_who_consolidates():
 
 
 def figB2_where_the_money_is():
-    """The saving is not dropped vehicles — it is tour-days and distance."""
-    m = _bulge_frame()
-    yes = m[m.consolidates]
-    veh_saved = float(yes.d_veh.sum())
-    veh_eur = veh_saved * 189.15
-    dd_eur = float(yes.d_dd.sum())
-    costs = D.load_costs()
-    tot = costs[np.isclose(costs.penalty, P_BULGE)
-                & np.isclose(costs.share_willing, TH_BULGE)].total_stage3_eur.sum()
-    sys_eur = D.BASE_TOTAL - tot
-    print(f"  vehicle-days saved {veh_saved:.0f} of {m.veh_base.sum():.0f} "
-          f"({veh_eur:,.0f} €) · per-cell dd delta {dd_eur:,.0f} € · "
-          f"system saving {sys_eur:,.0f} € ({100*sys_eur/D.BASE_TOTAL:.1f} %)")
-    S.apply(STYLE)
-    fig, axes = plt.subplots(1, 2, figsize=(15.5, 5.4))
+    """How much of the saving is fewer vehicle-days, and how much is distance.
 
+    Rebuilt 2026-08-25 on the corrected fleet table. The earlier version read
+    the per-cell dd vehicle column, which leaves the pooled express tour out
+    entirely, and concluded that almost no vehicles are saved. On the proper
+    system metric 180 of 6 397 vehicle-days fall away at the low corner -- half
+    the money -- and 524 at the headline point.
+    """
+    VAN = 189.15
+    f = D.fleet_totals()
+    c = D.load_costs()
+    tot = (c.groupby(["penalty", "share_willing"], as_index=False)
+             .total_stage3_eur.sum())
+    tot["saved"] = D.BASE_TOTAL - tot.total_stage3_eur
+
+    def veh_week(pen, th):
+        r = f[np.isclose(f.penalty, pen) & np.isclose(f.share_willing, th)]
+        return float(r.mean_s3.iloc[0]) * D.N_DAYS
+
+    base = veh_week(0.0, 0.0)
+    nl = chr(10)
+    points = [(10.0, 0.1, "P = 10 €/p/d" + nl + "only 10 % join in"),
+              (0.25, 1.0, "P = 0.25 €/p/d" + nl + "everyone joins")]
+    rows = []
+    for pen, th, lab in points:
+        dv = base - veh_week(pen, th)
+        sav = float(tot[np.isclose(tot.penalty, pen)
+                        & np.isclose(tot.share_willing, th)].saved.iloc[0])
+        rows.append((lab, dv, dv * VAN, sav))
+        print(f"  {lab.replace(nl, ', ')}: {dv:.0f} vehicle-days "
+              f"({dv * VAN:,.0f} €) of {sav:,.0f} € saved "
+              f"→ {100 * dv * VAN / sav:.0f} %")
+
+    S.apply(STYLE)
+    fig, axes = plt.subplots(1, 2, figsize=(15.5, 5.6),
+                             gridspec_kw={"width_ratios": [1.25, 1]})
     ax = axes[0]
-    vals = [veh_eur, dd_eur - veh_eur]
-    ax.bar([0], [vals[0]], color=S.BRAND, width=0.55,
-           label="dropped vehicle-days")
-    ax.bar([0], [vals[1]], bottom=[vals[0]], color=S.GRID, width=0.55,
-           label="everything else (tour-days, distance)")
-    ax.bar([1], [sys_eur], color=S.INK_SOFT, width=0.55,
-           label="what the system actually saves")
-    ax.set_xticks([0, 1])
-    ax.set_xticklabels(["per-cell signal\n(unbundled)",
-                        "system result\n(bundled)"])
-    ax.set_ylabel("€ per week")
-    ax.set_ylim(0, dd_eur * 1.18)
-    ax.legend(loc="upper right", fontsize=13)
+    x = np.arange(len(rows))
+    veh = [r[2] for r in rows]
+    rest = [r[3] - r[2] for r in rows]
+    ax.bar(x, veh, 0.5, color=S.BRAND, label="fewer vehicle-days")
+    ax.bar(x, rest, 0.5, bottom=veh, color=S.GRID,
+           label="shorter driving, same vehicles")
+    for i, (lab, dv, val, sav) in enumerate(rows):
+        ax.text(i, val / 2, f"{val:,.0f} €".replace(",", " "), ha="center",
+                va="center", fontsize=15, color="white", fontweight="bold")
+        ax.text(i, sav + sav * 0.035,
+                f"{sav:,.0f} € saved".replace(",", " ")
+                + f"  —  {100 * val / sav:.0f} % of it vehicles",
+                ha="center", fontsize=15, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels([r[0] for r in rows])
+    ax.set_ylabel("€ saved per week")
+    ax.set_ylim(0, max(r[3] for r in rows) * 1.22)
+    ax.legend(loc="upper left", fontsize=14)
     ax.grid(alpha=0.25, axis="y")
-    ax.annotate(f"only {veh_eur:,.0f} €".replace(",", " "),
-                xy=(0.30, veh_eur), xytext=(0.62, dd_eur * 0.30),
-                fontsize=14, fontweight="bold", color=S.BRAND,
-                arrowprops=dict(arrowstyle="->", color=S.BRAND, lw=1.8))
-    ax.text(0, dd_eur * 1.02, f"{dd_eur:,.0f} €".replace(",", " "),
-            ha="center", fontsize=15, fontweight="bold")
-    ax.text(1, sys_eur * 1.04, f"{sys_eur:,.0f} €".replace(",", " "),
-            ha="center", fontsize=15, fontweight="bold")
 
     ax = axes[1]
-    zero = int((yes.d_veh == 0).sum())
-    ax.barh([0, 1], [zero, len(yes) - zero],
-            color=[S.GRID, S.BRAND], height=0.55)
-    for i, v in enumerate([zero, len(yes) - zero]):
-        ax.text(v + 2, i, f"{v} cells", va="center", fontsize=15,
-                fontweight="bold")
-    ax.set_yticks([0, 1])
-    ax.set_yticklabels(["save no\nvehicle-day", "save at least\none"])
-    ax.set_xlim(0, len(yes) * 1.2)
-    ax.set_xlabel("Cells that chose to consolidate")
+    ax.barh([1, 0], [base, base], 0.55, color=S.GRID, label="baseline")
+    ax.barh([1, 0], [base - rows[0][1], base - rows[1][1]], 0.55,
+            color=S.BRAND, label="after optimisation")
+    for i, (lab, dv, _, _) in enumerate(rows):
+        yy = 1 - i
+        ax.text(base - dv - 260, yy, f"−{dv:.0f}", va="center", ha="right",
+                fontsize=15, color="white", fontweight="bold")
+    ax.set_yticks([1, 0])
+    ax.set_yticklabels([r[0].replace(nl, "  ·  ") for r in rows],
+                       fontsize=13)
+    ax.set_xlim(0, base * 1.12)
+    ax.set_xlabel(f"Vehicle-days per week  (baseline {base:.0f})")
+    ax.legend(loc="upper left", fontsize=13, framealpha=0.95)
     ax.grid(alpha=0.25, axis="x")
-    fig.suptitle("The saving is not dropped vehicles — "
-                 f"P = {P_BULGE:g} €/p/d, θ = {TH_BULGE:.0%}")
+    fig.suptitle("Half the saving is fewer vehicle-days at the thin corner — "
+                 "a quarter of it at the operating point")
     fig.tight_layout(rect=[0, 0, 1, 0.93])
     S.save(fig, "figB2_where_the_money_is", STYLE, TIER)
 

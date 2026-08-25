@@ -253,9 +253,9 @@ def block_mix(prs):
                "Bar height is the most that could be saved; green is what is "
                "actually saved at the harshest fee.")
     pic(s, FIG / "figB5_prize_and_bill.png", L, BODY_T + 0.24, W, 3.35)
-    vbullets(s, [[("Twice as many wait, so the fee steers twice as hard: "
-                   "waiting retreats from ", False),
-                  ("0.125 to 0.017 days", True), (".", False)],
+    vbullets(s, [[("Twice as many wait, so the fee steers twice as hard: the "
+                   "areas that still bundle drop from ", False),
+                  ("41.7 % to 10.9 %", True), (".", False)],
                  "A gentler plan saves less — the region gives up 76 616 € "
                  "at 10 %, but 144 037 € at 20 %.",
                  "But the prize grows only a tenth — so 68 425 € are left, "
@@ -281,17 +281,17 @@ def block_mix(prs):
 
     # ── 5 · do we save vans? ─────────────────────────────────────────────
     s = xslide(prs, "mix", "Part 1 · The odd thing",
-               "So do we save delivery vans? No.",
-               "Vehicle-days from the chosen schedules; the network saving is "
-               "measured against the 1 909 748 € weekly baseline.")
+               "So do we save delivery vans? About half of it, yes.",
+               "Vehicle-days on the corrected fleet metric (2026-08-25: the "
+               "express parcels of all non-delivering cells at a depot ride "
+               "one pooled tour). Saving against the 1 909 748 € baseline.")
     pic(s, FIG / "figB2_where_the_money_is.png", L, BODY_T + 0.24, W, 3.35)
-    vbullets(s, [[("Almost none: ", False), ("24 of 6 397", True),
-                  (" van-days, and 107 of the 130 areas save not a single one.",
-                   False)],
-                 "The van still drives there daily for everyone who did not "
-                 "join in. What gets shorter is the driving, not the fleet.",
-                 "Counted area by area it looks like 251 823 €. For the whole "
-                 "network it is 68 425 €."],
+    vbullets(s, [[("180 of 6 397 van-days fall away — worth 34 047 €, which "
+                   "is ", False), ("half", True),
+                  (" of the 68 425 € saved there.", False)],
+                 "The other half is shorter driving with the same vehicles.",
+                 "At the operating point it is the other way round: 524 "
+                 "van-days, but only 28 % of the money."],
              BODY_T + 3.75)
 
     # ── 6 · what decides it ──────────────────────────────────────────────
@@ -354,7 +354,8 @@ def block_trade(prs):
     s = xslide(prs, "range", "Part 2 · What a fee buys",
                "Why not simply take the biggest saving?",
                "Fleet figures are for the balanced and smoothed schedules; "
-               "15 of the 80 settings sit on the efficient front.")
+               "18 of the 80 settings sit on the efficient front (recounted on the "
+               "2026-08-25 corrected wait metric).")
     for i, (nm, sav, wait, note, hot) in enumerate([
             ("No fee", "22.8 %", "0.98 d",
              "the cheapest week — but a full day of waiting", False),
@@ -649,6 +650,34 @@ def audit() -> int:
     def at(pen, th):
         return float(t[np.isclose(t.penalty, pen)
                        & np.isclose(t.share_willing, th)].saved.iloc[0])
+
+    # the 2026-08-25 metric fix: a no-op at theta = 1, large below it
+    w = D.load_wait()
+
+    def wait(pen, th):
+        return float(w[np.isclose(w.penalty, pen)
+                       & np.isclose(w.share_willing, th)].avg_wait_d_stage3.iloc[0])
+
+    for pen, want in ((0.0, 0.975), (0.25, 0.455), (0.5, 0.228)):
+        check(f"wait at P={pen:g}, θ=1 (fix is a no-op here)", wait(pen, 1.0),
+              want, 0.001)
+    fl = D.fleet_totals()
+
+    def peak(pen, th):
+        return float(fl[np.isclose(fl.penalty, pen)
+                        & np.isclose(fl.share_willing, th)].peak_s3.iloc[0])
+
+    check("peak fleet cut at P=0.5, θ=1 [%]",
+          100 * (1 - peak(0.5, 1.0) / peak(0.5, 0.0)), 12.9, 0.1)
+
+    def vehweek(pen, th):
+        return float(fl[np.isclose(fl.penalty, pen)
+                        & np.isclose(fl.share_willing, th)].mean_s3.iloc[0]) * 6
+
+    check("van-days saved at P=10, θ=0.1", vehweek(0.0, 0.0) - vehweek(10.0, 0.1),
+          180, 2)
+    check("van-days saved at P=0.25, θ=1", vehweek(0.0, 0.0) - vehweek(0.25, 1.0),
+          524, 2)
 
     for th, want_prize, want_kept in ((0.1, 145041, 68425), (0.2, 159146, 15109)):
         check(f"prize at θ={th:g} (no fee)", at(0.0, th), want_prize, 60)

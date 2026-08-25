@@ -151,13 +151,40 @@ def load_costs() -> pd.DataFrame:
 
 
 def load_wait() -> pd.DataFrame:
-    """Per (P, theta): parcel-weighted average wait in days."""
-    return _read(REV / "tab_wait_smoothed.csv")
+    """Per (P, theta): system-average added wait in days.
+
+    Reads the 2026-08-25 corrected table. The earlier metric weighted *every*
+    parcel with its cell's schedule wait, but only the willing fraction
+    actually waits -- standard parcels keep daily service. That overstated the
+    wait at theta < 1 by up to a factor of 60 and is identical at theta = 1,
+    where everybody is willing. `wait_old` is kept in the frame so the two can
+    be compared; `avg_wait_d_stage3` now carries the corrected series under its
+    old name, because every caller reads it by that name.
+    """
+    w = _read(REV / "tab_wait_fixed.csv")
+    return w.assign(avg_wait_d_stage3=w.wait_fixed)
 
 
 def load_fleet() -> pd.DataFrame:
-    """Per (P, theta, provider, hub, day): Stage-2 and Stage-3 fleet size."""
+    """Per (P, theta, provider, hub, day): Stage-2 and Stage-3 fleet size.
+
+    Still the pre-fix table, and deliberately: it is the only one carrying the
+    Stage-2/Stage-3 split that the smoothing figure compares, and that figure
+    is drawn at theta = 1 where the fleet correction is a verified no-op. For
+    anything spanning the theta grid use `load_fleet_fixed()`.
+    """
     return _read(REV / "tab_fleet_per_hub_smoothed.csv")
+
+
+def load_fleet_fixed() -> pd.DataFrame:
+    """Per (P, theta, provider, hub, day): corrected fleet size.
+
+    The 2026-08-25 fix: the express parcels of all non-delivering cells at a
+    hub ride ONE pooled tour, which is how their cost is computed. The earlier
+    metric charged at least one vehicle per cell and invented up to 29 vehicles
+    per hub-day at intermediate theta. A no-op at theta = 0 and theta = 1.
+    """
+    return _read(REV / "tab_fleet_per_hub_fixed.csv")
 
 
 def load_express() -> pd.DataFrame:
@@ -340,9 +367,12 @@ def saving_grid(costs: pd.DataFrame | None = None) -> pd.DataFrame:
 
 def fleet_totals(fleet: pd.DataFrame | None = None) -> pd.DataFrame:
     """(P, theta) -> system fleet peak / mean / spread, stage 2 vs stage 3."""
-    f = load_fleet() if fleet is None else fleet
+    # System totals come from the corrected table: they span the theta grid,
+    # which is exactly where the pooled-express fix bites.
+    f = load_fleet_fixed() if fleet is None else fleet
+    col = "fleet_fixed" if "fleet_fixed" in f.columns else "fleet_stage3"
     per_day = (f.groupby(["penalty", "share_willing", "day"], as_index=False)
-               .agg(s2=("fleet_stage2", "sum"), s3=("fleet_stage3", "sum")))
+               .agg(s2=(col, "sum"), s3=(col, "sum")))
     out = (per_day.groupby(["penalty", "share_willing"], as_index=False)
            .agg(peak_s2=("s2", "max"), peak_s3=("s3", "max"),
                 mean_s2=("s2", "mean"), mean_s3=("s3", "mean"),

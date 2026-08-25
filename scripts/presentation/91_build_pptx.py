@@ -1705,7 +1705,7 @@ def build(out: Path, keep_template_slides: bool) -> Path:
 
     # ═══ the trade-off in numbers ═════════════════════════════════════════
     s = new_slide(prs, "Results", "The efficient range sits between 0.25 and 0.5",
-                  "All figures predicted by the Stage-3 surrogate at θ = 1; 15 of 80 "
+                  "All figures predicted by the Stage-3 surrogate at θ = 1; 18 of 80 "
                   "grid cells lie on the efficient front.")
     _y = table(s, ["Penalty", "Cost saving", "Added wait", "What it buys"],
           [[("P = 0", "key"), ("22.8%", "num"), "0.98 d",
