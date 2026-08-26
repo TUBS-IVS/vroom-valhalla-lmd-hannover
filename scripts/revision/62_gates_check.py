@@ -1,17 +1,22 @@
 """62: gate checks G1a / G1b / G3 / G4 for the v2 grid (read-only, live-safe).
 
 The full base grid (``61_grid_run_v2.py``) runs for hours and appends to the
-four CSVs in ``results/revision_2026_08/``. This script verifies that grid
-WHILE it is running, without ever touching the live files directly:
+four CSVs in its output directory. This script verifies that grid WHILE it is
+running, without ever touching the live files directly:
 
-  HARD RULE: never ``pd.read_csv`` the four live files in
-  ``results/revision_2026_08/`` directly. A reader lock on one of them killed
+  HARD RULE: never ``pd.read_csv`` the four live files in the live directory
+  directly. A reader lock on one of them killed
   a writer overnight before this script existed. Every read in this script
   goes through :func:`refresh_copies`, which copies them (with the same
   retry/backoff the writer uses for its own appends) into
-  ``results/revision_2026_08/_gatecopy/`` first. That copy step is reusable
+  ``<live-dir>/_gatecopy/`` first. That copy step is reusable
   by any future script with the same coexistence requirement, not just this
   one.
+
+The live directory defaults to ``results/revision_2026_08`` and is overridable
+with ``--live-dir`` or ``$REV2_LIVE_DIR`` — Task 6e moved the production grid
+to ``results/revision_2026_08_v4``, so Task 11/13 must pass one of the two.
+The ``_gatecopy/`` copies and ``gates_report.md`` follow the choice.
 
   COMPLETION MARKER: the grid writes ``_tab_chosen_v2.csv`` LAST per triple
   (see ``61_grid_run_v2.py``'s own docstring), so a ``(penalty,
@@ -191,14 +196,16 @@ as more triples land, picks up more coverage automatically -- there is no
 persistent state outside the four source CSVs.
 
 Run: ``.venv\\Scripts\\python.exe scripts/revision/62_gates_check.py``
-Output: ``results/revision_2026_08/gates_report.md``
+Output: ``<live-dir>/gates_report.md``
 Exit code: 0 unless a HARD gate (G1a, G3, or G4-lower-bound) actually failed
 (as opposed to "not yet available", which also exits 0 per the brief).
 """
 from __future__ import annotations
 
+import argparse
 import csv as csv_mod
 import gc
+import os
 import shutil
 import sys
 import time
@@ -235,13 +242,37 @@ assert MIN_TOUR_PARCELS == 230.0, (
 # Paths
 # ─────────────────────────────────────────────────────────────────────────────
 
-LIVE_DIR = C.ROOT / "results" / "revision_2026_08"
+# The grid whose four CSVs are checked. Overridable because Task 6e moved the
+# production grid to a NEW directory (revision_2026_08_v4) — Task 11/13 must
+# be able to point this script at it without editing the source:
+#   env  REV2_LIVE_DIR=...\results\revision_2026_08_v4
+#   cli  --live-dir results/revision_2026_08_v4
+# The copy directory and the report follow the choice, so a v4 check never
+# writes into the run-2 tree.
+LIVE_DIR = Path(os.environ.get("REV2_LIVE_DIR")
+                or C.ROOT / "results" / "revision_2026_08")
 COPY_DIR = LIVE_DIR / "_gatecopy"
 LIVE_FILES = (
     "_tab_chosen_v2.csv", "tab_costs_v2.csv",
     "tab_fleet_per_hub_v2.csv", "tab_wait_v2.csv",
 )
 REPORT_PATH = LIVE_DIR / "gates_report.md"
+
+
+def _rel_root(path: Path) -> str:
+    """``path`` as a repo-relative POSIX string, for the report text."""
+    try:
+        return Path(path).resolve().relative_to(C.ROOT).as_posix() + "/"
+    except ValueError:
+        return str(path)
+
+
+def _use_live_dir(path: Path) -> None:
+    """Point the live CSVs, the copy directory and the report at *path*."""
+    global LIVE_DIR, COPY_DIR, REPORT_PATH
+    LIVE_DIR = Path(path)
+    COPY_DIR = LIVE_DIR / "_gatecopy"
+    REPORT_PATH = LIVE_DIR / "gates_report.md"
 
 # The brief names ``results/oracle_loop_extended_2026_05_22/...`` as the
 # canonical table; that directory does not exist in the current tree (it
@@ -853,7 +884,7 @@ def render_report(*, n_done_triples: int, has_stage1_col: bool,
     else:
         A("**(P, theta) inventory:** no complete triples in the copy yet.")
         A("")
-    A("This script never reads the four live CSVs in `results/revision_2026_08/` "
+    A(f"This script never reads the four live CSVs in `{_rel_root(LIVE_DIR)}` "
       "directly -- it copies them into `_gatecopy/` first (with retry/backoff "
       "on a transient lock) and reads only the copies. Re-run "
       "`scripts/revision/62_gates_check.py` at any time to pick up more "
@@ -1192,6 +1223,19 @@ def render_report(*, n_done_triples: int, has_stage1_col: bool,
 
 def main() -> None:
     t_start = time.perf_counter()
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--live-dir", type=Path, default=None,
+                    help="grid directory whose four CSVs are checked "
+                         "(default: $REV2_LIVE_DIR, else "
+                         "results/revision_2026_08). Task 6e moved the "
+                         "production grid to results/revision_2026_08_v4 — "
+                         "point this there to gate it. The _gatecopy/ copies "
+                         "and gates_report.md follow the choice.")
+    args = ap.parse_args()
+    if args.live_dir is not None:
+        _use_live_dir(args.live_dir)
+    print(f"[62] live dir: {LIVE_DIR}", flush=True)
 
     print("[62] copying live CSVs -> _gatecopy/ ...", flush=True)
     copies = refresh_copies()

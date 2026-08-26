@@ -52,8 +52,12 @@ costs.py has no "just give me hub-day d's contributing express cells"
 export. Mirrored here rather than adding one to costs.py (edit scope for
 this task is this script only); flagged in the task-8 report.
 
-Run: ``.venv\\Scripts\\python.exe scripts/revision/63_bundle_sampler.py``
-Output (results/revision_2026_08/, override with --out-dir):
+Run: ``.venv\\Scripts\\python.exe scripts/revision/63_bundle_sampler.py
+     [--live-dir results/revision_2026_08_v4]``
+The sampled grid defaults to ``results/revision_2026_08`` and follows
+``--live-dir`` / ``$REV2_LIVE_DIR`` (Task 6e moved the production grid to
+``results/revision_2026_08_v4``).
+Output (the live dir, override with --out-dir):
   bundles_manifest.parquet   one row per unique bundle instance (see
                               write_manifest's column list)
   bundles_manifest.csv       same columns, JSON columns (members, member_idx,
@@ -103,9 +107,26 @@ assert len(ALL_COLS) == 25, f"expected 25 base features, got {len(ALL_COLS)}"
 # Paths
 # ─────────────────────────────────────────────────────────────────────────────
 
-LIVE_DIR = C.ROOT / "results" / "revision_2026_08"
+# The grid whose ``_tab_chosen_v2.csv`` is sampled. Overridable because
+# Task 6e moved the production grid to a NEW directory
+# (``revision_2026_08_v4``) — Task 11/13 must be able to point this script at
+# it without editing the source:
+#   env  REV2_LIVE_DIR=...\results\revision_2026_08_v4
+#   cli  --live-dir results/revision_2026_08_v4
+# ``--out-dir`` / ``--copies-dir`` default to the chosen live directory and
+# can still be pointed elsewhere independently.
+LIVE_DIR = Path(os.environ.get("REV2_LIVE_DIR")
+                or C.ROOT / "results" / "revision_2026_08")
 LIVE_CHOSEN = LIVE_DIR / "_tab_chosen_v2.csv"
 DEFAULT_COPIES_DIR = LIVE_DIR / "_bundlecopy"
+
+
+def _use_live_dir(path: Path) -> None:
+    """Point the sampled chosen table and the copy directory at *path*."""
+    global LIVE_DIR, LIVE_CHOSEN, DEFAULT_COPIES_DIR
+    LIVE_DIR = Path(path)
+    LIVE_CHOSEN = LIVE_DIR / "_tab_chosen_v2.csv"
+    DEFAULT_COPIES_DIR = LIVE_DIR / "_bundlecopy"
 
 MANIFEST_COLS = [
     "provider", "hub_idx", "day", "kind", "members", "member_idx",
@@ -575,13 +596,30 @@ def print_summary(df: pd.DataFrame, total_eligible: float, total_bundled: float,
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out-dir", type=Path, default=LIVE_DIR,
+    ap.add_argument("--live-dir", type=Path, default=None,
+                    help="grid directory whose _tab_chosen_v2.csv is sampled "
+                         "(default: $REV2_LIVE_DIR, else "
+                         f"{LIVE_DIR}). Task 6e moved the production grid to "
+                         "results/revision_2026_08_v4 — point this there to "
+                         "sample it. --out-dir/--copies-dir follow unless "
+                         "given explicitly.")
+    # Defaults are resolved AFTER --live-dir is known (below), so the three
+    # flags compose: --live-dir moves all of them, an explicit --out-dir or
+    # --copies-dir still wins.
+    ap.add_argument("--out-dir", type=Path, default=None,
                     help="where bundles_manifest.{parquet,csv} are written "
-                         f"(default: {LIVE_DIR})")
-    ap.add_argument("--copies-dir", type=Path, default=DEFAULT_COPIES_DIR,
+                         f"(default: the live dir, {LIVE_DIR})")
+    ap.add_argument("--copies-dir", type=Path, default=None,
                     help="scratch dir for the copy-first read of "
                          f"_tab_chosen_v2.csv (default: {DEFAULT_COPIES_DIR})")
     args = ap.parse_args()
+    if args.live_dir is not None:
+        _use_live_dir(args.live_dir)
+    if args.out_dir is None:
+        args.out_dir = LIVE_DIR
+    if args.copies_dir is None:
+        args.copies_dir = DEFAULT_COPIES_DIR
+    print(f"[63] live dir: {LIVE_DIR}", flush=True)
 
     t_start = time.perf_counter()
 

@@ -37,10 +37,13 @@ from _stubs import StubPredictor, tiny_matrices
 
 from batch_delivery.config.constants import FIXED_COST_EUR, N_DAYS
 from batch_delivery.optimization.balancing import (
+    RANGE_START_BUDGET_PCT,
     WEEK_FIXED_COST_EUR,
     _daily_fleet_per_hub,
+    balance_fleet_per_hub_ml,
     operator_cost_breakdown,
     operator_polish,
+    operator_polish_best_of_two,
 )
 from batch_delivery.optimization.costs import (
     _hub_delivery_pool_vehicles,
@@ -331,7 +334,16 @@ def test_polish_buys_below_peak_vehicle_days_to_shave_the_peak():
             max_swaps=40, seed=seed)
         assert res["swaps_made"] > 0
         assert res["opcost_after"] < res["opcost_before"]
-        assert res["sum_hub_peak_after"] <= res["sum_hub_peak_before"]
+        # Rule-derived, not a guessed direction: whatever the three terms did,
+        # the objective's movement IS their priced sum. (The peak is allowed
+        # to RISE when the variable saving outweighs W * Delta peak — see
+        # test_a_cheap_peak_lets_the_variable_term_win.)
+        assert (res["opcost_after"] - res["opcost_before"]) == pytest.approx(
+            (res["variable_after"] - res["variable_before"])
+            + WEEK_FIXED_COST_EUR * (res["sum_hub_peak_after"]
+                                     - res["sum_hub_peak_before"])
+            + (res["penalty_after"] - res["penalty_before"]),
+            rel=1e-9, abs=1e-6)
         seen_costlier_routing |= res["cost"] > res["initial_total_cost"]
         seen_more_vehicle_days |= (
             res["vehicle_days_after"] > res["vehicle_days_before"])
@@ -381,6 +393,139 @@ def test_a_cheaper_peak_beats_a_cheaper_route():
         d_var + WEEK_FIXED_COST_EUR * d_peak, rel=1e-9, abs=1e-6)
     # the routing cost alone need not fall — only the operator's bill must
     assert b1["opcost"] < b0["opcost"]
+
+
+def test_a_cheap_peak_lets_the_variable_term_win():
+    """The symmetric branch of the rule: when the weekly fixed bill is cheap,
+    a move that RAISES the hub peak is correctly accepted, provided the
+    variable saving covers ``W * Delta peak``.
+
+    Guards against a "peak must never rise" reading of the objective creeping
+    into the accept gate. ``week_fixed=1.0`` (instead of 1 134.90) prices the
+    peak, just barely.
+    """
+    plz_keys, m, sch, hpl, pha = _fixture(fs=0.5, n_cells=10, n_hubs=2)
+    chosen = _start(m, sch, 10, 2)
+    res = operator_polish(
+        {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+        max_swaps=40, seed=2, week_fixed=1.0)
+
+    assert res["swaps_made"] > 0
+    assert res["sum_hub_peak_after"] > res["sum_hub_peak_before"]   # rose
+    assert all(dlt < 0.0 for dlt in res["accepted_deltas"])         # still legal
+    assert res["opcost_after"] < res["opcost_before"]
+    # and the bought peak really was paid for out of the variable term
+    assert res["variable_after"] < res["variable_before"]
+    b = operator_cost_breakdown(res["chosen"], plz_keys, pha, hpl, m, sch,
+                                week_fixed=1.0)
+    assert res["opcost_after"] == pytest.approx(b["opcost"], rel=1e-9, abs=1e-6)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Best-of-two start — the range state is a candidate, so the old heuristic
+# can no longer win in the operator currency (review fix, 2026-08-26)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("seed", [0, 4, 9, 16])
+def test_best_of_two_is_never_worse_than_the_range_heuristic(seed):
+    """G-6e-4 by construction.
+
+    ``W`` dwarfs the variable cost a single cell can shift, so the operator
+    objective is flat in plateaus and a strict single-cell descent from
+    stage 1 can stall in a basin the range balancer walks straight past. This
+    fixture (fs=0.3, ONE hub — the shape of the 10 failing v3 triples)
+    reproduces that: at these seeds the pre-6e range heuristic ends up
+    CHEAPER in operator cost than a polish started from stage 1 alone.
+
+    Best-of-two must dominate it, because the range state is itself one of
+    the two starts and the polish never worsens the state it is given.
+    """
+    plz_keys, m, sch, hpl, pha = _fixture(fs=0.3, n_cells=10, n_hubs=1)
+    chosen = _start(m, sch, 10, seed)
+
+    solo = operator_polish(
+        {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+        max_swaps=200, seed=seed)
+    rng_bal = balance_fleet_per_hub_ml(
+        {"chosen": chosen.copy(), "best_cost": 0.0}, plz_keys, pha, hpl, m,
+        sch, cost_budget_pct=RANGE_START_BUDGET_PCT, max_swaps=200, seed=seed)
+    range_op = operator_cost_breakdown(
+        rng_bal["chosen"], plz_keys, pha, hpl, m, sch)["opcost"]
+
+    # the failure this fix is for: stage-1-only polish loses to the heuristic
+    assert range_op < solo["opcost_after"] - 1e-9
+
+    best = operator_polish_best_of_two(
+        {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+        max_swaps=200, seed=seed)
+    assert best["opcost_after"] <= range_op + 1e-9          # the guarantee
+    assert best["opcost_after"] <= solo["opcost_after"] + 1e-9
+    assert best["stage2_start_winner"] == "range"
+    assert best["opcost_range_start"] == pytest.approx(range_op, rel=1e-9)
+
+
+def test_best_of_two_reports_both_branches_and_anchors_before_at_stage_one():
+    """Whichever start wins, ``*_before`` must still describe STAGE 1 — the
+    grid gates ``initial_total_cost`` as the stage-1 routing anchor and the
+    savings tables read ``before -> after`` as "stage 1 -> final"."""
+    plz_keys, m, sch, hpl, pha = _fixture(fs=0.3, n_cells=10, n_hubs=1)
+    chosen = _start(m, sch, 10, 0)
+    solo = operator_polish(
+        {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+        max_swaps=200, seed=0)
+    best = operator_polish_best_of_two(
+        {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+        max_swaps=200, seed=0)
+
+    assert best["stage2_start_winner"] in ("stage1", "range")
+    assert best["opcost_after"] == pytest.approx(
+        min(best["opcost_from_stage1"], best["opcost_from_range"]),
+        rel=1e-12)
+    assert best["opcost_from_stage1"] == pytest.approx(
+        solo["opcost_after"], rel=1e-12)
+    # every "before" is the stage-1 anchor, not the winning branch's start
+    b0 = operator_cost_breakdown(chosen, plz_keys, pha, hpl, m, sch)
+    for key, want in (("opcost_before", "opcost"),
+                      ("variable_before", "variable_cost"),
+                      ("sum_hub_peak_before", "sum_hub_peak"),
+                      ("vehicle_days_before", "vehicle_days"),
+                      ("initial_total_cost", "routing_cost")):
+        assert best[key] == pytest.approx(b0[want], rel=1e-9, abs=1e-6), key
+    # ... and the after fields describe the state actually returned
+    b1 = operator_cost_breakdown(best["chosen"], plz_keys, pha, hpl, m, sch)
+    assert best["opcost_after"] == pytest.approx(b1["opcost"], rel=1e-9,
+                                                 abs=1e-6)
+    assert best["cost"] == pytest.approx(b1["routing_cost"], rel=1e-9,
+                                         abs=1e-6)
+
+
+def test_best_of_two_keeps_the_stage_one_start_when_it_is_already_better():
+    """The second start is insurance, not a preference: when the stage-1
+    branch is at least as good it must be the one returned (ties included)."""
+    plz_keys, m, sch, hpl, pha = _fixture(fs=0.5, n_cells=10, n_hubs=2)
+    seen_stage1 = False
+    for seed in (0, 3, 8, 17, 59):
+        chosen = _start(m, sch, 10, seed)
+        best = operator_polish_best_of_two(
+            {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+            max_swaps=200, seed=seed)
+        assert best["opcost_after"] <= best["opcost_range_start"] + 1e-9
+        if best["stage2_start_winner"] == "stage1":
+            seen_stage1 = True
+            assert best["opcost_from_stage1"] <= best["opcost_from_range"]
+    assert seen_stage1, "fixture no longer exercises the stage-1 branch"
+
+
+def test_best_of_two_respects_preserve_frequency_on_both_branches():
+    """The range balancer runs with the same frequency pin as the polish, so
+    no branch can smuggle a frequency change into the result."""
+    plz_keys, m, sch, hpl, pha = _fixture(fs=0.3, n_cells=10, n_hubs=1)
+    chosen = _start(m, sch, 10, 0)
+    best = operator_polish_best_of_two(
+        {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+        max_swaps=200, seed=0, preserve_frequency=True)
+    for pi in range(10):
+        assert len(sch[int(best["chosen"][pi])]) == len(sch[int(chosen[pi])])
 
 
 def test_tiny_matrices_smoke():

@@ -305,11 +305,19 @@ def operator_polish(
 
     ``preserve_frequency=True`` restricts candidates to schedules of the same
     SIZE, so stage 2 only redistributes WHICH days a cell is served on, never
-    how many: stage 1 owns the service-quality decision and the wait metric
-    is then stage-2-invariant. It is also what keeps the theta=0 baseline
-    pinned to daily (at theta=0 nobody waits, so the wait penalty is
-    identically zero and an unrestricted polish would happily batch the
-    baseline away).
+    how many. That pins each cell's delivery FREQUENCY — and with it the
+    theta=0 baseline, which would otherwise be batched away (at theta=0 nobody
+    waits, so ``penalty_mx`` is identically zero for every P and an
+    unrestricted polish would face an unpriced service dimension).
+
+    It does NOT pin the wait. Schedules of equal size differ in average wait
+    (size 3: 0.50-0.67 days; size 4: 0.33-0.50), so moving a cell from
+    ``{Mon, Wed, Fri}`` to ``{Mon, Tue, Thu}`` changes the service metric
+    without changing the frequency — measured on the v3 grid, the willing-
+    weighted wait moves at stage 2 in 94 of 176 theta > 0 triples, by up to
+    -17.65 %. This is priced, not ignored: ``Delta penalty`` is part of every
+    accept decision. Any downstream text must say "frequency-preserving", never
+    "wait-invariant".
 
     Returns :func:`balance_fleet_per_hub_ml`'s dict plus ``opcost_before`` /
     ``opcost_after`` (objective, penalty included), ``operator_cost_before`` /
@@ -573,6 +581,138 @@ def operator_polish(
         "sweeps": sweeps,
         "max_swaps_binding": hit_bound,
     }
+
+
+
+
+#: Cost budget of the range balancer when it is used as a CANDIDATE START for
+#: :func:`operator_polish_best_of_two` — the value the canonical production run
+#: uses (``scripts/pipeline/02_optimize_grid.py``, paper revision 2026-05-27).
+RANGE_START_BUDGET_PCT: float = 5.0
+
+
+def operator_polish_best_of_two(
+    sa_result: dict,
+    plz_keys: list[str],
+    plz_hub_arr: np.ndarray,
+    hub_plz_list: list[np.ndarray],
+    matrices: dict,
+    schedules: list[frozenset[int]],
+    max_swaps: int = FLEET_BALANCE_MAX_SWAPS,
+    max_sweeps: int = 50,
+    seed: int = SA_SEED + 1,
+    express_scale: float = 1.0,
+    penalty_mx: np.ndarray | None = None,
+    preserve_frequency: bool = False,
+    fixed_cost: float = FIXED_COST_EUR,
+    week_fixed: float = WEEK_FIXED_COST_EUR,
+    accept_eps: float = 1e-9,
+    range_budget_pct: float = RANGE_START_BUDGET_PCT,
+    range_max_swaps: int = FLEET_BALANCE_MAX_SWAPS,
+) -> dict:
+    """:func:`operator_polish` from TWO starts; keep the cheaper end state.
+
+    Why a second start is needed
+    ----------------------------
+    ``W = 1 134.90`` EUR per peak vehicle dwarfs the variable cost a single
+    cell can move, so the operator objective is **flat in whole plateaus**:
+    until a move empties the last vehicle off the peak day, ``Delta peak = 0``
+    and only the (tiny) ``Delta variable`` is visible. A strict single-cell
+    descent cannot cross such a plateau. The range objective
+    (``max - min``) has no plateau — it gives gradient toward the peak day
+    all the way — so the old heuristic sometimes lands in a basin the polish
+    cannot reach, and the polish's own early purchases of cheap below-peak
+    vehicle-days can lock the peak in.
+
+    Measured on the v3 grid: on 10 of 222 triples (4.5 %, all single-hub
+    providers) the pre-6e range heuristic beat a polish started from stage 1
+    in OPERATOR cost, worst case +3 046 EUR (FedEx P=0, theta=0.3, peak
+    80 -> 85).
+
+    The fix
+    -------
+    Run the polish from ``chosen`` (stage 1) AND from the range balancer's
+    output, and return whichever END state has the lower OpCost. Since the
+    range state is itself a candidate start and :func:`operator_polish` never
+    worsens OpCost, the result satisfies
+
+        OpCost(best-of-two) <= OpCost(range balancer)   [asserted below]
+
+    by construction — the old heuristic can no longer win. Ties go to the
+    stage-1 start.
+
+    Reporting
+    ---------
+    All ``*_before`` fields are normalised to the STAGE-1 anchor regardless of
+    which start won, so ``before -> after`` always reads "stage 1 -> final"
+    and ``initial_total_cost`` stays the stage-1 routing cost the grid gates
+    on. Adds ``stage2_start_winner`` (``"stage1"`` / ``"range"``),
+    ``opcost_from_stage1`` / ``opcost_from_range`` (the two end states),
+    ``opcost_range_start`` (the range balancer's own end state — the
+    guarantee's reference), and the per-branch move counts.
+    """
+    kw = dict(
+        max_swaps=max_swaps, max_sweeps=max_sweeps, seed=seed,
+        express_scale=express_scale, penalty_mx=penalty_mx,
+        preserve_frequency=preserve_frequency, fixed_cost=fixed_cost,
+        week_fixed=week_fixed, accept_eps=accept_eps,
+    )
+    chosen0 = sa_result["chosen"]
+
+    from_s1 = operator_polish(
+        {"chosen": chosen0}, plz_keys, plz_hub_arr, hub_plz_list,
+        matrices, schedules, **kw)
+
+    rng_bal = balance_fleet_per_hub_ml(
+        {"chosen": chosen0, "best_cost": 0.0}, plz_keys, plz_hub_arr,
+        hub_plz_list, matrices, schedules,
+        cost_budget_pct=range_budget_pct, max_swaps=range_max_swaps,
+        seed=seed, express_scale=express_scale, penalty_mx=penalty_mx,
+        preserve_frequency=preserve_frequency)
+    from_rng = operator_polish(
+        {"chosen": rng_bal["chosen"]}, plz_keys, plz_hub_arr, hub_plz_list,
+        matrices, schedules, **kw)
+
+    # The polish's own warm-up measured this before it moved anything: the
+    # OpCost of the range balancer's end state, on exactly the same caches.
+    opcost_range_start = from_rng["opcost_before"]
+
+    range_wins = from_rng["opcost_after"] < from_s1["opcost_after"]
+    res = dict(from_rng if range_wins else from_s1)
+
+    # Fail loud rather than silently returning a state the old heuristic
+    # beats: this is the whole point of the second start.
+    assert res["opcost_after"] <= opcost_range_start + 1e-6 * max(
+            1.0, abs(opcost_range_start)), (
+        f"best-of-two returned {res['opcost_after']:.6f} > range-balancer "
+        f"state {opcost_range_start:.6f} — operator_polish must never worsen "
+        "OpCost from the start it is given")
+
+    # ``before`` is always the stage-1 anchor, whichever branch won.
+    for key in ("initial_total_cost", "imbalance_before", "opcost_before",
+                "operator_cost_before", "variable_before",
+                "sum_hub_peak_before", "vehicle_days_before",
+                "penalty_before"):
+        res[key] = from_s1[key]
+
+    res.update({
+        "stage2_start_winner": "range" if range_wins else "stage1",
+        "opcost_from_stage1": from_s1["opcost_after"],
+        "opcost_from_range": from_rng["opcost_after"],
+        "opcost_range_start": opcost_range_start,
+        "swaps_from_stage1": from_s1["swaps_made"],
+        "swaps_from_range": from_rng["swaps_made"],
+        "swaps_range_balancer": rng_bal["swaps_made"],
+        "sweeps_from_stage1": from_s1["sweeps"],
+        "sweeps_from_range": from_rng["sweeps"],
+    })
+    log.debug(
+        f"Operator polish (best-of-two): start '{res['stage2_start_winner']}' "
+        f"wins — from stage 1 {from_s1['opcost_after']:,.0f}, from range "
+        f"{from_rng['opcost_after']:,.0f} (range state itself "
+        f"{opcost_range_start:,.0f})"
+    )
+    return res
 
 
 
