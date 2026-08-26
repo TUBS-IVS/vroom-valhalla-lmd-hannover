@@ -3838,3 +3838,39 @@ Hub-Peak). Sauberere Loesung fuer Stufe 2/3: Zielfunktion Σ Hub-Peak statt
 Spannweite, Akzeptanz oekonomisch (Δvariabel < 1 135 x ΔPeak) statt
 5-%-Budget — Donnerstags-Option, falls Gate U und Validierung im Plan liegen.
 Offen: Betreiber-Baseline (theta=0-Profil) fuer Einsparungen in dieser Linse.
+
+### 40.12 Betreiber-Linse mit Baseline: die Headline verliert, P=0,25 gewinnt (2026-08-26)
+
+Baseline (theta=0, alle taeglich): Routing 1 909 432 | Fahrzeugtage 6 375 |
+variabel 703 601 | Σ Hub-Peak 1 239 | **Betreiber-Kosten 2 109 742 EUR/Wo**
+(variabel + 6 x 189,15 je Peak-Fahrzeug und Hub).
+
+| (P, theta) | Routing-Ersparnis | Betreiber-Ersparnis | Σ Hub-Peak vs. 1 239 |
+|---|---|---|---|
+| (0, 1.0) | 22,78 % | **6,08 %** | **+13,5 %** (1 406) |
+| (0.25, 1.0) | 18,51 % | **16,75 %** | -6,8 % (1 155) |
+| (0, 0.6) | 3,45 % | 6,08 % | -7,3 % |
+| (0, 0.3) | 1,81 % | 4,75 % | -6,7 % |
+| (0.5, 0.6) | 1,71 % | 4,66 % | -5,8 % |
+| (0.5, 0.3) | 1,09 % | 3,20 % | -4,4 % |
+
+Lesart: Die publizierten 22,8 % bei P=0 sind ueberwiegend vermiedene
+Fahrzeugtag-Fixkosten an ausgesetzten Tagen; mit fest angestellten Fahrern
+spart der Betreiber die nicht — und braucht sogar 13,5 % mehr Wochenflotte,
+weil die Konsolidierung die Nachfrage auf wenige Tage buendelt. Bei P=0,25
+glaettet die Strafe das Profil: 16,75 % Betreiber-Ersparnis mit 6,8 % weniger
+Fahrzeugen. Konsequenz: Stufe 2 wird als Betreiber-Kosten-Optimierung neu
+gebaut (Task 6e: Akzeptanz Δvariabel + 1 134,90 x ΔPeak_h + ΔStrafe < 0,
+kein Budget, Stufe 3 entfaellt), und das Paper berichtet beide Linsen.
+
+**Kostenmodell-Befund (wichtig fuer den Methodentext):** VROOMs Default
+`per_hour = 3600` (1 ct/s) ist in ALLEN Labels aktiv, weil requests.py
+`per_hour` bei 0 nicht setzt. Trainingspool: Residuum/Dauer = 36,09 EUR/h,
+Verhaeltnis zu 36,00 = 1,002 (p5-p95 1,002-1,003). Effektives Modell:
+189,15/Fahrzeug + 0,3864/km + 36 EUR/Routenstunde (72 / 6 / 22 %). Pipeline
+intern konsistent (Labels = Surrogat = Validierung = Buendel-Pool, gleicher
+Builder); die Dokumentation ("Arbeit in Fixkosten, per_hour 0") ist falsch;
+alpha = 1,343 absorbiert im Daganzo-Rueckgrat einen Teil des fehlenden
+Zeitterms. Request-Builder jetzt NICHT aendern (Label-Konsistenz); Paper-Text
+korrigieren; Roadmap. Fahrzeug-Proxy ceil(n/230) == VROOM n_routes in 99,7 %
+von 4 230 Instanzen.
