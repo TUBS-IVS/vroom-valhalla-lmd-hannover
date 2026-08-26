@@ -684,6 +684,7 @@ def build_cost_matrices_ml(
             "sched_active": sched_active, "daily_demand": daily_demand,
             "small_delivery_mask": np.zeros(
                 (n_plz, n_sched, N_DAYS), dtype=bool),
+            "small_delivery_price": np.zeros((n_plz, n_sched, N_DAYS)),
             "combined_demand": combined_demand,
             "combined_stops": combined_stops,
             "_pool_dem": np.zeros((n_plz, n_sched, N_DAYS)),
@@ -975,6 +976,46 @@ def build_cost_matrices_ml(
         express_cost[xi, xd] = ml_predictor.predict(
             pd.DataFrame(xf, columns=ALL_COLS))
 
+    # ── 9c) Per-instance pooled-delivery prices (perf, bit-identical) ───
+    # At ``head=None`` — the base run — ``price_group`` prices a pooled group
+    # as the Sigma of its members' SINGLETON prices (surrogate/bundle.py:174-179),
+    # so the price is partition-independent and every term depends only on
+    # (plz, schedule, day). Precomputing that table once per matrix build turns
+    # ``_hub_smallday_pool_ml`` — which misses its cache on essentially every
+    # trial move — from "build_partition + one bundle_features + one surrogate
+    # call PER MEMBER" into a Sigma over array lookups.
+    #
+    # Identical by construction rather than by re-derivation: the row below is
+    # exactly the one ``price_group`` -> ``bundle_features`` builds for a lone
+    # member of the pool (same kind, same parcels/stops overrides, freq=1.0),
+    # and it is priced with the same ``predict_single``.
+    from batch_delivery.surrogate.bundle import bundle_features  # cycle: import here
+    small_delivery_price = np.zeros_like(cost_3d)
+    # bundle_features reads only these keys for a delivery singleton; passing a
+    # view keeps the precompute independent of the dict assembled below.
+    _bf_view = {
+        "plz_day_lon": plz_day_lon, "plz_day_lat": plz_day_lat,
+        "plz_day_psd": plz_day_psd, "hub_lon_arr": hub_lon_arr,
+        "hub_lat_arr": hub_lat_arr, "area_arr": area_arr, "hd_arr": hd_arr,
+        "plz_b2c_share": plz_b2c_share, "daily_demand": daily_demand,
+        "provider": provider, "fast_share_blend_arr": fast_share_blend_arr,
+        "raw_express": raw_express, "expr_stops": expr_stops,
+    }
+    _sd_parcels = np.zeros(n_plz, dtype=np.float64)
+    _sd_stops = np.zeros(n_plz, dtype=np.float64)
+    _sz, _ss, _sd = np.where(small_delivery_mask)
+    for _z, _s, _d in zip(_sz.tolist(), _ss.tolist(), _sd.tolist()):
+        _sd_parcels[_z] = combined_demand[_z, _s, _d]
+        _sd_stops[_z] = max(1.0, combined_stops[_z, _s, _d])
+        small_delivery_price[_z, _s, _d] = float(ml_predictor.predict_single(
+            bundle_features((_z,), _d, _bf_view, kind="delivery",
+                            parcels_by_cell=_sd_parcels,
+                            stops_by_cell=_sd_stops, freq=1.0)))
+        _sd_parcels[_z] = 0.0
+        _sd_stops[_z] = 0.0
+    log.info("Pooled small-delivery prices: %d instance(s) precomputed",
+             len(_sz))
+
     return {
         "dd_cost_mx": dd_cost_mx,
         "cost_3d": cost_3d,
@@ -990,6 +1031,7 @@ def build_cost_matrices_ml(
         "sched_active": sched_active,
         "daily_demand": daily_demand,
         "small_delivery_mask": small_delivery_mask,
+        "small_delivery_price": small_delivery_price,
         "combined_demand": combined_demand,
         "combined_stops": combined_stops,
         "_pool_dem": _pool_dem,
@@ -1013,6 +1055,37 @@ def build_cost_matrices_ml(
 # ─────────────────────────────────────────────────────────────────────────────
 # Hub-bundled express cost — ML version
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _express_partition(
+    contributing: list[int], d: int,
+    raw_express: np.ndarray, expr_stops: np.ndarray, matrices: dict,
+) -> tuple[tuple[int, ...], ...]:
+    """Who rides with whom in hub-day *d*'s express pool.
+
+    Factored out of :func:`_hub_express_day_ml` so the cost path (which does
+    not need it at ``head=None``) and the vehicle path (which always does) can
+    call it independently. Pure function of its arguments — same inputs, same
+    grouping, whoever asks first.
+    """
+    from batch_delivery.optimization.partition import build_partition
+    return build_partition(
+        np.array(contributing), raw_express[:, d], expr_stops[:, d],
+        matrices["area_arr"], matrices["hd_arr"],
+        matrices["_cent_lon"], matrices["_cent_lat"],
+        pts_lon={z: matrices["plz_day_lon"][z][d] for z in contributing},
+        pts_lat={z: matrices["plz_day_lat"][z][d] for z in contributing},
+    )
+
+
+def _express_partition_vehicles(
+    parts: tuple[tuple[int, ...], ...], d: int, raw_express: np.ndarray,
+) -> float:
+    """Vehicles of an express partition: one ceil per tour, never summed first."""
+    return float(sum(
+        np.ceil(sum(np.trunc(raw_express[z, d]) for z in g) / VEHICLE_CAPACITY)
+        for g in parts
+    ))
+
 
 def _hub_express_day_ml(
     hi: int, d: int, chosen: np.ndarray,
@@ -1055,25 +1128,32 @@ def _hub_express_day_ml(
     if cached is not None:
         return cached[0] * express_scale
 
-    from batch_delivery.optimization.partition import build_partition
+    head = matrices.get("bundle_head")        # None until Gate U passes
+    if head is None:
+        # Sigma-fallback regime: ``price_group(kind="express", head=None)``
+        # returns ``sum(express_cost[z, d])`` over the group's members
+        # (surrogate/bundle.py:169-173), so summing over ANY partition of
+        # ``contributing`` gives the same total — the grouping is not
+        # load-bearing for the PRICE. Skipping build_partition here (a
+        # ConvexHull per candidate merge over up to ~47 co-hub cells) is what
+        # makes the coordinate-descent inner loop affordable; the partition's
+        # one real consumer, the vehicle count, is deferred to
+        # ``_hub_express_vehicles``, which fills the ``None`` slot in place.
+        # Only the summation ORDER differs from the partition path (cell order
+        # instead of group by group) — the terms are identical.
+        ec = matrices["express_cost"]
+        cost = float(sum(ec[z, d] for z in contributing))
+        express_cache[cache_key] = (cost, None)
+        return cost * express_scale
+
     from batch_delivery.surrogate.bundle import price_group
 
-    cent_lon = matrices["_cent_lon"]
-    cent_lat = matrices["_cent_lat"]
-    parts = build_partition(
-        np.array(contributing), raw_express[:, d], expr_stops[:, d],
-        matrices["area_arr"], matrices["hd_arr"], cent_lon, cent_lat,
-        pts_lon={z: matrices["plz_day_lon"][z][d] for z in contributing},
-        pts_lat={z: matrices["plz_day_lat"][z][d] for z in contributing},
-    )
-    head = matrices.get("bundle_head")        # None until Gate U passes
-    cost = 0.0
-    veh = 0.0
-    for g in parts:
-        cost += price_group(g, d, matrices, kind="express", head=head)
-        veh += float(np.ceil(sum(np.trunc(raw_express[z, d]) for z in g)
-                             / VEHICLE_CAPACITY))
-    express_cache[cache_key] = (cost, veh)
+    parts = _express_partition(contributing, d, raw_express, expr_stops,
+                               matrices)
+    cost = float(sum(
+        price_group(g, d, matrices, kind="express", head=head) for g in parts))
+    express_cache[cache_key] = (
+        cost, _express_partition_vehicles(parts, d, raw_express))
     return cost * express_scale
 
 
@@ -1090,6 +1170,11 @@ def _hub_express_vehicles(
     Shares ``express_cache`` with :func:`_hub_express_day_ml` — one entry per
     ``(hub, day, contributing)`` holding ``(cost, vehicles)``, so asking for
     the fleet never costs a second round of surrogate calls.
+
+    The vehicles slot is ``None`` when the cost was priced partition-free (see
+    :func:`_hub_express_day_ml`); this function is the only consumer that needs
+    the grouping, so it builds the partition then — once — and upgrades the
+    entry in place. The value is the one the eager path used to store.
     """
     h_ps = hub_plz_list[hi]
     sa = matrices.get("sched_active")
@@ -1098,13 +1183,19 @@ def _hub_express_vehicles(
     mask = nd & (raw_express[h_ps, d] > 0)
     if not mask.any():
         return 0.0
-    key = (hi, d, frozenset(h_ps[mask].tolist()))
+    contributing = h_ps[mask].tolist()
+    key = (hi, d, frozenset(contributing))
     cached = express_cache.get(key)
     if cached is None:
         _hub_express_day_ml(
             hi, d, chosen, hub_plz_list, schedules, raw_express,
             matrices["expr_stops"], matrices, express_cache, 1.0)
         cached = express_cache[key]
+    if cached[1] is None:                     # partition deferred — pay it now
+        parts = _express_partition(
+            contributing, d, raw_express, matrices["expr_stops"], matrices)
+        cached = (cached[0], _express_partition_vehicles(parts, d, raw_express))
+        express_cache[key] = cached
     return cached[1]
 
 
@@ -1124,6 +1215,11 @@ def _hub_smallday_pool_ml(
     Demand depends on each member's schedule (own arrivals + held willing
     ones), so the cache key carries ``(cell, schedule)`` pairs — not just the
     membership set the express twin keys on.
+
+    At ``head=None`` the group price is a Sigma over per-member singleton
+    prices, so the partition is skipped and the precomputed
+    ``matrices["small_delivery_price"]`` table is summed instead; see the
+    fast-path comment below and ``build_cost_matrices_ml`` §9c.
 
     OPEN ITEM (spec'd, not yet resolved): ``freq=1.0`` is passed to
     ``bundle_features`` even though the pooled parcels ARE batched over
@@ -1147,6 +1243,24 @@ def _hub_smallday_pool_ml(
     if hit is not None:
         return hit
 
+    head = matrices.get("bundle_head")
+    sdp = matrices.get("small_delivery_price")
+    if head is None and sdp is not None:
+        # Sigma-fallback regime: ``price_group(kind="delivery", head=None)``
+        # prices a group as the sum of its members' SINGLETON prices
+        # (surrogate/bundle.py:174-179), and a singleton's price depends only
+        # on (cell, schedule, day) — never on who else is in the group. The
+        # table was precomputed in ``build_cost_matrices_ml`` §9c from exactly
+        # that expression, so the partition, the per-member ``bundle_features``
+        # and the per-member surrogate call are all dead work here. This cache
+        # misses on essentially every trial move (the key carries each member's
+        # schedule), which is why the miss path had to become cheap.
+        # Summation order (cell order instead of group by group) is the only
+        # difference from the partition path.
+        cost = float(sum(sdp[z, int(chosen[z]), d] for z in small))
+        pool_cache[key] = cost
+        return cost
+
     from batch_delivery.optimization.partition import build_partition
     from batch_delivery.surrogate.bundle import price_group
 
@@ -1163,7 +1277,6 @@ def _hub_smallday_pool_ml(
         pts_lon={z: matrices["plz_day_lon"][z][d] for z in small},
         pts_lat={z: matrices["plz_day_lat"][z][d] for z in small},
     )
-    head = matrices.get("bundle_head")
     cost = float(sum(
         price_group(g, d, matrices, kind="delivery",
                     parcels_by_cell=parcels, stops_by_cell=stops,

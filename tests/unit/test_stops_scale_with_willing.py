@@ -19,6 +19,7 @@ import pandas as pd
 import pytest
 
 from batch_delivery.config import N_DAYS
+from batch_delivery.features import ALL_COLS
 from batch_delivery.optimization.core import build_cost_matrices_ml
 
 
@@ -70,6 +71,12 @@ class _StopsSpy:
 
     def predict(self, df_feats: pd.DataFrame) -> np.ndarray:
         return df_feats["n_stops"].to_numpy(dtype=np.float64)
+
+    def predict_single(self, x25: np.ndarray) -> float:
+        # Part of the predictor protocol since the pooled small-delivery
+        # prices are precomputed in build_cost_matrices_ml (§9c).
+        return float(self.predict(
+            pd.DataFrame(x25.reshape(1, -1), columns=ALL_COLS))[0])
 
 
 def test_dd_stops_at_share_zero_equals_stops_per_day():

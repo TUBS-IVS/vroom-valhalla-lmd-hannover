@@ -479,6 +479,13 @@ def main() -> None:
                 fast_share_b2c=fs_b2c_v, fast_share_b2b=fs_b2b_v)
             assert m.get("bundle_head") is None, (
                 "base run must price with the Sigma fallback (head=None)")
+            # head=None + this table = the partition-free fast paths in
+            # _hub_express_day_ml / _hub_smallday_pool_ml. Without the table
+            # the pooled twin silently reverts to the partition path, which
+            # is the 336 h regime — fail loudly instead.
+            assert m.get("small_delivery_price") is not None, (
+                "matrices lack 'small_delivery_price' — the pooled twin would "
+                "fall back to per-member partition pricing")
             t_mtx = time.perf_counter() - t0
             print(f"[mtx] th={th:<4g} {prov:<7s} built in {t_mtx:.1f}s "
                   f"({len(block)} penalty value(s) to run)", flush=True)
