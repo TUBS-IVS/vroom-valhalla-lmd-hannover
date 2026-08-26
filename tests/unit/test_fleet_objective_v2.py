@@ -8,14 +8,18 @@ adds them in, sourced from the same partition/cache path
 """
 import numpy as np
 import pytest
-from _stubs import tiny_matrices
+from _stubs import StubPredictor, tiny_matrices
 
 from batch_delivery.optimization.balancing import (
     _daily_fleet_per_hub,
     _fleet_imbalance,
     balance_fleet_per_hub_ml,
+    system_smooth_pass,
 )
-from batch_delivery.optimization.costs import _hub_express_vehicles
+from batch_delivery.optimization.costs import (
+    _hub_express_vehicles,
+    build_cost_matrices_ml,
+)
 from batch_delivery.optimization.schedules import enumerate_valid_schedules
 
 
@@ -83,3 +87,107 @@ def test_balance_ml_imbalance_before_sees_express_vehicles():
         _fleet_imbalance(expected_fleet))
     assert res["imbalance_before"] != pytest.approx(
         _fleet_imbalance(legacy_fleet))    # D2: express now visible
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# I1/I2 (review round 2): the accept/reject GATE, not just the accepted
+# state, must be express-aware -- otherwise a swap can be accepted that
+# LOOKS improving under the veh_3d-only estimate but actually makes the true
+# (express-aware) fleet profile worse. Fixture mirrors the reviewer's
+# probe_gate.py exactly (10 cells, single hub, mix of big/small cells so the
+# express partition re-forms), which is how these two counter-examples were
+# found: fs=0.7/seed=8 for balance_fleet_per_hub_ml, fs=0.5/seed=59 for
+# system_smooth_pass.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _bal_fixture(fs: float, n_cells: int = 10):
+    rng = np.random.default_rng(0)
+    plz_keys = [f"3{i:04d}" for i in range(n_cells)]
+    plz_data, coords, hubs = {}, {}, {}
+    for i, p in enumerate(plz_keys):
+        base = 60 + 90 * i          # 60 .. 870: mix of small and large cells
+        plz_data[p] = {
+            "b2c": {d: float(base + rng.integers(-15, 15)) for d in range(6)},
+            "b2b": {d: float(base * 0.15) for d in range(6)},
+            "area_km2": 4.0 + 2.0 * (i % 5),
+            "hub_dist_km": 3.0 + 1.5 * i,
+            "n_stops_per_day": 30.0 + 20.0 * (i % 4),
+            "total_points": 400.0 + 100.0 * i,
+        }
+        lon = 9.70 + 0.01 * i
+        lat = 52.35 + 0.01 * (i % 3)
+        coords[p] = {d: (np.array([lon, lon + 0.002]),
+                         np.array([lat, lat + 0.002]),
+                         np.array([3.0, 4.0])) for d in range(6)}
+        hubs[p] = (9.73, 52.38)
+    sch = enumerate_valid_schedules()
+    m = build_cost_matrices_ml(
+        plz_keys, plz_data, sch, StubPredictor(), "DHL",
+        coords, hubs, fast_share_b2c=fs, fast_share_b2b=fs)
+    hpl = [np.arange(n_cells)]
+    pha = np.zeros(n_cells, dtype=int)
+    return plz_keys, m, sch, hpl, pha
+
+
+def test_balance_ml_never_increases_imbalance():
+    """I2 direction regression. Pre-I1-fix counter-example on this exact
+    fixture (fs=0.7, seed=8): the swap-acceptance gate ranked candidates by
+    a veh_3d-only fleet estimate, blind to the express vehicles a swap
+    silently moves (one-signed: a cell leaving delivery on day A JOINS
+    day-A's express pool). Reported imbalance went 3.0 -> 4.0 even though
+    swaps were only ever accepted because they looked improving.
+    """
+    n_cells = 10
+    plz_keys, m, sch, hpl, pha = _bal_fixture(fs=0.7, n_cells=n_cells)
+    rng = np.random.default_rng(1000 + 8)
+    chosen = rng.integers(0, len(sch), size=n_cells)
+    sa_result = {
+        "chosen": chosen.copy(),
+        "best_cost": float(m["dd_cost_mx"][np.arange(n_cells), chosen].sum()),
+    }
+    res = balance_fleet_per_hub_ml(
+        sa_result, plz_keys, pha, hpl, m, sch,
+        cost_budget_pct=100.0, max_swaps=40, seed=8)
+    assert res["swaps_made"] > 0                 # exercises the swap path
+    assert res["imbalance_after"] <= res["imbalance_before"] + 1e-9
+
+
+def test_system_smooth_never_increases_spread():
+    """I2 direction regression. Pre-I1-fix counter-example on this exact
+    fixture (fs=0.5, seed=59): the cheap system-spread pre-check doubled as
+    the final accept gate, blind to express-vehicle movement, so it accepted
+    2 swaps that only LOOKED improving; reported spread went 6.0 -> 8.0.
+
+    Post-fix, the true-profile-exact gate correctly finds that neither of
+    those 2 candidates is actually improving and accepts nothing here
+    (``swaps_made == 0``) -- that is the corrected behaviour, not a weaker
+    test: see ``test_system_smooth_accepts_genuinely_improving_swaps`` below
+    for a seed where the gate does still accept true-improving swaps.
+    """
+    n_cells = 10
+    plz_keys, m, sch, hpl, pha = _bal_fixture(fs=0.5, n_cells=n_cells)
+    rng = np.random.default_rng(1000 + 59)
+    chosen = rng.integers(0, len(sch), size=n_cells)
+    res = system_smooth_pass(
+        chosen.copy(), plz_keys, pha, hpl, m, sch,
+        cost_budget_pct=100.0, max_iterations=60, seed=59)
+    assert res["system_spread_after"] <= res["system_spread_before"] + 1e-9
+
+
+def test_system_smooth_accepts_genuinely_improving_swaps():
+    """M1 coverage: system_smooth_pass's swap-ACCEPTANCE path (not just the
+    reject path exercised above) must still run through committed tests.
+    fs=0.5/seed=0 on the same fixture has true-improving swaps both before
+    and after the I1 fix (3 swaps, spread 10.0 -> 2.0) -- the exact-gate fix
+    does not make the pass unable to ever accept a swap, only unable to
+    accept a WRONG one.
+    """
+    n_cells = 10
+    plz_keys, m, sch, hpl, pha = _bal_fixture(fs=0.5, n_cells=n_cells)
+    rng = np.random.default_rng(1000 + 0)
+    chosen = rng.integers(0, len(sch), size=n_cells)
+    res = system_smooth_pass(
+        chosen.copy(), plz_keys, pha, hpl, m, sch,
+        cost_budget_pct=100.0, max_iterations=60, seed=0)
+    assert res["swaps_made"] > 0                  # M1: accept path covered
+    assert res["system_spread_after"] <= res["system_spread_before"] + 1e-9

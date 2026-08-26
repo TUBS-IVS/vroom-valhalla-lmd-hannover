@@ -67,3 +67,39 @@ def test_hull_check_skips_when_trial_group_has_no_point_geometry():
     pts_lat = {0: np.array([]), 1: np.array([])}
     p = build_partition(**k, pts_lon=pts_lon, pts_lat=pts_lat)
     assert p == ((0, 1),)
+
+def test_hull_check_never_feeds_mismatched_lon_lat_arrays(monkeypatch):
+    # M2 (review round 2): lon_parts was filtered on pts_lon.get(c) and
+    # lat_parts on pts_lat.get(c) INDEPENDENTLY. A cell present in one dict
+    # but empty/missing in the other (a data problem, not the "nobody has
+    # geometry" case above) desyncs the two lists: np.concatenate still
+    # succeeds (concatenate does not require matching per-array lengths) but
+    # L and A end up different TOTAL lengths, which _hull_km2 silently
+    # swallows via its caught ValueError (returns 0.0) instead of raising --
+    # a silent wrong-answer, not a crash, so a plain "does it raise" test
+    # cannot catch it. Spy on _hull_km2 and assert it is always called with
+    # paired (same-length) arrays.
+    import batch_delivery.optimization.partition as partition_mod
+    calls: list[tuple[int, int]] = []
+    orig_hull_km2 = partition_mod._hull_km2
+
+    def spy(lon, lat):
+        calls.append((len(lon), len(lat)))
+        return orig_hull_km2(lon, lat)
+
+    monkeypatch.setattr(partition_mod, "_hull_km2", spy)
+
+    k = _mk(2, [100, 100], areas=[2.0, 2.0], lon=[9.000, 9.001], lat=[52.0, 52.0])
+    pts_lon = {
+        0: np.array([9.000, 9.0001, 9.0002]),   # paired: 3 lon / 3 lat
+        1: np.array([9.0011, 9.0012]),          # MISMATCHED: 2 lon / 0 lat
+    }
+    pts_lat = {
+        0: np.array([52.000, 52.0001, 52.0002]),
+        1: np.array([]),
+    }
+    build_partition(**k, pts_lon=pts_lon, pts_lat=pts_lat)
+
+    assert calls, "fixture must actually exercise the hull check"
+    for n_lon, n_lat in calls:
+        assert n_lon == n_lat, f"_hull_km2 called with mismatched shapes {(n_lon, n_lat)}"
