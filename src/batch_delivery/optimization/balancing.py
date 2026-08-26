@@ -21,7 +21,12 @@ from batch_delivery.config.constants import (
     N_DAYS,
     SA_SEED,
 )
-from batch_delivery.optimization.costs import _hub_express_day, _hub_express_day_ml
+from batch_delivery.optimization.costs import (
+    _hub_express_day,
+    _hub_express_day_ml,
+    _hub_smallday_pool_ml,
+    _pool_affected_days,
+)
 from batch_delivery.utils import log
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -254,7 +259,9 @@ def balance_fleet_per_hub_ml(
     chosen = sa_result["chosen"].copy()
     cur_dd_cost = float(dd_cost_mx[np.arange(n_plz), chosen].sum())
     express_pred_cache: dict = {}
+    pool_pred_cache: dict = {}
     ecache = np.zeros((len(hub_plz_list), N_DAYS))
+    pcache = np.zeros((len(hub_plz_list), N_DAYS))
     for hi in range(len(hub_plz_list)):
         for d in range(N_DAYS):
             ecache[hi, d] = _hub_express_day_ml(
@@ -262,7 +269,11 @@ def balance_fleet_per_hub_ml(
                 raw_express, expr_stops, matrices,
                 express_pred_cache, express_scale,
             )
-    cur_cost = cur_dd_cost + ecache.sum()
+            pcache[hi, d] = _hub_smallday_pool_ml(
+                hi, d, chosen, hub_plz_list, schedules, matrices,
+                pool_pred_cache,
+            )
+    cur_cost = cur_dd_cost + ecache.sum() + pcache.sum()
     # FIX 2026-05-27: budget on TOTAL cost (dd + express), not dd-only.
     # Previously max_cost used sa_result['best_cost'] which was only the
     # delivery-day cost — leading to immediate budget violation since cur_cost
@@ -308,6 +319,7 @@ def balance_fleet_per_hub_ml(
         best_delta = 0.0
         best_delta_obj = 0.0
         best_expr_vals: dict[int, float] = {}
+        best_pool_vals: dict[int, float] = {}
 
         for new_si in range(len(schedules)):
             if new_si == old_si:
@@ -319,8 +331,10 @@ def balance_fleet_per_hub_ml(
 
             new_days = schedules[new_si]
             affected = old_days.symmetric_difference(new_days)
+            pool_affected = _pool_affected_days(pi, old_si, new_si, matrices)
             new_expr_vals: dict[int, float] = {}
-            if affected:
+            new_pool_vals: dict[int, float] = {}
+            if affected or pool_affected:
                 chosen[pi] = new_si
                 for d_aff in affected:
                     nv = _hub_express_day_ml(
@@ -330,6 +344,13 @@ def balance_fleet_per_hub_ml(
                     )
                     delta_total += nv - ecache[hi, d_aff]
                     new_expr_vals[d_aff] = nv
+                for d_aff in pool_affected:
+                    pv = _hub_smallday_pool_ml(
+                        hi, d_aff, chosen, hub_plz_list, schedules,
+                        matrices, pool_pred_cache,
+                    )
+                    delta_total += pv - pcache[hi, d_aff]
+                    new_pool_vals[d_aff] = pv
                 chosen[pi] = old_si
 
             delta_obj = delta_total + (
@@ -349,6 +370,7 @@ def balance_fleet_per_hub_ml(
                 best_delta = delta_total
                 best_delta_obj = delta_obj
                 best_expr_vals = new_expr_vals
+                best_pool_vals = new_pool_vals
 
         if best_new_si is not None:
             fleet[hi] -= veh_3d[pi, old_si, :]
@@ -358,6 +380,8 @@ def balance_fleet_per_hub_ml(
             cur_obj += best_delta_obj
             for d_val, val in best_expr_vals.items():
                 ecache[hi, d_val] = val
+            for d_val, val in best_pool_vals.items():
+                pcache[hi, d_val] = val
             swaps_made += 1
             pbar.set_postfix_str(f"swaps={swaps_made}, imb={_fleet_imbalance(fleet):.0f}")
 
@@ -436,7 +460,9 @@ def system_smooth_pass(
     chosen = chosen.copy()
     cur_dd_cost = float(dd_cost_mx[np.arange(n_plz), chosen].sum())
     express_pred_cache: dict = {}
+    pool_pred_cache: dict = {}
     ecache = np.zeros((len(hub_plz_list), N_DAYS))
+    pcache = np.zeros((len(hub_plz_list), N_DAYS))
     for hi in range(len(hub_plz_list)):
         for d in range(N_DAYS):
             ecache[hi, d] = _hub_express_day_ml(
@@ -444,7 +470,11 @@ def system_smooth_pass(
                 raw_express, expr_stops, matrices,
                 express_pred_cache, express_scale,
             )
-    cur_cost = cur_dd_cost + ecache.sum()
+            pcache[hi, d] = _hub_smallday_pool_ml(
+                hi, d, chosen, hub_plz_list, schedules, matrices,
+                pool_pred_cache,
+            )
+    cur_cost = cur_dd_cost + ecache.sum() + pcache.sum()
     initial_total_cost = cur_cost
     use_pen = penalty_mx is not None
     cur_pen = float(penalty_mx[np.arange(n_plz), chosen].sum()) if use_pen else 0.0
@@ -481,6 +511,7 @@ def system_smooth_pass(
         best_delta_obj = 0.0
         best_delta_cost = 0.0
         best_expr_new: dict[tuple[int, int], float] = {}
+        best_pool_new: dict[tuple[int, int], float] = {}
         best_reduction = 0.0
 
         for pi in cand_plz:
@@ -511,8 +542,11 @@ def system_smooth_pass(
                 # Cost & objective delta (full evaluation only for promising swaps)
                 delta_cost = dd_cost_mx[pi, new_si] - dd_cost_mx[pi, old_si]
                 affected = old_days.symmetric_difference(new_days)
+                pool_affected = _pool_affected_days(
+                    pi, old_si, new_si, matrices)
                 expr_new: dict[tuple[int, int], float] = {}
-                if affected:
+                pool_new: dict[tuple[int, int], float] = {}
+                if affected or pool_affected:
                     chosen[pi] = new_si
                     for d_aff in affected:
                         nv = _hub_express_day_ml(
@@ -522,6 +556,13 @@ def system_smooth_pass(
                         )
                         delta_cost += nv - ecache[hi, d_aff]
                         expr_new[(hi, d_aff)] = nv
+                    for d_aff in pool_affected:
+                        pv = _hub_smallday_pool_ml(
+                            hi, d_aff, chosen, hub_plz_list, schedules,
+                            matrices, pool_pred_cache,
+                        )
+                        delta_cost += pv - pcache[hi, d_aff]
+                        pool_new[(hi, d_aff)] = pv
                     chosen[pi] = old_si
 
                 delta_obj = float(delta_cost) + (
@@ -537,6 +578,7 @@ def system_smooth_pass(
                 best_delta_obj = delta_obj
                 best_delta_cost = float(delta_cost)
                 best_expr_new = expr_new
+                best_pool_new = pool_new
 
         if best_si is None:
             break
@@ -551,6 +593,8 @@ def system_smooth_pass(
         cur_obj += best_delta_obj
         for (hi_aff, d_aff), val in best_expr_new.items():
             ecache[hi_aff, d_aff] = val
+        for (hi_aff, d_aff), val in best_pool_new.items():
+            pcache[hi_aff, d_aff] = val
         swaps_made += 1
 
     system_spread_final = float(sys_fleet.max() - sys_fleet.min())

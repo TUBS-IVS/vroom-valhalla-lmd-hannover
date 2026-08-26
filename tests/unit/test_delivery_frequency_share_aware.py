@@ -77,7 +77,10 @@ def test_freq_is_1_at_share_zero():
         hub_coords_by_plz={"30159": (9.73, 52.38)},
         fast_share_b2c=1.0, fast_share_b2b=1.0,
     )
-    cost_3d = out["cost_3d"]
+    # ``cost_3d_raw`` = unpooled per-cell prediction. ``cost_3d`` zeroes
+    # delivery instances below MIN_TOUR_PARCELS (rev1 small-delivery rule);
+    # at share=0 this PLZ delivers 130 parcels/day, below that threshold.
+    cost_3d = out["cost_3d_raw"]
     for d in range(N_DAYS):
         assert cost_3d[0, mon_thu_idx, d] == pytest.approx(1.0, abs=1e-6), (
             f"At share=0, day {d}: expected freq=1, got {cost_3d[0, mon_thu_idx, d]}"

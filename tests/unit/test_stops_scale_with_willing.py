@@ -91,7 +91,10 @@ def test_dd_stops_at_share_zero_equals_stops_per_day():
         fast_share_b2c=1.0,
         fast_share_b2b=1.0,
     )
-    cost_3d = out["cost_3d"]
+    # ``cost_3d_raw`` = unpooled per-cell prediction. ``cost_3d`` zeroes
+    # delivery instances below MIN_TOUR_PARCELS (rev1 small-delivery rule);
+    # at share=0 this PLZ delivers 130 parcels/day, below that threshold.
+    cost_3d = out["cost_3d_raw"]
 
     # At share=0, every day delivers today's parcels only.
     # Stops per tour = stops_per_day = 50 (not 150 like the old bug).

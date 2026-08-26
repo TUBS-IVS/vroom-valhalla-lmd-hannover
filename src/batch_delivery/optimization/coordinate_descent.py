@@ -16,7 +16,11 @@ import numpy as np
 from batch_delivery.config.constants import (
     N_DAYS,
 )
-from batch_delivery.optimization.costs import _hub_express_day_ml
+from batch_delivery.optimization.costs import (
+    _hub_express_day_ml,
+    _hub_smallday_pool_ml,
+    _pool_affected_days,
+)
 from batch_delivery.utils import log
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,7 +75,14 @@ def optimize_cd_ml(
     n_sched = len(schedules)
     n_hubs = len(hub_plz_list)
 
-    # ── Batch-only: argmin is globally optimal (no coupling) ─────────
+    # ── Batch-only: argmin over the separable matrix ──────────────────
+    # CAVEAT (rev1 small-delivery rule, 2026-08-26): since instances below
+    # MIN_TOUR_PARCELS were moved out of ``dd_cost_mx`` into the hub pool
+    # (``_hub_smallday_pool_ml``), delivery-day costs are no longer fully
+    # separable and this argmin is no longer provably globally optimal —
+    # nor does ``best_cost`` include the pooled residual. Left unchanged on
+    # purpose: routing batch-only through the coupled loop would silently
+    # move the published "Fixed Batch-Only" / "SA_ML Batch-Only" KPIs.
     if batch_only:
         chosen = np.argmin(dd_cost_mx, axis=1).copy()
         _pi = np.arange(n_plz)
@@ -117,9 +128,11 @@ def optimize_cd_ml(
             chosen = rng.integers(0, n_sched, size=n_plz, dtype=np.intp)
             init_label = "random"
 
-        # ── Build initial express cache ──────────────────────────────
+        # ── Build initial express + small-delivery-pool caches ───────
         express_pred_cache: dict = {}
+        pool_pred_cache: dict = {}
         ecache = np.zeros((n_hubs, N_DAYS))
+        pcache = np.zeros((n_hubs, N_DAYS))
         for hi in range(n_hubs):
             for d in range(N_DAYS):
                 ecache[hi, d] = _hub_express_day_ml(
@@ -127,9 +140,15 @@ def optimize_cd_ml(
                     raw_express, expr_stops, matrices,
                     express_pred_cache, express_scale,
                 )
+                pcache[hi, d] = _hub_smallday_pool_ml(
+                    hi, d, chosen, hub_plz_list, schedules, matrices,
+                    pool_pred_cache,
+                )
 
         _pi = np.arange(n_plz)
-        cur_cost = float(dd_cost_mx[_pi, chosen].sum()) + ecache.sum()
+        cur_cost = (
+            float(dd_cost_mx[_pi, chosen].sum()) + ecache.sum() + pcache.sum()
+        )
         best_cost = cur_cost
         best_chosen = chosen.copy()
         total_improved = 0
@@ -149,6 +168,7 @@ def optimize_cd_ml(
                 best_si = old_si
                 best_delta = 0.0
                 best_expr_new: dict[int, float] = {}
+                best_pool_new: dict[int, float] = {}
 
                 for new_si in range(n_sched):
                     if new_si == old_si:
@@ -157,8 +177,14 @@ def optimize_cd_ml(
 
                     new_days = schedules[new_si]
                     affected = old_days.symmetric_difference(new_days)
+                    # NOT the symmetric difference: a day served by both
+                    # schedules still changes the pool when the batched
+                    # demand behind it changes.
+                    pool_affected = _pool_affected_days(
+                        pi, old_si, new_si, matrices)
                     expr_new: dict[int, float] = {}
-                    if affected:
+                    pool_new: dict[int, float] = {}
+                    if affected or pool_affected:
                         chosen[pi] = new_si
                         for d_aff in affected:
                             nv = _hub_express_day_ml(
@@ -168,18 +194,28 @@ def optimize_cd_ml(
                             )
                             delta += nv - ecache[hi, d_aff]
                             expr_new[d_aff] = nv
+                        for d_aff in pool_affected:
+                            pv = _hub_smallday_pool_ml(
+                                hi, d_aff, chosen, hub_plz_list, schedules,
+                                matrices, pool_pred_cache,
+                            )
+                            delta += pv - pcache[hi, d_aff]
+                            pool_new[d_aff] = pv
                         chosen[pi] = old_si
 
                     if delta < best_delta:
                         best_delta = delta
                         best_si = new_si
                         best_expr_new = expr_new
+                        best_pool_new = pool_new
 
                 if best_si != old_si:
                     chosen[pi] = best_si
                     cur_cost += best_delta
                     for d_val, val in best_expr_new.items():
                         ecache[hi, d_val] = val
+                    for d_val, val in best_pool_new.items():
+                        pcache[hi, d_val] = val
                     round_improved += 1
 
             total_improved += round_improved
@@ -198,6 +234,7 @@ def optimize_cd_ml(
                     chosen, plz_hub_arr, hub_plz_list, schedules,
                     matrices, ecache, express_pred_cache, express_scale,
                     nbr_idx, rng, max_pairs=pair_polish_max_pairs,
+                    pcache=pcache, pool_pred_cache=pool_pred_cache,
                 )
                 cur_cost += d
                 total_improved += n_acc
@@ -307,13 +344,15 @@ def _pair_polish_round(
     nbr_idx: list[np.ndarray],
     rng: np.random.Generator,
     max_pairs: int,
+    pcache: np.ndarray | None = None,
+    pool_pred_cache: dict | None = None,
 ) -> tuple[float, int]:
     """One round of pair-PLZ moves, restricted to day-toggle neighbours.
 
     Iterates over a sample of co-located PLZ pairs ``(pi, pj)`` (same hub).
     For each pair, tries neighbour patterns of *both* PLZ simultaneously and
     accepts the move yielding the lowest joint cost delta.  Modifies
-    ``chosen`` and ``ecache`` in place.
+    ``chosen``, ``ecache`` and ``pcache`` in place.
 
     Returns ``(cost_delta, n_accepted)`` — total improvement and number of
     accepted swaps in this round.
@@ -356,6 +395,7 @@ def _pair_polish_round(
         best_si, best_sj = old_si, old_sj
         best_delta = 0.0
         best_expr_new: dict[int, float] = {}
+        best_pool_new: dict[int, float] = {}
 
         for new_si in nbrs_i:
             for new_sj in nbrs_j:
@@ -373,10 +413,15 @@ def _pair_polish_round(
                     old_days_i.symmetric_difference(new_days_i)
                     | old_days_j.symmetric_difference(new_days_j)
                 )
+                pool_affected = (
+                    set(_pool_affected_days(pi, old_si, new_si_i, matrices))
+                    | set(_pool_affected_days(pj, old_sj, new_sj_i, matrices))
+                ) if pcache is not None else set()
 
                 expr_new: dict[int, float] = {}
+                pool_new: dict[int, float] = {}
                 d_expr = 0.0
-                if affected:
+                if affected or pool_affected:
                     chosen[pi] = new_si_i
                     chosen[pj] = new_sj_i
                     for d_aff in affected:
@@ -387,6 +432,13 @@ def _pair_polish_round(
                         )
                         d_expr += nv - ecache[hi, d_aff]
                         expr_new[d_aff] = nv
+                    for d_aff in pool_affected:
+                        pv = _hub_smallday_pool_ml(
+                            hi, d_aff, chosen, hub_plz_list, schedules,
+                            matrices, pool_pred_cache,
+                        )
+                        d_expr += pv - pcache[hi, d_aff]
+                        pool_new[d_aff] = pv
                     chosen[pi] = old_si
                     chosen[pj] = old_sj
 
@@ -395,12 +447,15 @@ def _pair_polish_round(
                     best_delta = delta
                     best_si, best_sj = new_si_i, new_sj_i
                     best_expr_new = expr_new
+                    best_pool_new = pool_new
 
         if best_si != old_si or best_sj != old_sj:
             chosen[pi] = best_si
             chosen[pj] = best_sj
             for d_val, val in best_expr_new.items():
                 ecache[hi, d_val] = val
+            for d_val, val in best_pool_new.items():
+                pcache[hi, d_val] = val
             total_delta += best_delta
             n_accept += 1
 
