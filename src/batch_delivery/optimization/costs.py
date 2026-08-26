@@ -841,6 +841,44 @@ def build_cost_matrices_ml(
         1.0, spd_arr[:, None] * fast_share_blend_arr[:, None] * np.ones((1, N_DAYS)),
     )
 
+    # ── 9b) Per-cell express cost (rev1 realistic-tour rule) ────────────
+    # The express instance is a *scaled single-day instance of the same
+    # cell* — the pool's scale/p_keep augmentation family. Real hub_dist and
+    # area (D3a fix), single-day tier2 geometry, psd stats scaled by the
+    # standard share (D3b fix). G2: assert the domain, never extrapolate
+    # silently.
+    express_cost = np.zeros((n_plz, N_DAYS), dtype=np.float64)
+    xi, xd = np.where(raw_express > 0)
+    if len(xi):
+        assert np.all(area_arr[xi] > 0), "G2: zero area in express instance"
+        assert np.all(hd_arr[xi] > 0), "G2: zero hub_dist in express instance"
+        xf = np.empty((len(xi), len(ALL_COLS)), dtype=np.float64)
+        npx = raw_express[xi, xd]
+        nsx = np.maximum(1.0, np.trunc(expr_stops[xi, xd]))
+        arx = np.maximum(0.01, area_arr[xi])
+        xf[:, 0] = np.trunc(npx)
+        xf[:, 1] = nsx
+        xf[:, 2] = arx
+        xf[:, 3] = hd_arr[xi]
+        xf[:, 4] = np.trunc(npx) / nsx
+        xf[:, 5] = np.trunc(npx) / VEHICLE_CAPACITY
+        xf[:, 6] = np.ceil(np.trunc(npx) / VEHICLE_CAPACITY)
+        xf[:, 7] = np.trunc(npx) / arx
+        xf[:, 8:8 + n_t2] = tier2_mx[xi, xd, :]
+        b2cx = np.trunc(np.trunc(npx) * plz_b2c_share[xi])
+        xf[:, 18] = b2cx / np.maximum(1.0, np.trunc(npx))
+        xhp = _has_psd[xi, xd]
+        xf[:, 19] = np.where(xhp, _psd_std[xi, xd] * fast_share_blend_arr[xi], 0.0)
+        xf[:, 20] = np.where(xhp, _psd_max[xi, xd] * fast_share_blend_arr[xi],
+                             np.trunc(npx))
+        min_vx = np.maximum(1.0, np.ceil(np.trunc(npx) / VEHICLE_CAPACITY))
+        xf[:, 21] = np.trunc(npx) / (min_vx * VEHICLE_CAPACITY)
+        xf[:, 22] = float(_PROVIDER_IDX.get(provider, 0))
+        xf[:, 23] = xd.astype(np.float64)
+        xf[:, 24] = 1.0                      # single-day residual semantics
+        express_cost[xi, xd] = ml_predictor.predict(
+            pd.DataFrame(xf, columns=ALL_COLS))
+
     # Per-PLZ per-day coordinate arrays for _hub_express_day_ml
     plz_day_lon: list[list[np.ndarray]] = []
     plz_day_lat: list[list[np.ndarray]] = []
@@ -876,6 +914,8 @@ def build_cost_matrices_ml(
         "wait_mx": wait_mx,
         "raw_express": raw_express,
         "expr_stops": expr_stops,
+        "express_cost": express_cost,
+        "fast_share_blend_arr": fast_share_blend_arr,
         "area_arr": area_arr,
         "hd_arr": hd_arr,
         "sched_active": sched_active,
