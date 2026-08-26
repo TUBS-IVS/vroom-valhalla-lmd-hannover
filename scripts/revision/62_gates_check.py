@@ -34,25 +34,45 @@ Gates (brief: task-7-brief.md):
        source -- see the structural caveat printed alongside G1a in the
        report). That is valid, not a shortcut. The argument has two parts:
 
-       (1) THE MATRIX IDENTITY. At theta=1, fast_share_b2c = fast_share_b2b
+       (1) THE MATRIX IDENTITY, SCOPED TO THE G1a-ELIGIBLE (>=230-parcel)
+       SET -- not to every cell. At theta=1, fast_share_b2c = fast_share_b2b
        = 0 (``_stage3_common.fs_b2c/fs_b2b``), so ``raw_express`` is
        identically zero for every cell and ``express_demand`` (which only
        ever lands on NON-delivery days) is zero too -- meaning
        ``combined_demand`` is zero on every non-delivery day, so
        ``active = combined_demand > 0`` never fires there either, and
-       ``cost_3d`` only ever receives a prediction on a DELIVERY day. Since
-       ``dd_cost_mx = (cost_3d * sched_active).sum(axis=2)`` already
-       restricts to delivery days, masking a matrix that is already zero
-       off them is a no-op: ``cost_3d_raw.sum(axis=2) == dd_cost_mx`` holds
-       for EVERY cell at theta=1, not only eligible ones (``cost_3d_raw``
-       is ``cost_3d`` copied before the small-delivery zeroing, so this
-       also shows the zeroing changes nothing on cells it never touches).
-       This is checked at runtime, not just asserted in prose: every
-       theta=1 matrix build in this script runs
-       ``assert np.allclose(m["cost_3d_raw"].sum(axis=2), m["dd_cost_mx"])``
-       (see :func:`get_matrices`) -- if a future change breaks the
-       identity, G1a's premise is invalidated loudly before it can produce
-       a silent false result.
+       ``cost_3d`` never receives a prediction on a non-delivery day, for
+       ANY cell. That is not the whole story, though: ``cost_3d`` is
+       SEPARATELY zeroed on a DELIVERY day whenever that day's (schedule-
+       shifted) demand is below ``MIN_TOUR_PARCELS`` (``small_delivery_mask``,
+       "the pooled twin owns these"), independent of theta. For a cell with
+       ``daily_demand.min(axis=1) >= MIN_TOUR_PARCELS`` (the G1a scope),
+       every schedule-shifted delivery-day demand is a sum of >=1
+       individual days' raw demand each already >= ``MIN_TOUR_PARCELS``, so
+       it can never be small -- ``small_delivery_mask`` never fires for
+       that cell and ``cost_3d_raw.sum(axis=2) == dd_cost_mx`` holds
+       EXACTLY on this set (``cost_3d_raw`` is ``cost_3d`` copied before
+       the small-delivery zeroing). For an INELIGIBLE (sub-230) cell this
+       need not hold at all: ``cost_3d_raw`` keeps the original
+       per-instance prediction where ``cost_3d`` was zeroed, so the two
+       legitimately diverge there -- correctly, not a bug, since the pooled
+       twin genuinely owns that instance's price. This is checked at
+       runtime, restricted to the SAME eligible set, not just asserted in
+       prose: every theta=1 matrix build in this script runs (see
+       :func:`get_matrices`)::
+
+           assert not m["small_delivery_mask"][eligible].any()
+           assert np.allclose(m["cost_3d_raw"][eligible].sum(axis=2),
+                               m["dd_cost_mx"][eligible])
+
+       -- if a future change breaks the identity on the eligible set,
+       G1a's premise is invalidated loudly before it can produce a silent
+       false result. (History: the first version of this check asserted
+       the identity over ALL cells rather than the eligible subset, and
+       crashed on the first provider with a small cell -- DPD, 26 of 47 --
+       even though the identity never claimed to hold there. Fixed
+       2026-08-26 after the first full 616-triple grid run surfaced it;
+       see task-7-report.md.)
 
        (2) THE CD FIXED POINT. For a cell whose every instance is >=230
        parcels, ``small_delivery_mask`` never fires (by the >=230
@@ -448,16 +468,43 @@ def get_matrices(cache: dict, theta: float, prov: str, optim_data: dict,
         "to slow per-member partition pricing")
     if abs(float(theta) - 1.0) < 1e-9:
         # Runtime proof of G1a's fallback premise (module docstring, part
-        # (1)): at theta=1 every cell's raw_express is zero, so cost_3d only
-        # ever gets a prediction on a delivery day and the pre-zeroing copy
-        # (cost_3d_raw) sums to exactly dd_cost_mx for EVERY cell. If this
-        # ever breaks, G1a's argmin fallback is comparing against the wrong
-        # thing -- fail loudly here rather than let G1a report a silently
-        # meaningless PASS or FAIL.
-        assert np.allclose(m["cost_3d_raw"].sum(axis=2), m["dd_cost_mx"]), (
-            f"theta=1 matrix identity violated for {prov}: "
-            "cost_3d_raw.sum(axis=2) != dd_cost_mx -- G1a's fallback "
-            "premise (module docstring) no longer holds")
+        # (1)) -- SCOPED TO THE G1a-ELIGIBLE ROWS ONLY, not the whole matrix.
+        #
+        # At theta=1 every cell's raw_express is zero, so cost_3d never gets
+        # a prediction on a NON-delivery day, for every cell -- but on a
+        # DELIVERY day, cost_3d is separately zeroed by small_delivery_mask
+        # whenever that day's (schedule-shifted) demand is < MIN_TOUR_PARCELS
+        # (the pooled twin owns that instance instead), REGARDLESS of theta.
+        # For a cell with daily_demand.min(axis=1) >= MIN_TOUR_PARCELS (the
+        # G1a scope), every schedule-shifted delivery-day demand is a sum of
+        # >=1 individual days each already >= MIN_TOUR_PARCELS, so it can
+        # never be small -- small_delivery_mask never fires and
+        # cost_3d_raw.sum(axis=2) == dd_cost_mx holds. For an INELIGIBLE
+        # (sub-230) cell it need not: cost_3d_raw keeps the original
+        # per-instance prediction where cost_3d was zeroed, so the two
+        # legitimately diverge there. Asserting over ALL cells (the first
+        # version of this check) fails on any provider with a small cell
+        # (e.g. DPD: 26 of 47) even though the premise -- which only ever
+        # claimed the identity for the >=230 set -- is intact; that was this
+        # script's own bug, not a real regression (found via the first
+        # 616-triple full-grid run, DPD, 2026-08-26).
+        eligible = m["daily_demand"].min(axis=1) >= MIN_TOUR_PARCELS
+        n_elig = int(eligible.sum())
+        if n_elig:
+            # The premise itself, not just its numeric consequence: no
+            # eligible cell is ever pooled at theta=1.
+            assert not m["small_delivery_mask"][eligible].any(), (
+                f"theta=1 premise violated for {prov}: "
+                f"small_delivery_mask fires on >=1 of {n_elig} G1a-eligible "
+                "(>=230-parcel) cell(s) -- these cells should never be "
+                "pool-coupled at theta=1; G1a's decoupling argument (module "
+                "docstring) no longer holds for this provider")
+            assert np.allclose(m["cost_3d_raw"][eligible].sum(axis=2),
+                               m["dd_cost_mx"][eligible]), (
+                f"theta=1 matrix identity violated for {prov} on "
+                f"{n_elig} G1a-eligible cell(s): "
+                "cost_3d_raw.sum(axis=2) != dd_cost_mx -- G1a's fallback "
+                "premise (module docstring) no longer holds")
     print(f"    [mtx] th={theta:<4g} {prov:<7s} built in "
           f"{time.perf_counter() - t0:5.1f}s", flush=True)
     cache[key] = m
@@ -1257,10 +1304,33 @@ def main() -> None:
         or g4["total"] < G4_LOWER
         or not g4["express_ok"]
     )
+    code = 1 if hard_fail else 0
     print(f"[62] done in {time.perf_counter() - t_start:.1f}s; "
           f"overall={'FAIL' if hard_fail else 'PASS'}", flush=True)
-    sys.exit(1 if hard_fail else 0)
+    # Self-describing final line, independent of whatever exit-code plumbing
+    # the caller uses to invoke this script: an external wrapper
+    # (`cmd /c "python ... & echo %ERRORLEVEL%"`) has been observed to
+    # report 0 despite a crash further down (a shell/quoting issue in the
+    # wrapper, not in this process's own exit code) -- grep the log for this
+    # exact line rather than trust an external ERRORLEVEL capture.
+    print(f"[62] EXIT {code} {'FAIL' if hard_fail else 'PASS'}", flush=True)
+    sys.exit(code)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise  # main() already printed its own "[62] EXIT ..." line
+    except BaseException:
+        # Any crash (an unmet assertion, an import error from a moving
+        # dependency, ...) still gets a self-describing final log line and a
+        # real nonzero exit code -- this is exactly the gap the external
+        # wrapper's misreported ERRORLEVEL=0 fell into (see above): the
+        # traceback tells a human what broke, this line tells a script that
+        # something did, without needing to trust the caller's own exit-code
+        # capture at all.
+        import traceback
+        traceback.print_exc()
+        print("[62] EXIT 1 FAIL (crashed -- see traceback above)", flush=True)
+        sys.exit(1)
