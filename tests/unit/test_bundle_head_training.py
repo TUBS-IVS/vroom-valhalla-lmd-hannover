@@ -49,8 +49,8 @@ def _x(n_parcels: float, n_stops: float, area: float, hub: float) -> np.ndarray:
 
 
 def _pool(n: int = 8) -> pd.DataFrame:
-    """A tiny stand-in for ``bundles_solved.parquet`` — the columns the
-    trainer reads, nothing else."""
+    """A tiny stand-in for ``bundles_solved.csv`` — the columns the trainer
+    reads, nothing else."""
     rows = []
     for i in range(n):
         rows.append({
@@ -58,7 +58,7 @@ def _pool(n: int = 8) -> pd.DataFrame:
             "provider": ["DPD", "GLS"][i % 2],
             "kind": ["delivery", "express"][i % 2],
             "members": [str(30100 + i), str(30200 + i % 3)],
-            "n_members": 2,
+            "n_members": 2 + i % 4,
             "parcels": 100.0 + 40 * i,
             "stops": 50.0 + 20 * i,
             "area_km2": 10.0 + i,
@@ -67,6 +67,8 @@ def _pool(n: int = 8) -> pd.DataFrame:
             "vroom_status": "OK",
             "phase": "A",
             "occurrences": 1,
+            "n_unassigned": 0,
+            "jobs_removed": 0,
         })
     return pd.DataFrame(rows)
 
@@ -140,6 +142,25 @@ def test_predict_single_identity_holds_on_a_real_head(T):
     assert head.predict_single(x) == by_hand
 
 
+def test_identity_check_also_pins_alpha_and_the_trees(T):
+    """What the pickle round trip is FOR: the loaded head must carry the
+    backbone weight the residual was fit against and the very same model.
+
+    The identity alone cannot see either — both of its sides read
+    ``head.alpha`` and ``head.model``, so a head pickled with the wrong alpha
+    satisfies it perfectly."""
+    X = T.feature_matrix(_pool())
+    model = _ConstModel(17.0)
+    assert T.check_predict_identity(BundleHead(T.ALPHA, model), X,
+                                    alpha=T.ALPHA, model=model) == 0.0
+
+    with pytest.raises(AssertionError, match="backbone weight"):
+        T.check_predict_identity(BundleHead(1.0, model), X, alpha=T.ALPHA)
+    with pytest.raises(AssertionError, match="lost or altered the trees"):
+        T.check_predict_identity(BundleHead(T.ALPHA, _ConstModel(3.0)), X,
+                                 model=model)
+
+
 def test_predict_single_identity_catches_drift(T):
     """A head whose arithmetic drifts from the trained target must not ship."""
 
@@ -174,6 +195,25 @@ def test_status_split_keeps_every_row(T):
     assert len(p["ok"]) == 3 and len(p["partial"]) == 1
     assert len(p["timeout"]) == 1 and len(p["other"]) == 1
     assert sum(len(v) for v in p.values()) == len(df)
+
+
+def test_incomplete_labels_never_train(T):
+    """64a's TRAINING_EXCLUDE_EXPR: a solve that left jobs unassigned or
+    dropped jobs priced FEWER parcels than its feature row describes, so it is
+    a mislabelled sample — excluded from training whatever its status says."""
+    df = _pool(6)
+    df.loc[1, "n_unassigned"] = 3
+    df.loc[2, "jobs_removed"] = 1
+    df.loc[3, "n_unassigned"] = 0                       # explicit zero is fine
+    m = T.complete_label_mask(df)
+    assert m.tolist() == [True, False, False, True, True, True]
+
+    # Missing columns (an older pool file) must not silently drop everything.
+    assert T.complete_label_mask(df.drop(columns=["n_unassigned",
+                                                  "jobs_removed"])).all()
+    # ... and a blank cell reads as "nothing unassigned", per cov._num.
+    df.loc[4, "jobs_removed"] = np.nan
+    assert T.complete_label_mask(df)[4]
 
 
 def test_partial_rows_stop_training_when_their_bias_is_distinct(T):
@@ -222,28 +262,100 @@ def test_metrics_are_signed_and_relative(T):
     assert m2["wbias"] == pytest.approx(310 / 300 * 100 - 100)
 
 
-def _bins(T, rows):
-    """The flag columns ``bin_table`` derives, on a hand-built frame."""
-    b = pd.DataFrame(rows)
-    b["deployment_used"] = b["occurrences"] >= 1
-    b["suspect"] = ((b["n_labelled"] >= 1)
-                    & (b["oof_bias"].abs() > T.SUSPECT_BIAS))
-    b["thin"] = b["n_labelled"] < T.THIN_FLOOR
-    return b
+def _binned_pool(T):
+    """A pool spanning the three cases the flags must separate.
+
+    * ``supported`` — 6 trainable rows, all mispriced by +9 %;
+    * ``thinbin``   — 2 trainable rows, mispriced the same way;
+    * ``untrained`` — 2 rows, neither of them trainable.
+
+    The untrainable rows carry a wild prediction so that any leak of them into
+    a bin's OOF numbers shows up immediately.
+    """
+    n_sup, n_thin, n_untr = 6, 2, 2
+    pool = _pool(n_sup + n_thin + n_untr)
+    pool["bin"] = ["supported"] * n_sup + ["thinbin"] * n_thin \
+        + ["untrained"] * n_untr
+    y = pool["vroom_cost_eur"].to_numpy(dtype=float)
+    pred = y * 1.09
+    trainable = np.ones(len(pool), dtype=bool)
+    trainable[-n_untr:] = False
+    pred[-n_untr:] = y[-n_untr:] * 5.0                  # must never be scored
+    return pool, y, pred, trainable
+
+
+def test_bin_flags_come_from_the_trainable_population(T):
+    """thin/suspect/gate_blocking, and n_labelled counting only what trained."""
+    pool, y, pred, trainable = _binned_pool(T)
+    tab = T.bin_table(pool, y, pred, None, trainable).set_index("bin")
+
+    assert tab.loc["supported", "n_labelled"] == 6
+    assert tab.loc["thinbin", "n_labelled"] == 2
+    assert tab.loc["untrained", "n_labelled"] == 0
+    assert tab.loc["untrained", "n_labelled_all"] == 2      # still visible
+
+    # +9 % is above SUSPECT_BIAS in both labelled bins ...
+    assert tab.loc["supported", "oof_bias"] == pytest.approx(9.0)
+    assert tab.loc["thinbin", "oof_bias"] == pytest.approx(9.0)
+    assert bool(tab.loc["supported", "suspect"])
+    assert bool(tab.loc["thinbin", "suspect"])
+    # ... but only the SUPPORTED bin blocks the gate.
+    assert bool(tab.loc["supported", "gate_blocking"])
+    assert not bool(tab.loc["thinbin", "gate_blocking"])
+    assert not bool(tab.loc["supported", "thin"])
+    assert bool(tab.loc["thinbin", "thin"])
+
+    # A bin with no trainable row is thin, never suspect: the 5x prediction on
+    # its rows must not reach any OOF number.
+    assert bool(tab.loc["untrained", "thin"])
+    assert not bool(tab.loc["untrained", "suspect"])
+    assert pd.isna(tab.loc["untrained", "oof_bias"])
 
 
 def test_gate_u_needs_all_three_criteria(T):
-    clean = _bins(T, [{"bin": "a", "occurrences": 9, "n_labelled": 8, "oof_bias": 1.0},
-                      {"bin": "b", "occurrences": 0, "n_labelled": 2, "oof_bias": 40.0}])
+    """The verdict runs on bin_table's own output, not a hand-made frame."""
+    pool, y, pred, trainable = _binned_pool(T)
+    dirty = T.bin_table(pool, y, pred, None, trainable)
+    v = T.gate_verdict({"mape": 4.0, "bias": 0.5}, dirty)
+    assert v["pass"] is False and v["blocking_bins"] == ["supported"]
+
+    # Price the supported bin correctly and only the thin suspect is left,
+    # which does not gate.
+    ok = pred.copy()
+    ok[:6] = y[:6]
+    clean = T.bin_table(pool, y, ok, None, trainable)
+    assert int(clean["suspect"].sum()) == 1
     assert T.gate_verdict({"mape": 4.0, "bias": 0.5}, clean)["pass"] is True
 
-    # a suspect bin the deployment actually uses fails criterion 3 ...
-    dirty = _bins(T, [{"bin": "a", "occurrences": 9, "n_labelled": 8,
-                       "oof_bias": 9.0}])
-    v = T.gate_verdict({"mape": 4.0, "bias": 0.5}, dirty)
-    assert v["pass"] is False and v["suspect_bins"] == ["a"]
-
-    # ... and the two overall numbers each fail on their own.
+    # The two overall numbers each fail on their own.
     assert T.gate_verdict({"mape": 5.4, "bias": 0.5}, clean)["pass"] is False
     assert T.gate_verdict({"mape": 4.0, "bias": -2.4}, clean)["pass"] is False
     assert T.gate_verdict({"mape": 5.0, "bias": 2.0}, clean)["pass"] is True
+
+
+def test_assign_pool_bins_uses_the_current_edges(T):
+    """Bins are re-derived from bundles_bins.json, and the stored one kept.
+
+    64a recomputes tercile edges as the grid grows, so a row solved earlier
+    carries a bin name that predates them. Joining that against the current
+    coverage table would attribute a bin's OOF to the wrong composition.
+    """
+    pool = _pool(4)
+    pool["n_members"] = [2, 3, 5, 7]
+    pool["parcels"] = [100.0, 300.0, 500.0, 500.0]
+    pool["area_km2"] = [5.0, 20.0, 40.0, 40.0]
+    pool["kind"] = "delivery"
+    pool["provider"] = "DPD"
+    pool["bin"] = "delivery|2|D9|A9|DPD"                # stale, from old edges
+    edges = {"parcels": [200.0, 400.0], "area_km2": [15.0, 30.0]}
+
+    out = T.assign_pool_bins(pool, edges)
+    assert out["bin"].tolist() == ["delivery|2|D0|A0|DPD",
+                                   "delivery|3|D1|A1|DPD",
+                                   "delivery|5+|D2|A2|DPD",
+                                   "delivery|5+|D2|A2|DPD"]
+    assert (out["bin_stored"] == "delivery|2|D9|A9|DPD").all()
+
+    # Without edges there is nothing to re-derive, so the stored bin stands.
+    kept = T.assign_pool_bins(pool, None)
+    assert (kept["bin"] == kept["bin_stored"]).all()

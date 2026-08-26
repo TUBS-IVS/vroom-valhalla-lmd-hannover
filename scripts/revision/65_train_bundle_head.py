@@ -28,10 +28,21 @@ WHICH ROWS TRAIN
 ----------------
 ``OK``/``CACHED`` and ``PARTIAL`` (v2 brief: PARTIAL is kept, as in the
 published validation — Kompendium 38.2b), ``TIMEOUT`` and error statuses
-excluded and listed by id. PARTIAL rows carry a truncated VROOM solution, so
-their OOF error is reported SEPARATELY; if their signed bias exceeds
-``PARTIAL_BIAS_GATE`` they are dropped from TRAINING (still scored, never
-silently kept) and the report says so.
+excluded and listed by id. Two further filters, both reported, neither
+silent:
+
+* **Incomplete labels** (64a's ``TRAINING_EXCLUDE_EXPR``): a solve with
+  ``n_unassigned > 0`` or ``jobs_removed > 0`` priced fewer parcels than its
+  feature row describes — a mislabelled sample, and one the alpha backbone's
+  own sweep pool contains none of. Excluded from TRAINING, still scored.
+* **PARTIAL, when it is distinctly biased**: its OOF error is reported
+  separately and, if the signed bias exceeds ``PARTIAL_BIAS_GATE``, those rows
+  stop training the head (still scored) and the report says so.
+
+Everything the head was allowed to learn from is the TRAINABLE population, and
+that single population decides the headline MAPE/bias, the per-bin OOF and all
+three Gate U criteria. Rows outside it stay visible (``by status``,
+``n_labelled_all``) instead of disappearing.
 
 HOW IT IS VALIDATED
 -------------------
@@ -41,16 +52,20 @@ sit on both sides of a fold boundary. Everything is scored on the COST scale
 (``alpha * daganzo + residual`` vs ``vroom_cost_eur``), never on the residual —
 a good residual R^2 over a dominant backbone would flatter the head.
 
-Gate U (v2 brief) passes iff
+Gate U passes iff
 
 1. overall OOF MAPE <= 5 %,
 2. |overall OOF signed bias| <= 2 %,
-3. no bin the deployment distribution uses (``occurrences >= 1``) is
-   *suspect* (|per-bin OOF bias| > 5 %).
+3. no bin with at least ``THIN_FLOOR`` TRAINABLE labels has |per-bin OOF bias|
+   > 5 % (controller ruling, 2026-08-26; the v2 brief's ``occurrences >= 1``
+   scope selected nothing, since every manifest bin satisfies it).
 
-Thin bins (< 6 labelled rows) are REPORTED, not failing — they are Task 11's
-"uncovered compositions": a realised final-grid bundle landing in a thin or
-suspect bin is unsupported and must fall back to Sigma-single pricing.
+Thin bins (< 6 trainable labels) are REPORTED, not failing: their bias is
+mostly sampling noise, and Task 11 already routes their bundles to Sigma-single
+fallback. A SUPPORTED bin that is still biased does fail — the head has the
+rows there and misprices them anyway. Both lists, plus the flags Task 11 reads,
+go to ``bundle_head_bins.csv``; the gate-blocking ones are also written as data
+for 64a's Phase-B planner (``bundles_suspect_bins.json``).
 
 Run (defaults are the canonical paths):
     .venv\\Scripts\\python.exe scripts/revision/65_train_bundle_head.py \\
@@ -63,6 +78,7 @@ Output (results/revision_2026_08/):
     gate_u_report.md         always  (+ a labelled copy)
     bundle_head_bins.csv     always  (bin -> n, MAPE, bias, thin/suspect)
     gate_u.json              always  (the headline numbers, machine-readable)
+    bundles/bundles_suspect_bins.json   always  (64a Phase-B tier 1)
 """
 from __future__ import annotations
 
@@ -170,41 +186,46 @@ def log(msg: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def read_pool(path: Path, copies_dir: Path | None = None,
-              prefer_csv: bool = True, retries: int = 20) -> tuple[pd.DataFrame, Path]:
-    """Read the solved pool from a COPY — the solver appends every few seconds.
+              retries: int = 20) -> tuple[pd.DataFrame, Path]:
+    """Read the solved pool from a COPY, deduped by 64a's single reader.
 
-    Reading the live file is how a reader lock kills a writer hours deep
-    (62_/63_/64_ all copy first); a parquet read landing inside a footer
-    rewrite raises outright. So: copy, read, retry.
+    Two disciplines, neither optional:
 
-    ``prefer_csv`` picks the append-only CSV over a parquet that the solver
-    only rebuilds periodically — the CSV is never behind. Returns the frame
-    (one row per ``bundle_id``, TIMEOUT stubs superseded by late completions)
-    and the path actually read.
+    * **Copy first.** Reading the live file is how a reader lock kills a writer
+      hours deep (62_/63_/64_ all copy first), and a read landing inside an
+      append raises. So: copy, read, retry.
+    * **``cov.read_solved`` owns the dedupe.** A bundle appears more than once
+      in the append-only CSV (a TIMEOUT stub then the straggler's result; a
+      failed attempt then a successful retry), and picking the wrong row means
+      training on a label that prices fewer parcels than the instance holds.
+      64a's rule — a USABLE row wins, else the most recent — is the one rule;
+      the local dedupe this function used to carry kept the EARLIEST
+      non-TIMEOUT row, so a failed PARTIAL attempt beat its own later OK retry.
+
+    ``bundles_solved.parquet`` is a periodic REBUILD of that CSV, so a
+    ``--solved`` pointing at it is resolved to the CSV: one file, one reader,
+    one dedupe. Returns the frame and the path actually read.
     """
     src = Path(path)
-    csv = src.with_suffix(".csv")
-    if (prefer_csv and src.suffix == ".parquet" and csv.exists()
-            and (not src.exists()
-                 or csv.stat().st_mtime > src.stat().st_mtime)):
-        behind = ((csv.stat().st_mtime - src.stat().st_mtime) / 60
-                  if src.exists() else float("inf"))
-        log(f"  {src.name} is {behind:.1f} min behind the append-only "
-            f"{csv.name} - reading the CSV")
+    if src.suffix != ".csv":
+        csv = src.with_suffix(".csv")
+        assert csv.exists(), (
+            f"{src.name} has no {csv.name} sibling — the append-only CSV is "
+            "the pool's source of truth and 64a's reader only reads it")
+        log(f"  {src.name} is a periodic rebuild - reading the append-only "
+            f"{csv.name}")
         src = csv
     # A missing pool is a typo, not a mid-append read: fail now, not after
     # 20 retries against a path that will never appear.
     assert src.exists(), f"no solved bundle pool at {src}"
     copies_dir = copies_dir or Path(tempfile.mkdtemp(prefix="bundle_head_"))
     copies_dir.mkdir(parents=True, exist_ok=True)
-    dst = copies_dir / src.name
+    dst = copies_dir / cov.SOLVED_CSV        # cov.read_solved reads THIS name
     last: Exception | None = None
     for attempt in range(retries):
         try:
             shutil.copy2(src, dst)
-            df = (pd.read_parquet(dst) if dst.suffix == ".parquet"
-                  else pd.read_csv(dst, dtype={"bundle_id": str,
-                                               "demand_level_key": str}))
+            df = cov.read_solved(copies_dir)
             break
         except Exception as exc:                              # mid-append read
             last = exc
@@ -215,17 +236,8 @@ def read_pool(path: Path, copies_dir: Path | None = None,
     else:
         raise last                                            # type: ignore[misc]
 
-    for c in ("members", "member_idx", "features", "first_seen"):
-        if c in df.columns:
-            df[c] = df[c].apply(
-                lambda v: json.loads(v) if isinstance(v, str) else v)
     assert len(df), f"empty pool at {src}"
-    # A TIMEOUT stub is superseded by the straggler's real result.
-    df["_is_to"] = (df["vroom_status"] == STATUS_TIMEOUT).astype(int)
-    df = (df.sort_values(["bundle_id", "_is_to"])
-            .drop_duplicates("bundle_id", keep="first")
-            .drop(columns="_is_to").reset_index(drop=True))
-    return df, src
+    return df.reset_index(drop=True), src
 
 
 def split_by_status(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
@@ -237,6 +249,22 @@ def split_by_status(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     other = df[~s.isin(list(STATUS_OK) + [STATUS_PARTIAL, STATUS_TIMEOUT])]
     assert len(ok) + len(partial) + len(timeout) + len(other) == len(df)
     return {"ok": ok, "partial": partial, "timeout": timeout, "other": other}
+
+
+def complete_label_mask(df: pd.DataFrame) -> np.ndarray:
+    """Rows whose ``vroom_cost_eur`` prices the WHOLE instance.
+
+    64a's ``TRAINING_EXCLUDE_EXPR``, minus its status clause (the brief's
+    PARTIAL semantics are decided separately, by ``partial_decision``): a solve
+    that left jobs unassigned, or whose unfound-location retry dropped jobs
+    outright, priced FEWER parcels than the feature row describes. That is a
+    MISLABELLED sample, not a hard one — and the sweep pool the alpha backbone
+    was calibrated on contains none of them (``sweep/runner.py`` returns
+    ``None`` on such solves), so training on them would teach the head a
+    discount the backbone has never seen.
+    """
+    return ((cov._num(df, "n_unassigned") <= 0)
+            & (cov._num(df, "jobs_removed") <= 0)).to_numpy()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -345,17 +373,23 @@ def metrics(y: np.ndarray, pred: np.ndarray) -> dict:
     ``bias`` is the MEAN SIGNED RELATIVE error — the Gate U number. ``wbias``
     is the portfolio version (sum of predictions vs sum of truth), reported
     alongside because a head can be unbiased per tour and biased in total.
+
+    A relative error needs a positive truth and a finite prediction, so rows
+    failing either are dropped — and COUNTED in ``n_dropped``. Silently
+    shrinking the denominator is how a gate passes on a subset of its
+    population; callers assert on that count.
     """
     y = np.asarray(y, dtype=np.float64)
     pred = np.asarray(pred, dtype=np.float64)
-    keep = y > 0
+    keep = np.isfinite(y) & np.isfinite(pred) & (y > 0)
+    n_dropped = int(len(y) - keep.sum())
     if not keep.any():
-        return {"n": 0, "mape": float("nan"), "bias": float("nan"),
-                "wbias": float("nan"), "mae": float("nan"),
-                "p90_ape": float("nan")}
+        return {"n": 0, "n_dropped": n_dropped, "mape": float("nan"),
+                "bias": float("nan"), "wbias": float("nan"),
+                "mae": float("nan"), "p90_ape": float("nan")}
     e = (pred[keep] - y[keep]) / y[keep]
     return {
-        "n": int(keep.sum()),
+        "n": int(keep.sum()), "n_dropped": n_dropped,
         "mape": float(np.mean(np.abs(e)) * 100.0),
         "bias": float(np.mean(e) * 100.0),
         "wbias": float((pred[keep].sum() - y[keep].sum()) / y[keep].sum() * 100.0),
@@ -379,22 +413,35 @@ def learning_curve(X: np.ndarray, y: np.ndarray, dag: np.ndarray,
                    y_resid: np.ndarray, groups: np.ndarray,
                    train_mask: np.ndarray, fractions=LEARNING_CURVE_FRACTIONS,
                    seed: int = 42, n_jobs: int = 2) -> pd.DataFrame:
-    """OOF at 50/75/100 % of the pool — is the head data-starved?
+    """OOF at 50/75/100 % of the LABELS — is the head data-starved?
+
+    Two properties make the three numbers comparable, and both are easy to
+    lose:
+
+    * **Nested.** The fractions are prefixes of ONE seeded permutation of the
+      trainable rows, so 50 % is a subset of 75 % is a subset of 100 %. Three
+      independent draws would let a lucky 50 % sample beat 75 %.
+    * **One fixed evaluation population.** Only the TRAINING set shrinks; every
+      fraction is scored on the same rows (the full gate population). Shrinking
+      the test set alongside would confound "less training data" with "an
+      easier test", and at 100 % the row reproduces the headline exactly —
+      same mask, same folds, same seed — which is a free consistency check.
 
     A MAPE still falling steeply at 100 % says the pool, not the model, is the
     binding constraint; a flat tail says more labels would buy little.
     """
     rng = np.random.default_rng(seed)
+    perm = rng.permutation(np.flatnonzero(train_mask))
     out = []
-    n = len(X)
     for f in fractions:
-        take = np.sort(rng.choice(n, size=max(2, int(round(f * n))),
-                                  replace=False)) if f < 1.0 else np.arange(n)
-        if len(np.unique(groups[take])) < 2 or not train_mask[take].any():
+        keep = np.zeros(len(X), dtype=bool)
+        keep[perm[:max(2, int(round(f * len(perm))))]] = True
+        if len(np.unique(groups[keep])) < 2:
             continue
-        pred, _ = oof_predict(X[take], y_resid[take], dag[take], groups[take],
-                              train_mask[take], seed=seed, n_jobs=n_jobs)
-        out.append({"fraction": f, "rows": len(take), **metrics(y[take], pred)})
+        pred, _ = oof_predict(X, y_resid, dag, groups, keep, seed=seed,
+                              n_jobs=n_jobs)
+        out.append({"fraction": f, "train_rows": int(keep.sum()),
+                    **metrics(y[train_mask], pred[train_mask])})
     return pd.DataFrame(out)
 
 
@@ -420,29 +467,45 @@ def assign_pool_bins(df: pd.DataFrame, edges: dict | None) -> pd.DataFrame:
 
 
 def bin_table(pool: pd.DataFrame, y: np.ndarray, pred: np.ndarray,
-              selection: pd.DataFrame | None) -> pd.DataFrame:
+              selection: pd.DataFrame | None,
+              trainable: np.ndarray) -> pd.DataFrame:
     """The coverage table joined with per-bin OOF — Task 11's support map.
 
     One row per bin of the union of (a) every bin the manifest realises, with
-    its deployment weight, and (b) every bin the pool labelled (Phase B can
-    label a bin the manifest does not contain). ``thin``/``suspect`` are the
-    v2 brief's flags; ``deployment_used`` is what Gate U's third criterion
-    ranges over.
+    its deployment weight ``occurrences``, and (b) every bin the pool labelled
+    (Phase B can label a bin the manifest does not contain).
+
+    **One population, everywhere.** ``n_labelled`` counts TRAINABLE rows and
+    the per-bin OOF is computed over exactly those rows — the same population
+    as the headline MAPE/bias and as Gate U. Task 11 reads ``n_labelled`` to
+    decide head-vs-Sigma-single, so it must not be inflated by rows the head
+    was never allowed to learn from; ``n_labelled_all`` keeps the
+    scored-but-untrainable rows visible instead of hiding them.
+
+    Flags: ``thin`` (< ``THIN_FLOOR`` trainable labels — reported, and Task
+    11's fallback trigger), ``suspect`` (|bin bias| > ``SUSPECT_BIAS``) and
+    ``gate_blocking`` (suspect AND not thin) — see ``gate_verdict``.
     """
     per_bin = []
+    nan = float("nan")
     for b, idx in pool.groupby("bin").indices.items():
         idx = np.asarray(idx)
-        m = metrics(y[idx], pred[idx])
-        per_bin.append({"bin": b, "n_labelled": len(idx),
-                        "oof_mape": m["mape"], "oof_bias": m["bias"],
-                        "oof_wbias": m["wbias"],
-                        "n_phase_b": int((pool["phase"].values[idx] == "B").sum()),
-                        "cost_median": float(np.median(y[idx]))})
+        tr = idx[trainable[idx]]
+        m = metrics(y[tr], pred[tr]) if len(tr) else {}
+        per_bin.append({"bin": b, "n_labelled": len(tr),
+                        "n_labelled_all": len(idx),
+                        "oof_mape": m.get("mape", nan),
+                        "oof_bias": m.get("bias", nan),
+                        "oof_wbias": m.get("wbias", nan),
+                        "n_phase_b": int((pool["phase"].values[tr] == "B").sum()),
+                        "cost_median": float(np.median(y[tr])) if len(tr) else nan})
     oof_tab = pd.DataFrame(per_bin)
 
     if selection is not None and len(selection):
-        labelled = set(pool["bundle_id"].astype(str))
-        cov_tab = cov.coverage_table(selection, labelled)[
+        # No ``labelled`` argument: its only effect is coverage_table's own
+        # n_labelled column, which this table does NOT take — the trainable
+        # count above is the one Task 11 must read.
+        cov_tab = cov.coverage_table(selection)[
             ["bin", "kind", "provider", "nm_bin", "dem_tercile", "area_tercile",
              "n_realised", "occurrences", "n_selected", "max_cap_prox"]]
         tab = cov_tab.merge(oof_tab, on="bin", how="outer")
@@ -452,7 +515,7 @@ def bin_table(pool: pd.DataFrame, y: np.ndarray, pred: np.ndarray,
             tab[c] = 0
 
     for c in ("n_realised", "occurrences", "n_selected", "n_labelled",
-              "n_phase_b"):
+              "n_labelled_all", "n_phase_b"):
         if c in tab.columns:
             tab[c] = tab[c].fillna(0).astype(int)
     # A bin only Phase B labelled has no manifest metadata — fill from the pool.
@@ -465,18 +528,30 @@ def bin_table(pool: pd.DataFrame, y: np.ndarray, pred: np.ndarray,
         tab["provider"] = tab["provider"].fillna(tab["_prov"])
         tab = tab.drop(columns=["_kind", "_prov"])
 
-    tab["deployment_used"] = tab["occurrences"] >= 1
     tab["thin"] = tab["n_labelled"] < THIN_FLOOR
     tab["suspect"] = (tab["n_labelled"] >= 1) & (
         tab["oof_bias"].abs() > SUSPECT_BIAS)
-    tab["uncovered"] = tab["deployment_used"] & (tab["n_labelled"] == 0)
-    return tab.sort_values(["deployment_used", "occurrences"],
-                           ascending=[False, False]).reset_index(drop=True)
+    tab["gate_blocking"] = tab["suspect"] & ~tab["thin"]
+    return tab.sort_values("occurrences", ascending=False).reset_index(drop=True)
 
 
 def gate_verdict(overall: dict, bins: pd.DataFrame) -> dict:
-    """Gate U: the three v2-brief criteria, each reported with its evidence."""
-    bad = bins[bins["deployment_used"] & bins["suspect"]]
+    """Gate U: three criteria, each reported with its evidence.
+
+    Criterion 3 ranges over bins with at least ``THIN_FLOOR`` TRAINABLE labels
+    (controller ruling, 2026-08-26). Two reasons, and they pull the same way:
+
+    * a thinner bin's bias is mostly sampling noise — one or two tours cannot
+      establish that the head misprices a composition;
+    * Task 11 already routes a thin bin's bundles to Sigma-single fallback, so
+      failing the gate on them would block a head that is never asked to price
+      them.
+
+    A supported bin that is still biased is the opposite case: the head has
+    the rows and misprices them anyway, and the suspect rate does NOT fall as
+    n grows, so these stay gating.
+    """
+    bad = bins[bins["gate_blocking"]]
     crit = [
         {"name": f"overall OOF MAPE <= {MAPE_GATE:.0f} %",
          "value": overall["mape"], "shown": f"{overall['mape']:.2f} %",
@@ -484,13 +559,14 @@ def gate_verdict(overall: dict, bins: pd.DataFrame) -> dict:
         {"name": f"|overall OOF signed bias| <= {BIAS_GATE:.0f} %",
          "value": overall["bias"], "shown": f"{overall['bias']:+.2f} %",
          "pass": bool(abs(overall["bias"]) <= BIAS_GATE)},
-        {"name": f"no deployment-used bin suspect (|bias| > {SUSPECT_BIAS:.0f} %)",
+        {"name": f"no bin with >= {THIN_FLOOR} trainable labels has "
+                 f"|bias| > {SUSPECT_BIAS:.0f} %",
          "value": float(len(bad)), "shown": f"{len(bad)} suspect",
          "pass": bool(len(bad) == 0)},
     ]
     return {"pass": all(c["pass"] for c in crit), "criteria": crit,
-            "n_suspect_deployment_bins": int(len(bad)),
-            "suspect_bins": bad["bin"].tolist()}
+            "n_blocking_bins": int(len(bad)),
+            "blocking_bins": bad["bin"].tolist()}
 
 
 def partial_decision(m_partial: dict | None) -> tuple[bool, str]:
@@ -510,8 +586,8 @@ def partial_decision(m_partial: dict | None) -> tuple[bool, str]:
 # The production identity check
 # ─────────────────────────────────────────────────────────────────────────────
 
-def check_predict_identity(head, X: np.ndarray, n: int = 5,
-                           seed: int = 0) -> float:
+def check_predict_identity(head, X: np.ndarray, n: int = 5, seed: int = 0,
+                           alpha: float | None = None, model=None) -> float:
     """``head.predict_single(x) == alpha*dag + model.predict(x)`` on n rows.
 
     The one assertion that ties this trainer to production arithmetic: if the
@@ -519,9 +595,26 @@ def check_predict_identity(head, X: np.ndarray, n: int = 5,
     the residual this script fit would be the wrong quantity and every bundle
     price would carry the difference. Exact equality, not a tolerance — both
     sides evaluate the same expression on the same floats.
+
+    ``alpha`` and ``model``, when given, check what the round trip through the
+    pickle was FOR: the loaded head must carry the backbone weight the residual
+    was fit against and the very trees that were fitted. The identity alone
+    would hold just as happily for a head pickled with the wrong alpha, since
+    both of its sides read ``head.alpha``.
     """
     rng = np.random.default_rng(seed)
     idx = rng.choice(len(X), size=int(min(n, len(X))), replace=False)
+    if alpha is not None:
+        assert head.alpha == alpha, (
+            f"loaded head alpha {head.alpha!r} != {alpha!r} — the pickle does "
+            "not carry the backbone weight the residual was fit against")
+    if model is not None:
+        want_m = np.asarray(model.predict(X[idx]), dtype=np.float64)
+        got_m = np.asarray(head.model.predict(X[idx]), dtype=np.float64)
+        assert np.array_equal(got_m, want_m), (
+            "loaded model predicts differently from the fitted one (max "
+            f"|delta| {np.max(np.abs(got_m - want_m)):.3e}) — the pickle round "
+            "trip lost or altered the trees")
     worst = 0.0
     for i in idx:
         x = X[i]
@@ -626,7 +719,16 @@ def write_report(out_dir: Path, ctx: dict) -> Path:
     md += ["",
            f"- pool file: `{ctx['pool_path']}` ({ctx['n_pool']} unique "
            f"`bundle_id`s; Phase A {ctx['n_phase_a']}, Phase B "
-           f"{ctx['n_phase_b']})",
+           f"{ctx['n_phase_b']}), deduped by `64a.read_solved` (a usable row "
+           "wins, else the most recent)",
+           f"- **incomplete labels excluded from training: "
+           f"{ctx['n_incomplete']}** — rows with `n_unassigned > 0` or "
+           "`jobs_removed > 0` price fewer parcels than their feature row "
+           "describes (64a `TRAINING_EXCLUDE_EXPR`); they are still scored and "
+           "still counted in `n_labelled_all`"
+           + (f" — {', '.join(ctx['incomplete_ids'][:20])}"
+              + (" ..." if len(ctx["incomplete_ids"]) > 20 else "")
+              if ctx["incomplete_ids"] else ""),
            f"- PARTIAL: {ctx['partial_note']}",
            f"- excluded (TIMEOUT / error): {ctx['n_excluded']}"
            + (f" — {', '.join(ctx['excluded_ids'][:20])}"
@@ -635,6 +737,8 @@ def write_report(out_dir: Path, ctx: dict) -> Path:
            f"- label sanity: manifest `parcels` vs instance demand — "
            f"{ctx['n_parcel_exact']}/{ctx['n_pool']} exact, max |delta| "
            f"{ctx['max_parcel_mismatch']:.1f} (no row excluded on this basis)",
+           f"- rows dropped by the metric guard (non-finite or non-positive "
+           f"cost): {ctx['overall']['n_dropped']}",
            ""]
 
     md += ["## Model\n",
@@ -669,47 +773,79 @@ def write_report(out_dir: Path, ctx: dict) -> Path:
     lc = ctx["learning"]
     if len(lc):
         md += ["## Learning curve\n",
-               "OOF re-run on a seeded row subsample (folds recomputed, so "
-               "groups stay intact).\n"]
-        md += _md_table(lc, ["fraction", "rows", "n", "mape", "bias"], _M_FMT)
+               "Nested seeded prefixes of the trainable rows (50 % subset of "
+               "75 % subset of 100 %); only the TRAINING set shrinks, every "
+               "row scores against the same fixed population, so the three "
+               "MAPEs are comparable and the 100 % row reproduces the "
+               "headline.\n"]
+        md += _md_table(lc, ["fraction", "train_rows", "n", "mape", "bias"],
+                        _M_FMT)
         md.append("")
 
     b = ctx["bins"]
-    dep = b[b["deployment_used"]]
+    lab = b[b["n_labelled"] >= 1]
+    sup = b[~b["thin"]]
     md += ["## Coverage x per-bin OOF\n",
-           f"- bins in the manifest's deployment distribution: "
-           f"**{len(dep)}**; of those with >= 1 label: "
-           f"{int((dep['n_labelled'] >= 1).sum())}",
-           f"- **thin** (< {THIN_FLOOR} labels): {int(b['thin'].sum())} bins "
-           f"({int(dep['thin'].sum())} of them deployment-used)",
-           f"- **uncovered** (deployment-used, 0 labels): "
-           f"{int(b['uncovered'].sum())}",
+           "`n_labelled` counts TRAINABLE labels and every per-bin OOF number "
+           "below is computed over exactly those rows — the same population as "
+           "the headline and as Gate U. `n_labelled_all` (in the CSV) keeps "
+           "the scored-but-untrainable rows visible.\n",
+           f"- bins in the manifest: **{int((b['n_realised'] >= 1).sum())}**"
+           + (f" (+{int((b['n_realised'] == 0).sum())} labelled only by Phase "
+              "B)" if int((b["n_realised"] == 0).sum()) else ""),
+           f"- with >= 1 trainable label: {len(lab)}; with 0: "
+           f"{int((b['n_labelled'] == 0).sum())}",
+           f"- **thin** (< {THIN_FLOOR} trainable labels): "
+           f"{int(b['thin'].sum())} bins — reported, NOT gating",
+           f"- **supported** (>= {THIN_FLOOR}): {len(sup)} bins",
            f"- **suspect** (|bias| > {SUSPECT_BIAS:.0f} %): "
-           f"{int(b['suspect'].sum())} bins "
-           f"({int((dep['suspect']).sum())} deployment-used -> Gate U "
-           f"criterion 3)",
-           f"- suspect AND already at >= {THIN_FLOOR} labels (the ones a full "
-           f"pool would not explain away): "
-           f"{int((b['suspect'] & ~b['thin']).sum())}",
+           f"{int(b['suspect'].sum())} bins, of which "
+           f"**{int(b['gate_blocking'].sum())} are supported** -> Gate U "
+           "criterion 3",
            "",
+           "### Why criterion 3 is scoped to supported bins\n",
+           f"Criterion 3 reads *no bin with >= {THIN_FLOOR} trainable labels "
+           f"has |bias| > {SUSPECT_BIAS:.0f} %* (controller ruling, "
+           "2026-08-26). `occurrences >= 1` was dropped as a filter: every "
+           "manifest bin satisfies it by construction, so it selected nothing. "
+           "A thin bin's bias is mostly sampling noise — one or two tours "
+           "cannot establish that a composition is mispriced — and Task 11 "
+           "already routes a thin bin's bundles to Sigma-single fallback, so "
+           "failing the gate there would block a head that is never asked to "
+           "price them. A SUPPORTED bin that is still biased is the opposite "
+           "case: the head has the rows and misprices them anyway, and the "
+           "suspect rate does not fall as n grows — genuine bias, so these "
+           "stay gating.\n",
            f"Full table: `{BINS_CSV}` (one row per bin, consumed by Task 11 — "
-           "a realised final-grid bundle in a thin/suspect bin is unsupported "
-           "and must fall back to Sigma-single pricing).\n"]
+           "a realised final-grid bundle in a thin or suspect bin is "
+           "unsupported and must fall back to Sigma-single pricing).\n"]
+
     def _head_note(n: int, limit: int = 25) -> str:
         return f" (top {limit} of {n})" if n > limit else f" (all {n})"
 
-    sus = dep[dep["suspect"]].sort_values("occurrences", ascending=False)
-    if len(sus):
-        md += [f"### Suspect deployment-used bins{_head_note(len(sus))}\n"]
-        md += _md_table(sus, ["bin", "n_labelled", "n_realised", "occurrences",
-                              "oof_mape", "oof_bias", "thin"], _M_FMT, limit=25)
+    block = b[b["gate_blocking"]].sort_values("occurrences", ascending=False)
+    if len(block):
+        md += [f"### Gate-blocking bins{_head_note(len(block))} — supported "
+               "and biased\n"]
+        md += _md_table(block, ["bin", "n_labelled", "n_realised",
+                                "occurrences", "oof_mape", "oof_bias"],
+                        _M_FMT, limit=25)
         md.append("")
-    thin = dep[dep["thin"]].sort_values("occurrences", ascending=False)
+    sus = b[b["suspect"] & b["thin"]].sort_values("occurrences",
+                                                  ascending=False)
+    if len(sus):
+        md += [f"### Suspect but thin{_head_note(len(sus))} — reported, not "
+               "gating\n"]
+        md += _md_table(sus, ["bin", "n_labelled", "n_realised", "occurrences",
+                              "oof_mape", "oof_bias"], _M_FMT, limit=25)
+        md.append("")
+    thin = b[b["thin"]].sort_values("occurrences", ascending=False)
     if len(thin):
-        md += [f"### Thin deployment-used bins{_head_note(len(thin))} — "
-               "Task 11's uncovered compositions\n"]
-        md += _md_table(thin, ["bin", "n_labelled", "n_realised", "occurrences",
-                               "oof_mape", "oof_bias"], _M_FMT, limit=25)
+        md += [f"### Thin bins{_head_note(len(thin))} — Task 11's uncovered "
+               "compositions\n"]
+        md += _md_table(thin, ["bin", "n_labelled", "n_labelled_all",
+                               "n_realised", "occurrences", "oof_mape",
+                               "oof_bias"], _M_FMT, limit=25)
         md.append("")
 
     md += ["## Outputs\n"]
@@ -747,12 +883,9 @@ def main() -> None:
     ap.add_argument("--n-jobs", type=int, default=2,
                     help="LightGBM threads — kept low: the VROOM solver is "
                          "usually still running")
-    ap.add_argument("--no-prefer-csv", action="store_true",
-                    help="read --solved as given even if the append-only CSV "
-                         "sibling is newer")
     ap.add_argument("--force-install", action="store_true",
-                    help="write bundle_head.pkl even on FAIL (never for a "
-                         "preliminary pool; the controller decides)")
+                    help="write bundle_head.pkl even on FAIL (only with "
+                         "--label final; prints a loud warning)")
     args = ap.parse_args()
 
     out_dir = args.out_dir
@@ -763,8 +896,7 @@ def main() -> None:
     final = args.label.lower() == "final"
 
     log(f"[load] {args.solved}")
-    pool_all, pool_path = read_pool(args.solved,
-                                    prefer_csv=not args.no_prefer_csv)
+    pool_all, pool_path = read_pool(args.solved)
     parts = split_by_status(pool_all)
     status_hist = pool_all["vroom_status"].value_counts().to_dict()
     log(f"  {len(pool_all)} unique bundle_ids: " + ", ".join(
@@ -792,35 +924,57 @@ def main() -> None:
     is_partial = (pool["vroom_status"] == STATUS_PARTIAL).to_numpy()
     n_groups = int(len(np.unique(groups)))
     k_folds = int(min(N_SPLITS, n_groups))
-    log(f"[cv] {len(pool)} rows, {n_groups} member-set groups, "
-        f"GroupKFold({k_folds}), alpha={ALPHA}")
 
-    # Pass 1 — everything labelled trains.
-    train_mask = np.ones(len(pool), dtype=bool)
+    bad_y = ~(np.isfinite(y) & (y > 0))
+    if bad_y.any():
+        log(f"  WARNING: {int(bad_y.sum())} rows have non-finite or "
+            "non-positive vroom_cost_eur - no relative error is defined for "
+            "them and every metric drops them")
+
+    # The mandated training filter (64a TRAINING_EXCLUDE_EXPR): a solve that
+    # left jobs unassigned or dropped jobs priced fewer parcels than its
+    # feature row describes.
+    complete = complete_label_mask(pool)
+    incomplete_ids = pool.loc[~complete, "bundle_id"].astype(str).tolist()
+    if incomplete_ids:
+        log(f"  incomplete labels excluded from TRAINING: "
+            f"{len(incomplete_ids)} (n_unassigned > 0 or jobs_removed > 0) - "
+            + ", ".join(incomplete_ids[:10]))
+    log(f"[cv] {len(pool)} rows ({int(complete.sum())} trainable), "
+        f"{n_groups} member-set groups, GroupKFold({k_folds}), alpha={ALPHA}")
+
+    # Pass 1 — every complete label trains; PARTIAL is judged on its own OOF.
+    train_mask = complete.copy()
     oof, _ = oof_predict(X, y_resid, dag, groups, train_mask, n_splits=N_SPLITS,
                          seed=args.seed, n_jobs=args.n_jobs)
-    m_partial = metrics(y[is_partial], oof[is_partial]) if is_partial.any() else None
+    m_partial = (metrics(y[is_partial & complete], oof[is_partial & complete])
+                 if (is_partial & complete).any() else None)
     partial_trains, partial_note = partial_decision(m_partial)
     log(f"  PARTIAL: {partial_note}")
     if not partial_trains:
-        train_mask = ~is_partial
+        train_mask = complete & ~is_partial
         oof, _ = oof_predict(X, y_resid, dag, groups, train_mask,
                              n_splits=N_SPLITS, seed=args.seed,
                              n_jobs=args.n_jobs)
 
-    # Gate U is decided on the population the head is trained to serve: with
-    # PARTIAL demoted to scored-only, its biased labels no longer set the bar.
-    gate_mask = train_mask
-    overall = metrics(y[gate_mask], oof[gate_mask])
+    # ONE population for the headline, the per-bin OOF and all three criteria:
+    # the rows the head was allowed to learn from. Rows outside it are still
+    # scored and still reported (by status, and as n_labelled_all).
+    overall = metrics(y[train_mask], oof[train_mask])
+    assert not overall["n_dropped"], (
+        f"{overall['n_dropped']} gate rows dropped by the metric guard — the "
+        "gate would be decided on a silently smaller population")
     log(f"[oof] MAPE {overall['mape']:.2f} %  bias {overall['bias']:+.2f} %  "
         f"(n={overall['n']})")
 
     bins = bin_table(pool, y, oof,
-                     pd.read_parquet(sel_p) if sel_p.exists() else None)
+                     pd.read_parquet(sel_p) if sel_p.exists() else None,
+                     train_mask)
     verdict = gate_verdict(overall, bins)
     log(f"[gate] Gate U {'PASS' if verdict['pass'] else 'FAIL'}"
-        + (f" - {verdict['n_suspect_deployment_bins']} suspect deployment bins"
-           if verdict["n_suspect_deployment_bins"] else ""))
+        + (f" - {verdict['n_blocking_bins']} supported bin(s) with "
+           f"|bias| > {SUSPECT_BIAS:.0f} %"
+           if verdict["n_blocking_bins"] else ""))
 
     # Final model on every trainable row, then the production identity check.
     model = fit_model(X[train_mask], y_resid[train_mask], seed=args.seed,
@@ -834,20 +988,57 @@ def main() -> None:
     with open(tmp_pkl, "wb") as fh:
         pickle.dump(payload, fh)
     delta = check_predict_identity(BundleHead.load(tmp_pkl), X, n=5,
-                                   seed=args.seed)
-    log(f"[assert] predict_single identity holds on 5 rows (max |delta| {delta:.3e})")
+                                   seed=args.seed, alpha=ALPHA, model=model)
+    log(f"[assert] predict_single identity holds on 5 rows (max |delta| "
+        f"{delta:.3e}); loaded alpha and trees match the fitted ones")
 
     bins.to_csv(out_dir / BINS_CSV, index=False)
     outputs = [f"`{BINS_CSV}` — {len(bins)} bins",
                f"`{REPORT_MD}`", f"`{GATE_JSON}`"]
+    # Suspect bins are DATA for 64a's Phase-B planner (tier 1: top a bin that
+    # is not thin but still mispriced up to SUSPECT_TARGET labels), so it never
+    # hardcodes an OOF number. Written next to the selection, with the edges
+    # the bin NAMES were derived from — a name means nothing against other
+    # terciles.
+    suspect_p = sel_p.parent / cov.SUSPECT_JSON
+    blocking = bins[bins["gate_blocking"]]
+    suspect_p.write_text(json.dumps({
+        "target_labels": cov.SUSPECT_TARGET, "source": REPORT_MD,
+        "label": args.label, "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "rule": (f"n_labelled >= {THIN_FLOOR} trainable labels and "
+                 f"|OOF bias| > {SUSPECT_BIAS} %"),
+        "edges": edges or {},
+        "bins": [{"bin": r["bin"], "bias_pct": round(float(r["oof_bias"]), 3),
+                  "mape_pct": round(float(r["oof_mape"]), 3),
+                  "n_labelled": int(r["n_labelled"]),
+                  "occurrences": int(r["occurrences"])}
+                 for _, r in blocking.iterrows()],
+    }, indent=2), encoding="utf-8")
+    outputs.append(f"`{cov.SUSPECT_JSON}` (next to the selection) — "
+                   f"{len(blocking)} bin(s) for 64a's Phase-B tier 1")
+    log(f"[write] {suspect_p} ({len(blocking)} suspect bin(s))")
+
     # A preliminary pool NEVER installs a head, PASS or not: the controller
     # decides on the finished pool. --force-install is a final-run override.
     install = final and (verdict["pass"] or args.force_install)
     if install:
         shutil.copy2(tmp_pkl, out_dir / HEAD_PKL)
+        forced = not verdict["pass"]
         outputs.append(f"`{HEAD_PKL}` — installed"
-                       + (" (--force-install over a FAIL)"
-                          if not verdict["pass"] else ""))
+                       + (" (--force-install over a FAIL)" if forced else ""))
+        if forced:
+            bar = "!" * 78
+            for line in (bar,
+                         "!! --force-install: bundle_head.pkl INSTALLED OVER A "
+                         "FAILED GATE U.",
+                         f"!! MAPE {overall['mape']:.2f} % / bias "
+                         f"{overall['bias']:+.2f} % / "
+                         f"{verdict['n_blocking_bins']} supported bin(s) above "
+                         f"{SUSPECT_BIAS:.0f} % bias.",
+                         "!! Every downstream KPI now carries this head's "
+                         "known error. Task 11 must say so.",
+                         bar):
+                log(line)
     else:
         why = (f'label is "{args.label}", not "final"' if not final
                else "Gate U FAILED")
@@ -863,10 +1054,11 @@ def main() -> None:
         "n_phase_b": int((pool["phase"] == "B").sum()),
         "status_hist": status_hist, "n_excluded": len(excluded),
         "excluded_ids": excluded["bundle_id"].astype(str).tolist(),
+        "n_incomplete": len(incomplete_ids), "incomplete_ids": incomplete_ids,
         "partial_trains": partial_trains, "partial_note": partial_note,
         "n_train": int(train_mask.sum()), "n_groups": n_groups,
         "k_folds": k_folds, "overall": overall, "verdict": verdict,
-        "backbone": metrics(y[gate_mask], (ALPHA * dag)[gate_mask]),
+        "backbone": metrics(y[train_mask], (ALPHA * dag)[train_mask]),
         "cost_median": float(np.median(y)),
         "n_parcel_exact": int((pool["parcels_mismatch"].abs() <= 0.5).sum())
         if "parcels_mismatch" in pool.columns else len(pool),
@@ -887,13 +1079,15 @@ def main() -> None:
         "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
         "pool": str(pool_path), "n_pool": len(pool),
         "n_train": int(train_mask.sum()), "n_scored": overall["n"],
+        "n_incomplete_excluded": len(incomplete_ids),
         "mape": overall["mape"], "bias": overall["bias"],
         "wbias": overall["wbias"], "alpha": ALPHA,
         "n_bins": int(len(bins)),
-        "n_suspect_deployment_bins": verdict["n_suspect_deployment_bins"],
-        "n_thin_deployment_bins": int(bins.loc[bins["deployment_used"],
-                                               "thin"].sum()),
-        "n_uncovered_bins": int(bins["uncovered"].sum()),
+        "n_blocking_bins": verdict["n_blocking_bins"],
+        "blocking_bins": verdict["blocking_bins"],
+        "n_suspect_bins": int(bins["suspect"].sum()),
+        "n_thin_bins": int(bins["thin"].sum()),
+        "n_bins_without_labels": int((bins["n_labelled"] == 0).sum()),
         "installed": bool(install), "criteria": verdict["criteria"],
     }, indent=2), encoding="utf-8")
 
@@ -904,7 +1098,7 @@ def main() -> None:
     print(f"Gate U ({args.label}): {'PASS' if verdict['pass'] else 'FAIL'}"
           f"  n={overall['n']}  MAPE={overall['mape']:.2f}%  "
           f"bias={overall['bias']:+.2f}%  "
-          f"suspect deployment bins={verdict['n_suspect_deployment_bins']}")
+          f"blocking bins={verdict['n_blocking_bins']}")
 
 
 if __name__ == "__main__":
