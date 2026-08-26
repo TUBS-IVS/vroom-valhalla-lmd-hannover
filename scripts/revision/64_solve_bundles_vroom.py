@@ -82,6 +82,8 @@ Output (results/revision_2026_08/bundles/):
 from __future__ import annotations
 
 import argparse
+import atexit
+import csv
 import gc
 import importlib.util
 import inspect
@@ -145,6 +147,7 @@ SOLVED_CSV = "bundles_solved.csv"
 SOLVED_PARQUET = "bundles_solved.parquet"
 THROUGHPUT_JSON = "bundles_throughput.json"
 REPORT_MD = "bundles_pool_report.md"
+LOCK_JSON = "64.lock"
 
 #: Per-instance wall cap (brief: 15 min -> TIMEOUT, continue).
 INSTANCE_CAP_S = 900.0
@@ -177,14 +180,97 @@ OUTPUT_COLS = MANIFEST_COLS + [
     "vroom_cost_eur", "vroom_n_routes", "vroom_distance_km",
     "vroom_duration_h", "vroom_n_parcels", "vroom_status",
     "instance_parcels", "instance_stops", "parcels_mismatch",
-    "n_jobs", "n_jobs_over_cap", "n_vehicles_planned", "n_unassigned",
-    "jobs_removed", "parcels_removed", "hub_name", "solve_time_s",
-    "solved_at",
+    "n_jobs", "n_jobs_over_cap", "n_vehicles_planned", "n_vehicles_final",
+    "n_unassigned", "jobs_removed", "parcels_removed", "hub_name",
+    "solve_time_s", "solved_at",
 ]
 
 
 def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate: one solver instance per output dir
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _pid_alive(pid: int, created: float | None) -> bool:
+    """Is *pid* still the process that wrote the lock?
+
+    ``os.kill(pid, 0)`` is NOT usable here: on Windows ``os.kill`` calls
+    ``TerminateProcess``, so the usual POSIX liveness probe would kill the
+    running solver. Use psutil's process table instead, and match the creation
+    time so a recycled PID cannot masquerade as the lock holder. If liveness
+    cannot be established at all, treat the lock as HELD — refusing to start is
+    recoverable (delete the file), corrupting a shared CSV is not.
+    """
+    try:
+        import psutil
+    except ImportError:                            # pragma: no cover
+        return True
+    try:
+        p = psutil.Process(int(pid))
+    except Exception:
+        return False
+    if created is None:
+        return True
+    try:
+        return abs(p.create_time() - float(created)) < 1.0
+    except Exception:                              # pragma: no cover
+        return True
+
+
+class InstanceLock:
+    """Exclusive lock over one output directory.
+
+    Two solver instances sharing ``bundles_solved.csv`` can interleave inside
+    a single append (the retry-backoff writer guards against file LOCKS, not
+    against concurrent writers), and would put 2x the measured request load on
+    VROOM at a concurrency never tested for stability. Fail fast instead.
+    """
+
+    def __init__(self, out_dir: Path):
+        self.path = out_dir / LOCK_JSON
+        self.held = False
+
+    def acquire(self) -> None:
+        if self.path.exists():
+            try:
+                info = json.loads(self.path.read_text(encoding="utf-8"))
+            except Exception:
+                info = {}
+            pid = int(info.get("pid", -1))
+            if pid > 0 and _pid_alive(pid, info.get("create_time")):
+                raise SystemExit(
+                    f"another solver instance is already running on "
+                    f"{self.path.parent} (PID {pid}, started "
+                    f"{info.get('started', '?')}).\n"
+                    "Two instances appending to bundles_solved.csv can "
+                    "interleave inside one row. Wait for it to finish, or — if "
+                    "you are certain it is gone — delete\n"
+                    f"  {self.path}")
+            log(f"  [lock] stale lock from dead PID {pid} — taking over")
+        rec = {"pid": os.getpid(), "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+               "argv": sys.argv[1:], "out_dir": str(self.path.parent)}
+        try:
+            import psutil
+            rec["create_time"] = psutil.Process(os.getpid()).create_time()
+        except Exception:                          # pragma: no cover
+            rec["create_time"] = None
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+        self.held = True
+        atexit.register(self.release)
+        log(f"  [lock] acquired {self.path.name} (PID {os.getpid()})")
+
+    def release(self) -> None:
+        if not self.held:
+            return
+        self.held = False
+        try:
+            self.path.unlink(missing_ok=True)
+        except Exception:                          # pragma: no cover
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -233,9 +319,12 @@ def load_chosen_map(copies_dir: Path) -> dict[tuple, int]:
     dst = copies_dir / LIVE_CHOSEN.name
     _retry_copy(LIVE_CHOSEN, dst)
     df = pd.read_csv(dst, dtype={"plz": str})
+    # zfill(5): PLZ codes are opaque 5-char identifiers, but a CSV round-trip
+    # can drop a leading zero. The manifest's `members` come from `plz_keys`
+    # and are zero-padded, so both sides of the lookup are normalised.
     return {
         (round(float(r.penalty), 4), round(float(r.share_willing), 4),
-         r.provider, str(r.plz)): int(r.schedule_idx_system_smoothed)
+         r.provider, str(r.plz).zfill(5)): int(r.schedule_idx_system_smoothed)
         for r in df.itertuples()
     }
 
@@ -317,7 +406,7 @@ def build_instance(row, provider_data: dict, chosen_map: dict,
             continue
 
         # delivery: this member's consolidated demand at ITS schedule
-        si = chosen_map.get((round(P, 4), round(th, 4), prov, plz))
+        si = chosen_map.get((round(P, 4), round(th, 4), prov, plz.zfill(5)))
         if si is None:
             return None, "NO_SCHEDULE"
         sched_days = sched_by_idx[si]
@@ -387,7 +476,8 @@ def solve_bundle(row, provider_data: dict, chosen_map: dict,
         "vroom_n_parcels": 0, "vroom_status": "ERROR",
         "instance_parcels": np.nan, "instance_stops": 0,
         "parcels_mismatch": np.nan, "n_jobs": 0, "n_jobs_over_cap": False,
-        "n_vehicles_planned": 0, "n_unassigned": 0, "jobs_removed": 0,
+        "n_vehicles_planned": 0, "n_vehicles_final": 0,
+        "n_unassigned": 0, "jobs_removed": 0,
         "parcels_removed": 0, "hub_name": "", "solve_time_s": 0.0,
         "solved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     })
@@ -454,7 +544,12 @@ def solve_bundle(row, provider_data: dict, chosen_map: dict,
         "n_unassigned": int(result["n_unassigned"] or 0),
         "jobs_removed": int(result["jobs_removed"] or 0),
         "parcels_removed": int(result["parcels_removed"] or 0),
-        "n_vehicles_planned": int(result["n_vehicles"] or n_veh),
+        # Kept separate: `n_vehicles_planned` is what build_vroom_vehicles
+        # sized the request with, `n_vehicles_final` is what the fleet ended up
+        # as after solve_single_plz's unassigned-retry added vehicles. Writing
+        # the final count over the planned one made the column mean two
+        # different things depending on whether a retry happened.
+        "n_vehicles_final": int(result["n_vehicles"] or n_veh),
         "solve_time_s": round(time.perf_counter() - t0, 3),
     })
     return base
@@ -480,6 +575,45 @@ class Writer:
         self.parquet = out_dir / SOLVED_PARQUET
         self.n_since_parquet = 0
         self.n_written = 0
+        self._migrate_schema()
+
+    def _migrate_schema(self) -> None:
+        """Rewrite an existing CSV whose header predates ``OUTPUT_COLS``.
+
+        The header is written once, so appending rows with a different column
+        set would shift every field. When the schema changes, migrate the file
+        instead — and map the OLD meaning onto the new columns rather than
+        leaving a column that means two different things across rows.
+        """
+        if not self.csv.exists():
+            return
+        with open(self.csv, "r", encoding="utf-8", newline="") as fh:
+            head = fh.readline()
+        if not head.strip():
+            return
+        cols = next(csv.reader([head.rstrip("\r\n")]))
+        if cols == OUTPUT_COLS:
+            return
+        log(f"  [migrate] {self.csv.name}: header has {len(cols)} columns, "
+            f"OUTPUT_COLS has {len(OUTPUT_COLS)} — rewriting")
+        df = pd.read_csv(self.csv,
+                         dtype={"bundle_id": str, "demand_level_key": str})
+        if "n_vehicles_final" not in cols and "n_vehicles_planned" in cols:
+            # Rows written before the split stored the FINAL fleet size in
+            # `n_vehicles_planned` (it was overwritten after the solve). Move
+            # it to the column that now carries that meaning; the planned
+            # count was never recorded for those rows.
+            df["n_vehicles_final"] = df["n_vehicles_planned"]
+            df["n_vehicles_planned"] = np.nan
+            log("  [migrate] n_vehicles_planned -> n_vehicles_final for "
+                f"{len(df)} pre-existing row(s); planned count unknown (NaN)")
+        df = df.reindex(columns=OUTPUT_COLS)
+        bak = self.csv.with_suffix(".csv.premigration")
+        shutil.copy2(self.csv, bak)
+        tmp = self.csv.with_suffix(".csv.tmp")
+        df.to_csv(tmp, index=False)
+        os.replace(tmp, self.csv)
+        log(f"  [migrate] done; previous file kept as {bak.name}")
 
     def append(self, rows: list[dict]) -> None:
         if not rows:
@@ -523,28 +657,11 @@ class Writer:
             log(f"  WARNING: parquet rebuild failed ({exc})")
 
 
-def read_solved(out_dir: Path, dedupe: bool = True) -> pd.DataFrame:
-    """The solved table, list columns decoded, one row per ``bundle_id``.
-
-    A TIMEOUT row is superseded by the straggler's real result when it lands,
-    so dedupe keeps the last NON-timeout row per bundle when one exists.
-    """
-    p = out_dir / SOLVED_CSV
-    if not p.exists():
-        return pd.DataFrame()
-    df = pd.read_csv(p, dtype={"bundle_id": str, "demand_level_key": str})
-    if df.empty:
-        return df
-    for c in JSON_COLS:
-        if c in df.columns:
-            df[c] = df[c].apply(
-                lambda v: json.loads(v) if isinstance(v, str) else v)
-    if dedupe:
-        df["_is_to"] = (df["vroom_status"] == "TIMEOUT").astype(int)
-        df = (df.sort_values(["bundle_id", "_is_to"])
-                .drop_duplicates("bundle_id", keep="first")
-                .drop(columns="_is_to").reset_index(drop=True))
-    return df
+#: ONE reader for the solved table, owned by 64a. Keeping a second copy here
+#: is how the two drifted (64a's swallowed read errors and counted a TIMEOUT
+#: stub and its late completion as two Phase-A rows, inflating the Phase-B
+#: budget).
+read_solved = cov.read_solved
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -822,13 +939,36 @@ def write_report(out_dir: Path, throughput: dict | None) -> None:
     for s, n in solved["vroom_status"].value_counts().items():
         md.append(f"| {s} | {n} |")
     md.append("")
-    n_partial = int((solved["vroom_status"] == "PARTIAL").sum())
-    md.append(f"`PARTIAL` rows are KEPT and flagged ({n_partial}) — never "
-              "dropped (Kompendium 38.2b).\n")
 
-    ok = solved[solved["vroom_status"].isin(cov.LABEL_OK)]
+    usable = solved[cov.usable_mask(solved)]
+    n_partial = int((solved["vroom_status"] == "PARTIAL").sum())
+    n_ua = int((cov._num(solved, "n_unassigned") > 0).sum())
+    n_jr = int((cov._num(solved, "jobs_removed") > 0).sum())
+    md.append("## Which rows may be trained on\n")
+    md.append(f"- solved rows: **{len(solved)}**")
+    md.append(f"- **usable labels: {len(usable)}**")
+    md.append(f"- excluded: {n_partial} `PARTIAL`, {n_ua} with unassigned "
+              f"jobs, {n_jr} with jobs dropped by an unfound-location retry "
+              f"(overlapping sets)\n")
+    md.append("**Task 10 MUST apply this filter before training:**\n")
+    md.append("```python")
+    md.append("pool = solved[(solved.vroom_status.isin(('OK', 'CACHED')))")
+    md.append("              & (solved.n_unassigned <= 0)")
+    md.append("              & (solved.jobs_removed <= 0)]")
+    md.append("```\n")
+    md.append("Rationale: a `PARTIAL` solve leaves jobs unassigned and an "
+              "unfound-location retry drops jobs outright, so `vroom_cost_eur` "
+              "prices FEWER parcels than `vroom_n_parcels` records — the row is "
+              "a *mislabelled* sample, not a hard one. The sweep pool the alpha "
+              "backbone was calibrated on contains no such rows at all "
+              "(`sweep/runner.py:248-251` returns `None` on them), so training "
+              "on them would feed the head labels the backbone never saw. The "
+              "rows are KEPT and flagged, never dropped (Kompendium 38.2b) — "
+              "they just do not count as coverage.\n")
+
+    ok = usable
     if len(ok):
-        md.append("## Solve time (labelled rows)\n")
+        md.append("## Solve time (usable labels)\n")
         q = ok["solve_time_s"].quantile([0.5, 0.9, 0.99]).round(1)
         md.append(f"- median **{q.loc[0.5]}s**, p90 {q.loc[0.9]}s, "
                   f"p99 {q.loc[0.99]}s, max {ok['solve_time_s'].max():.1f}s")
@@ -877,6 +1017,9 @@ def write_report(out_dir: Path, throughput: dict | None) -> None:
                   f"**{int((tab['n_labelled'] >= cov.BIN_FLOOR).sum())}**")
         md.append(f"- bins with >= {cov.SPARSE_FLOOR} labelled rows: "
                   f"**{int((tab['n_labelled'] >= cov.SPARSE_FLOOR).sum())}**")
+        md.append(f"- bins on a partition cap boundary: "
+                  f"**{int(tab['is_cap_edge'].sum())}** (Phase B augments "
+                  f"these by +{cov.EDGE_EXTRA} regardless of label count)")
         thin = tab[tab["n_labelled"] < cov.BIN_FLOOR]
         md.append(f"- **still-sparse bins (< {cov.BIN_FLOOR} labelled): "
                   f"{len(thin)}** — these are the head's uncovered "
@@ -898,7 +1041,7 @@ def write_report(out_dir: Path, throughput: dict | None) -> None:
         md.append(f"{len(unsolved)} realised-but-unsolved bundles "
                   f"(of {len(sel)}). Per the v3 amendment these are the head's "
                   "deployment test set; Phase C is simply a larger `--n-a`.\n")
-        md.append("### Labelled rows by (kind, n_members)\n")
+        md.append("### Usable labels by (kind, n_members)\n")
         if len(ok):
             lab = sel[sel["bundle_id"].isin(labelled)]
             md.append("| kind | n_members | labelled | realised |")
@@ -929,10 +1072,19 @@ def main() -> None:
                     help="reuse bundles_throughput.json (requires --n-a or a "
                          "previous measurement)")
     ap.add_argument("--report-only", action="store_true")
-    ap.add_argument("--retry-timeouts", action="store_true",
-                    help="re-queue bundles whose last row is TIMEOUT")
+    ap.add_argument("--no-retry-failed", dest="retry_failed",
+                    action="store_false",
+                    help="treat every already-solved bundle as done, even the "
+                         "ones that produced no usable label (default: retry "
+                         "them — a failure must not permanently occupy a "
+                         "coverage slot)")
+    ap.add_argument("--no-enforce-floor", dest="enforce_floor",
+                    action="store_false",
+                    help="do not auto-raise N_A to the budget that gives every "
+                         "bin its coverage floor")
     ap.add_argument("--limit", type=int, default=None,
-                    help="stop after this many new solves (smoke tests)")
+                    help="stop after this many new solves; 0 = selection and "
+                         "coverage only, solve nothing (smoke tests)")
     ap.add_argument("--instance-cap-s", type=float, default=INSTANCE_CAP_S,
                     help=f"per-instance wall cap before TIMEOUT "
                          f"(default {INSTANCE_CAP_S:.0f}s = 15 min)")
@@ -958,6 +1110,10 @@ def main() -> None:
     log("=" * 72)
     log("64: VROOM bundle pool — Phase A")
     log("=" * 72)
+
+    # ── Gate 0: exactly one solver per output dir ────────────────────
+    lock = InstanceLock(args.out_dir)
+    lock.acquire()
 
     # ── Gate 1: docker health ────────────────────────────────────────
     if not _health_check():
@@ -989,10 +1145,25 @@ def main() -> None:
     writer = Writer(args.out_dir)
     solved = read_solved(args.out_dir)
     done_ids = set(solved["bundle_id"]) if len(solved) else set()
-    if args.retry_timeouts and len(solved):
-        done_ids -= set(solved.loc[solved["vroom_status"] == "TIMEOUT",
-                                   "bundle_id"])
-    log(f"[resume] {len(done_ids)} bundle_id(s) already solved")
+    n_usable = len(cov.usable_label_ids(solved)) if len(solved) else 0
+    if args.retry_failed and len(solved):
+        # A bundle is "done" only once it has produced a USABLE label, or once
+        # it is provably unroutable. Everything else — PARTIAL, TIMEOUT,
+        # CONN_ERROR, HTTP_*, ERROR — is transient and gets another go: leaving
+        # it permanently done is what silently erodes the coverage floor, since
+        # such a row occupies a selection slot without covering its bin.
+        retry = cov.retryable_ids(solved)
+        done_ids -= retry
+        if retry:
+            log(f"[resume] re-queueing {len(retry)} bundle(s) that produced no "
+                "usable label: "
+                + ", ".join(
+                    f"{s}x{n}" for s, n in
+                    solved.loc[solved["bundle_id"].isin(retry), "vroom_status"]
+                    .value_counts().items()))
+    n_dead = len(cov.dead_ids(solved)) if len(solved) else 0
+    log(f"[resume] {len(solved)} solved row(s): {n_usable} usable label(s), "
+        f"{n_dead} unroutable; {len(done_ids)} treated as done")
 
     # ── Throughput probe -> N_A ──────────────────────────────────────
     if args.skip_throughput or args.n_a is not None:
@@ -1007,7 +1178,8 @@ def main() -> None:
         # provisional top-400 are legitimate members of any final selection
         # (and are carried explicitly via `extra` if N_A lands below them).
         prov_sel = cov.build_selection(args.manifest, args.out_dir, N_A_CAP,
-                                       write=False)
+                                       write=False,
+                                       enforce_floor=args.enforce_floor)
         cand = prov_sel[prov_sel["selected"]
                         & ~prov_sel["bundle_id"].isin(done_ids)]
         need = PROBE_SERIAL + 2 * PROBE_BATCH
@@ -1033,13 +1205,16 @@ def main() -> None:
 
     # ── Selection at the measured budget ─────────────────────────────
     sel = cov.build_selection(args.manifest, args.out_dir, n_a,
-                              extra=probe_ids)
-    cov.print_selection_summary(sel)
+                              extra=probe_ids,
+                              enforce_floor=args.enforce_floor)
+    cov.print_selection_summary(sel, cov.usable_label_ids(solved))
 
     queue = sel[sel["selected"] & ~sel["bundle_id"].isin(done_ids)]
     queue = queue.sort_values("select_rank")
-    if args.limit:
-        queue = queue.head(args.limit)
+    if args.limit is not None:
+        # `is not None`, not truthiness: `--limit 0` must mean "solve nothing"
+        # (a selection/coverage dry run), not "no limit".
+        queue = queue.head(max(0, args.limit))
     run_phase_a(list(queue.itertuples()), ctx, writer, int(parallelism),
                 cap_s=float(args.instance_cap_s))
 

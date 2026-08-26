@@ -103,9 +103,44 @@ PHASE_B_MAX_PER_PARENT = 3
 SCALE_FACTORS = (0.6, 0.8, 1.2)
 #: Holding levels for the delivery kind, mirroring the pool's ``agg_k``.
 HOLD_LEVELS = (1, 2, 3)
+#: Extra augmented rows a CAP-BOUNDARY bin gets on top of its floor top-up.
+#: Separate from the floor on purpose: a bin sitting on the partition rule's
+#: area/stops cap needs support near the edge even when it already has six
+#: labels, because that is where the head would otherwise extrapolate. Folding
+#: this into ``need = max(0, SPARSE_FLOOR - n_labelled)`` made the cap-edge
+#: half of the sparse definition dead code (it filtered itself away).
+EDGE_EXTRA = 2
+#: Label count a bin flagged SUSPECT by Task 10's OOF diagnostics is topped up
+#: to. Higher than ``SPARSE_FLOOR``: these bins are not thin, they are *wrong*
+#: — the head has enough rows there and still misprices them, so the fix is
+#: more support, not merely presence.
+SUSPECT_TARGET = 12
+#: Where Task 10 writes the bins its per-bin OOF flagged. Absent = no suspects.
+SUSPECT_JSON = "bundles_suspect_bins.json"
 
-#: Statuses that count as a usable training label.
+#: Statuses where VROOM returned *a* solution.
 LABEL_OK = ("OK", "CACHED", "PARTIAL")
+#: Statuses whose solution prices EVERY parcel of the instance.
+USABLE_STATUSES = ("OK", "CACHED")
+#: Statuses that are a permanent property of the instance: no retry can change
+#: them and no label can ever come from that bundle. Such a row must NOT hold a
+#: coverage slot — the bin has to pick a different bundle instead.
+DEAD_STATUSES = (
+    "EMPTY", "NO_JOBS", "NO_HUB", "NO_SCHEDULE", "NOT_A_DELIVERY_DAY",
+)
+
+#: The filter Task 10 MUST apply before training. A ``PARTIAL`` solve leaves
+#: jobs unassigned and an unfound-location retry drops jobs outright: in both
+#: cases ``vroom_cost_eur`` prices FEWER parcels than ``vroom_n_parcels``
+#: records, so the row is a mislabelled sample, not a hard one. The sweep pool
+#: the alpha backbone was calibrated on contains no such rows at all
+#: (``sweep/runner.py:248-251`` returns ``None`` on them), so counting them
+#: would both erode the coverage floor and feed the head labels the backbone
+#: never saw.
+TRAINING_EXCLUDE_EXPR = (
+    "vroom_status not in ('OK', 'CACHED') or n_unassigned > 0 "
+    "or jobs_removed > 0"
+)
 
 JSON_COLS = ("members", "member_idx", "features", "first_seen")
 
@@ -258,19 +293,34 @@ def assign_bins(df: pd.DataFrame,
 # Ranking + selection
 # ─────────────────────────────────────────────────────────────────────────────
 
-def rank_rows(df: pd.DataFrame, already: set[str]) -> pd.DataFrame:
+def rank_rows(df: pd.DataFrame, already: set[str],
+              dead: set[str] | None = None) -> pd.DataFrame:
     """One deterministic ordering over every manifest row.
 
-    Coverage layers first (round-robin over bins, heaviest bin first), then an
-    ``occurrences``-descending fill. ``select_rank`` is a total order, so
-    selection(N) is always a prefix of selection(N + k).
-    """
-    df = df.copy()
-    df["is_carried"] = df["bundle_id"].isin(already)
+    Carried rows, then coverage layers (round-robin over bins, heaviest bin
+    first), then an ``occurrences``-descending fill, then the unroutable ones.
+    ``select_rank`` is a total order, so selection(N) is always a prefix of
+    selection(N + k).
 
-    # Within-bin order. Carried rows first: they are already labelled, so they
-    # satisfy the bin's floor for free and must not be re-picked.
-    order = df.sort_values(
+    Adds ``n_a_required`` as an attribute of the returned frame's
+    ``.attrs``: ``n_carried + #(rank_reason == "coverage")``, i.e. the exact
+    budget at which EVERY non-empty bin reaches ``min(BIN_FLOOR, n)`` selected
+    rows. Because carried rows occupy ranks ``[0, n_carried)`` and the coverage
+    picks occupy the block immediately after, selecting that many is precisely
+    "everything already paid for, plus every top-up the floor still needs" —
+    which is why the floor becomes self-enforcing rather than something the
+    caller has to converge on by re-running with bigger numbers.
+    """
+    dead = set(dead or ())
+    df = df.copy()
+    df["is_carried"] = df["bundle_id"].isin(already) & ~df["bundle_id"].isin(dead)
+    df["is_dead"] = df["bundle_id"].isin(dead)
+
+    # Within-bin order. Carried rows first: they are already labelled (or
+    # queued), so they satisfy the bin's floor for free and must not be
+    # re-picked. Unroutable rows are excluded outright — a bin must never
+    # spend a floor slot on a bundle that cannot produce a label.
+    order = df[~df["is_dead"]].sort_values(
         ["bin", "is_carried", "occurrences", "cap_prox", "bundle_id"],
         ascending=[True, False, False, False, True],
     )
@@ -306,7 +356,9 @@ def rank_rows(df: pd.DataFrame, already: set[str]) -> pd.DataFrame:
                 continue
             rank_ids.append(bid)
             reason[bid] = "coverage"
-    rest = df[~df["bundle_id"].isin(set(rank_ids) | carried)].sort_values(
+    n_coverage = len(rank_ids)
+    rest = df[~df["bundle_id"].isin(set(rank_ids) | carried)
+              & ~df["is_dead"]].sort_values(
         ["occurrences", "cap_prox", "bundle_id"],
         ascending=[False, False, True],
     )
@@ -318,24 +370,38 @@ def rank_rows(df: pd.DataFrame, already: set[str]) -> pd.DataFrame:
     carried_ids = df[df["is_carried"]].sort_values(
         ["occurrences", "bundle_id"], ascending=[False, True]
     )["bundle_id"].tolist()
-    full = carried_ids + rank_ids
+    dead_tail = df[df["is_dead"]].sort_values("bundle_id")["bundle_id"].tolist()
+    full = carried_ids + rank_ids + dead_tail
     rank_of = {bid: i for i, bid in enumerate(full)}
     df["select_rank"] = df["bundle_id"].map(rank_of).astype(int)
     df["rank_reason"] = df["bundle_id"].map(
-        lambda b: "carried" if b in carried else reason.get(b, "weight"))
-    return df.sort_values("select_rank").reset_index(drop=True)
+        lambda b: "unroutable" if b in dead
+        else "carried" if b in carried else reason.get(b, "weight"))
+    out = df.sort_values("select_rank").reset_index(drop=True)
+    out.attrs["n_carried"] = len(carried_ids)
+    out.attrs["n_coverage"] = n_coverage
+    out.attrs["n_a_required"] = len(carried_ids) + n_coverage
+    return out
 
 
 def select(df: pd.DataFrame, n_a: int, extra: set[str] | None = None
            ) -> pd.DataFrame:
-    """Mark the top *n_a* ranked rows (plus *extra*) as selected."""
+    """Mark the top *n_a* ranked rows (plus *extra*) as selected.
+
+    Unroutable rows are never selected regardless of rank or *extra*.
+    """
     extra = set(extra or ())
     df = df.copy()
-    keep = set(df.sort_values("select_rank")["bundle_id"].head(int(n_a)))
+    ranked = df.sort_values("select_rank")
+    keep = set(ranked["bundle_id"].head(int(n_a)))
     keep |= extra & set(df["bundle_id"])
+    if "is_dead" in df.columns:
+        keep -= set(df.loc[df["is_dead"], "bundle_id"])
     df["selected"] = df["bundle_id"].isin(keep)
     df["selected_reason"] = np.where(
-        ~df["selected"], "not_selected",
+        ~df["selected"],
+        np.where(df["rank_reason"] == "unroutable", "unroutable",
+                 "not_selected"),
         np.where(df["rank_reason"] == "carried", "carried",
                  np.where(df["bundle_id"].isin(extra)
                           & (df["select_rank"] >= int(n_a)), "probe",
@@ -368,41 +434,112 @@ def load_edges(out_dir: Path) -> dict | None:
     return json.loads(p.read_text(encoding="utf-8")).get("edges")
 
 
-def load_solved(out_dir: Path) -> pd.DataFrame:
-    """The solved table, ONE row per ``bundle_id``.
+def _num(df: pd.DataFrame, col: str) -> pd.Series:
+    if col not in df.columns:
+        return pd.Series(0.0, index=df.index)
+    return pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
-    The CSV is append-only and a bundle can appear twice: a ``TIMEOUT`` stub
-    written when the 15-minute cap fired, then the straggler's real result as
-    a late completion. Keep the non-TIMEOUT row when there is one — counting
-    both would inflate the Phase-A row count the Phase-B budget scales off.
+
+def usable_mask(df: pd.DataFrame) -> pd.Series:
+    """Rows whose label prices the WHOLE instance — see TRAINING_EXCLUDE_EXPR."""
+    if df.empty:
+        return pd.Series(dtype=bool)
+    return (df["vroom_status"].isin(USABLE_STATUSES)
+            & (_num(df, "n_unassigned") <= 0)
+            & (_num(df, "jobs_removed") <= 0))
+
+
+def usable_label_ids(df: pd.DataFrame) -> set[str]:
+    if df.empty or "bundle_id" not in df.columns:
+        return set()
+    return set(df.loc[usable_mask(df), "bundle_id"].astype(str))
+
+
+def dead_ids(df: pd.DataFrame) -> set[str]:
+    """Bundles that can never produce a label (see ``DEAD_STATUSES``)."""
+    if df.empty or "bundle_id" not in df.columns:
+        return set()
+    return set(df.loc[df["vroom_status"].isin(DEAD_STATUSES),
+                      "bundle_id"].astype(str))
+
+
+def retryable_ids(df: pd.DataFrame) -> set[str]:
+    """Solved-but-not-usable bundles a retry could still turn into a label.
+
+    Everything that is neither usable nor dead: ``PARTIAL`` (a different
+    vehicle-start draw can assign the leftovers), ``TIMEOUT``, ``CONN_ERROR``,
+    ``HTTP_*``, ``ERROR``, ``EXC_*``. Leaving these permanently "done" is what
+    silently erodes the coverage floor.
+    """
+    if df.empty or "bundle_id" not in df.columns:
+        return set()
+    ids = set(df["bundle_id"].astype(str))
+    return ids - usable_label_ids(df) - dead_ids(df)
+
+
+def read_solved(out_dir: Path, dedupe: bool = True) -> pd.DataFrame:
+    """The solved table — ONE row per ``bundle_id``, list columns decoded.
+
+    The single reader for ``bundles_solved.csv``;
+    ``64_solve_bundles_vroom.py`` imports this instead of keeping its own copy.
+
+    The CSV is append-only and a bundle can appear more than once: a
+    ``TIMEOUT`` stub written when the 15-minute cap fired and then the
+    straggler's real result, or a failed attempt and then a successful retry.
+    Dedupe keeps a USABLE row when one exists (the most recent), otherwise the
+    most recent row of any kind.
+
+    Read errors are RAISED, never swallowed: an empty table here would silently
+    drop every carried id, re-queue work that is already labelled, and let the
+    Phase-B budget size itself off nothing.
     """
     p = out_dir / SOLVED_CSV
     if not p.exists():
         return pd.DataFrame()
-    try:
-        df = pd.read_csv(p, dtype={"bundle_id": str})
-    except Exception as exc:                      # partial line mid-append
-        log(f"  WARNING: could not read {p.name} ({exc}); treating as empty")
-        return pd.DataFrame()
+    df = pd.read_csv(p, dtype={"bundle_id": str, "demand_level_key": str})
     if df.empty or "vroom_status" not in df.columns:
         return df
-    df["_is_to"] = (df["vroom_status"] == "TIMEOUT").astype(int)
-    return (df.sort_values(["bundle_id", "_is_to"])
-              .drop_duplicates("bundle_id", keep="first")
-              .drop(columns="_is_to").reset_index(drop=True))
+    for c in JSON_COLS:
+        if c in df.columns:
+            df[c] = df[c].apply(
+                lambda v: json.loads(v) if isinstance(v, str) else v)
+    if dedupe:
+        df["_bad"] = (~usable_mask(df)).astype(int)
+        df["_ord"] = np.arange(len(df))
+        df = (df.sort_values(["bundle_id", "_bad", "_ord"],
+                             ascending=[True, True, False])
+                .drop_duplicates("bundle_id", keep="first")
+                .drop(columns=["_bad", "_ord"])
+                .sort_values("bundle_id").reset_index(drop=True))
+    return df
+
+
+#: Backwards-compatible alias — this module used to expose ``load_solved``.
+load_solved = read_solved
 
 
 def load_already(out_dir: Path) -> set[str]:
-    """Bundle ids that must stay selected: solved, or selected by a past run."""
+    """Bundle ids that count toward a bin's floor and must stay selected.
+
+    Solved or selected by a past run, MINUS the dead ones: a bundle whose
+    instance can never be routed (``DEAD_STATUSES``) must not occupy a
+    coverage slot, or the bin ends up with fewer than ``BIN_FLOOR`` usable
+    labels while the selection reports itself as complete.
+    """
     ids: set[str] = set()
-    solved = load_solved(out_dir)
+    solved = read_solved(out_dir)
+    dead: set[str] = set()
     if len(solved) and "bundle_id" in solved.columns:
         ids |= set(solved["bundle_id"].astype(str))
+        dead = dead_ids(solved)
     sel = out_dir / SELECTION_PARQUET
     if sel.exists():
         prev = pd.read_parquet(sel, columns=["bundle_id", "selected"])
         ids |= set(prev.loc[prev["selected"], "bundle_id"].astype(str))
-    return ids
+    if dead:
+        log(f"  [coverage] {len(dead)} unroutable bundle(s) released from "
+            "their coverage slot (replacements will be picked)")
+    return ids - dead
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -411,7 +548,11 @@ def load_already(out_dir: Path) -> set[str]:
 
 def coverage_table(df: pd.DataFrame, labelled: set[str] | None = None
                    ) -> pd.DataFrame:
-    """Per-bin realised / selected / labelled counts."""
+    """Per-bin realised / selected / labelled counts.
+
+    ``labelled`` must be the set of **usable** labels (``usable_label_ids``),
+    not merely "solved": a ``PARTIAL`` row does not cover its bin.
+    """
     labelled = set(labelled or ())
     g = df.assign(_lab=df["bundle_id"].isin(labelled)).groupby("bin")
     tab = g.agg(
@@ -427,6 +568,10 @@ def coverage_table(df: pd.DataFrame, labelled: set[str] | None = None
     tab["floor_target"] = np.minimum(BIN_FLOOR, tab["n_realised"])
     tab["short_of_floor"] = np.maximum(
         0, tab["floor_target"] - tab["n_selected"])
+    # A bin is on the partition rule's boundary when its area tercile is the
+    # top one or any of its tours sits within 10% of a binding cap.
+    tab["is_cap_edge"] = (
+        (tab["area_tercile"] == 2) | (tab["max_cap_prox"] >= 0.9))
     return tab.sort_values("occurrences", ascending=False)
 
 
@@ -438,36 +583,107 @@ def _target_dem_tercile(parcels: float, edges: dict) -> int:
     return int(np.digitize([float(parcels)], edges["parcels"])[0])
 
 
-def build_phase_b_plan(df: pd.DataFrame, edges: dict, labelled: set[str],
-                       n_phase_a: int) -> tuple[pd.DataFrame, list[str]]:
-    """Plan bounded augmentation for bins still thin after Phase A.
+def load_suspect_bins(out_dir: Path, edges: dict | None = None,
+                      path: Path | None = None) -> tuple[set[str], dict]:
+    """Bins Task 10's per-bin OOF flagged as mispriced.
 
-    A bin is **sparse** when it carries fewer than ``SPARSE_FLOOR`` labelled
-    rows and the deployment distribution uses it (``occurrences >= 1``, true
-    for every manifest bin by construction), or when it sits on the cap
-    boundary (top area tercile / cap-proximity >= 0.9) where the head would
-    otherwise have to extrapolate.
+    Data, not code: Task 10 writes ``bundles_suspect_bins.json`` next to the
+    selection, so no OOF number is ever hardcoded here. Shape::
+
+        {"target_labels": 12,
+         "edges": {"parcels": [...], "area_km2": [...]},
+         "bins": [{"bin": "delivery|2|D1|A1|UPS", "bias_pct": 7.7,
+                   "occurrences": 560}, ...]}
+
+    Bin NAMES encode tercile indices, so they are only meaningful against the
+    edges they were derived from. When the file records its edges and they
+    differ from the current ones, that is loud — the names would silently point
+    at different bins.
+    """
+    p = path or (out_dir / SUSPECT_JSON)
+    if not p.exists():
+        return set(), {}
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    bins = {str(b["bin"]) if isinstance(b, dict) else str(b)
+            for b in doc.get("bins", [])}
+    if edges and doc.get("edges"):
+        for k in ("parcels", "area_km2"):
+            a = [round(float(x), 6) for x in doc["edges"].get(k, [])]
+            b = [round(float(x), 6) for x in edges.get(k, [])]
+            if a and b and a != b:
+                log(f"  WARNING: {p.name} was derived from {k} edges {a}, "
+                    f"current edges are {b} — suspect bin NAMES may point at "
+                    "different bins; re-derive them from this manifest")
+    meta = {k: v for k, v in doc.items() if k != "bins"}
+    meta["n_bins"] = len(bins)
+    return bins, meta
+
+
+def build_phase_b_plan(df: pd.DataFrame, edges: dict, labelled: set[str],
+                       n_phase_a: int, suspect: set[str] | None = None,
+                       ) -> tuple[pd.DataFrame, list[str]]:
+    """Plan bounded augmentation, in three explicit priority tiers.
+
+    A bin needs augmentation for three INDEPENDENT reasons, which add up rather
+    than one masking the others:
+
+      * **Tier 1 — suspect** (``need_suspect``): Task 10's per-bin OOF flagged
+        the head as mispricing this bin. Topped up to ``SUSPECT_TARGET``
+        labels. These bins are not thin, they are *wrong*: the head already has
+        support there and still misses, so they come first.
+      * **Tier 2 — cap edge** (``need_edge = EDGE_EXTRA``): the bin sits on the
+        partition rule's cap boundary (top area tercile, or cap-proximity
+        >= 0.9), **regardless of how many labels it has**. This is the half
+        that used to be dead code: ``sparse`` was filtered by ``need > 0`` with
+        ``need`` computed from the floor alone, so a cap-edge bin with >= 6
+        labels was selected into ``sparse`` and immediately dropped again.
+        Cap-edge bins are exactly where the head extrapolates.
+      * **Tier 3 — thin** (``need_floor = max(0, SPARSE_FLOOR - n_labelled)``):
+        too few usable labels.
+
+    Bins are served tier by tier, and within a tier by deployment weight, so a
+    budget that runs out costs the least important tier first and the ordering
+    is visible in the printed plan rather than implicit in a sort key.
 
     Generators, in the v2 brief's priority order:
       1. ``scale``  — member demands x {0.6, 0.8, 1.2}. Targeted: the scaled
          parcel count is binned with the SAME edges, so a scale row is only
-         planned for the bin it will actually land in.
+         planned for the bin it will actually land in. Scale-DOWN rows are
+         marked ``bin_pred_uncertain``: shrinking demand can empty whole stops
+         (the pool's ``scale`` augmentation goes through ``perturb_demand``),
+         so the realised stop count — hence the area/cap-proximity of the
+         augmented instance — is not knowable from the parent's row alone.
       2. ``regroup`` — the same hub-day's sub-threshold cells re-packed under
          the same caps with a different candidate order (a grouping the rule
          plausibly could have formed).
       3. ``hold_k`` — 1/2/3 source days behind the delivery day (the pool's
          ``agg_k`` axis), delivery kind only.
 
-    Budget: fill each sparse bin to ``SPARSE_FLOOR``; at most
-    ``PHASE_B_MAX_PER_PARENT`` rows per realised bundle; hard cap
-    ``min(PHASE_B_MAX_ROWS, PHASE_B_MAX_FRACTION * n_phase_a)``.
+    Budget: at most ``PHASE_B_MAX_PER_PARENT`` rows per realised bundle; hard
+    cap ``min(PHASE_B_MAX_ROWS, PHASE_B_MAX_FRACTION * n_phase_a)``.
     """
+    suspect = set(suspect or ())
     cov = coverage_table(df, labelled)
-    cap_edge = (cov["area_tercile"] == 2) | (cov["max_cap_prox"] >= 0.9)
-    sparse = cov[(cov["n_labelled"] < SPARSE_FLOOR) | cap_edge].copy()
-    sparse["need"] = np.maximum(0, SPARSE_FLOOR - sparse["n_labelled"])
+    sparse = cov.copy()
+    sparse["is_suspect"] = sparse["bin"].isin(suspect)
+    sparse["need_suspect"] = np.where(
+        sparse["is_suspect"],
+        np.maximum(0, SUSPECT_TARGET - sparse["n_labelled"]), 0)
+    sparse["need_floor"] = np.maximum(0, SPARSE_FLOOR - sparse["n_labelled"])
+    sparse["need_edge"] = np.where(sparse["is_cap_edge"], EDGE_EXTRA, 0)
+    # suspect and floor are both "top up to a label count" — take the larger,
+    # then add the edge allowance on top.
+    sparse["need_labels"] = np.maximum(sparse["need_suspect"],
+                                       sparse["need_floor"])
+    sparse["need"] = sparse["need_labels"] + sparse["need_edge"]
+    sparse["tier"] = np.where(
+        sparse["need_suspect"] > 0, 1,
+        np.where(sparse["need_edge"] > 0, 2, 3))
+    sparse["tier_reason"] = np.where(
+        sparse["need_suspect"] > 0, "suspect",
+        np.where(sparse["need_edge"] > 0, "cap_edge", "thin"))
     sparse = sparse[sparse["need"] > 0].sort_values(
-        "occurrences", ascending=False)
+        ["tier", "occurrences"], ascending=[True, False])
 
     budget = int(min(PHASE_B_MAX_ROWS,
                      np.floor(PHASE_B_MAX_FRACTION * max(0, n_phase_a))))
@@ -488,6 +704,7 @@ def build_phase_b_plan(df: pd.DataFrame, edges: dict, labelled: set[str],
         per_parent[pid] = per_parent.get(pid, 0) + 1
         rows.append({
             "plan_id": f"B{len(rows):04d}",
+            "priority": int(_tier[0]), "priority_reason": _tier[1],
             "target_bin": bin_name, "generator": gen, "param": param,
             "bin_pred_uncertain": uncertain,
             "parent_bundle_id": pid, "provider": parent.provider,
@@ -503,30 +720,30 @@ def build_phase_b_plan(df: pd.DataFrame, edges: dict, labelled: set[str],
     for _, b in sparse.iterrows():
         need = int(b["need"])
         made = 0
-        # 1) demand scaling that LANDS in this bin
+        _tier = (int(b["tier"]), str(b["tier_reason"]))
+        # 1) demand scaling that LANDS in this bin. Candidate parents are NOT
+        #    restricted to the target bin's demand tercile: a parent one
+        #    tercile away scaled by 0.6/1.2 is exactly how a thin or mispriced
+        #    tercile gets more support.
+        cands_scale = pool[(pool["kind"] == b["kind"])
+                           & (pool["provider"] == b["provider"])
+                           & (pool["nm_bin"] == b["nm_bin"])
+                           & (pool["area_tercile"] == b["area_tercile"])]
         for f in SCALE_FACTORS:
             if made >= need or len(rows) >= budget:
                 break
-            cands = pool[(pool["kind"] == b["kind"])
-                         & (pool["provider"] == b["provider"])
-                         & (pool["nm_bin"] == b["nm_bin"])
-                         & (pool["area_tercile"] == b["area_tercile"])]
-            for parent in cands.itertuples():
+            for parent in cands_scale.itertuples():
                 if made >= need or len(rows) >= budget:
                     break
                 if _target_dem_tercile(parent.parcels * f, edges) != int(
                         b["dem_tercile"]):
                     continue
-                if _emit(b["bin"], "scale", f, parent, False):
+                if _emit(b["bin"], "scale", f, parent, f < 1.0):
                     made += 1
-        # 2) alternative admissible groupings from the same bin's hub-days
         cands = pool[pool["bin"] == b["bin"]]
-        for parent in cands.itertuples():
-            if made >= need or len(rows) >= budget:
-                break
-            if _emit(b["bin"], "regroup", "alt_seed", parent, True):
-                made += 1
-        # 3) holding-level variants (delivery only)
+        # 2) holding-level variants — for DELIVERY these come before regroup:
+        #    a suspect delivery bin is mispriced in how much demand a held
+        #    schedule piles onto one tour, which is the agg_k axis itself.
         if b["kind"] == "delivery":
             for k in HOLD_LEVELS:
                 if made >= need or len(rows) >= budget:
@@ -536,19 +753,52 @@ def build_phase_b_plan(df: pd.DataFrame, edges: dict, labelled: set[str],
                         break
                     if _emit(b["bin"], "hold_k", k, parent, True):
                         made += 1
+        # 3) alternative admissible groupings from the same bin's hub-days
+        for parent in cands.itertuples():
+            if made >= need or len(rows) >= budget:
+                break
+            if _emit(b["bin"], "regroup", "alt_seed", parent, True):
+                made += 1
 
     plan = pd.DataFrame(rows)
     md: list[str] = []
     md.append("# Phase-B augmentation plan (NOT YET SOLVED)\n")
     md.append(f"Generated {time.strftime('%Y-%m-%d %H:%M:%S')} from "
-              f"{len(df)} realised bundles, {len(labelled)} labelled.\n")
+              f"{len(df)} realised bundles, {len(labelled)} **usable** labels "
+              f"(`{TRAINING_EXCLUDE_EXPR}` excluded).\n")
     md.append(f"- Phase-A rows so far: **{n_phase_a}**")
     md.append(f"- Budget: min({PHASE_B_MAX_ROWS}, "
               f"{PHASE_B_MAX_FRACTION} x {n_phase_a}) = **{budget}** rows")
-    md.append(f"- Sparse bins (< {SPARSE_FLOOR} labelled, or on a cap "
-              f"boundary): **{len(sparse)}** of {len(cov)}")
+    md.append(f"- Bins needing augmentation: **{len(sparse)}** of {len(cov)}")
+    md.append(f"- Rows requested by need: {int(sparse['need'].sum())} "
+              f"(labels {int(sparse['need_labels'].sum())} + edge "
+              f"{int(sparse['need_edge'].sum())})")
     md.append(f"- Planned rows: **{len(plan)}** "
               f"(<= {PHASE_B_MAX_PER_PARENT} per realised bundle)\n")
+
+    md.append("## Priority tiers — served in this order\n")
+    md.append("A budget that runs out therefore costs tier 3 first, never "
+              "tier 1. Within a tier, bins are served by deployment weight.\n")
+    md.append("| tier | reason | rule | bins | need | planned |")
+    md.append("|---|---|---|---:|---:|---:|")
+    _rules = {
+        1: f"Task 10 OOF flagged the head as mispricing it -> top up to "
+           f"{SUSPECT_TARGET} labels",
+        2: f"on a partition cap boundary -> +{EDGE_EXTRA}, whatever the "
+           f"label count",
+        3: f"fewer than {SPARSE_FLOOR} usable labels -> top up to "
+           f"{SPARSE_FLOOR}",
+    }
+    planned_per_tier = (plan.groupby("priority").size() if len(plan)
+                        else pd.Series(dtype=int))
+    for t in (1, 2, 3):
+        sub = sparse[sparse["tier"] == t]
+        if not len(sub):
+            continue
+        md.append(f"| {t} | {sub['tier_reason'].iloc[0]} | {_rules[t]} | "
+                  f"{len(sub)} | {int(sub['need'].sum())} | "
+                  f"{int(planned_per_tier.get(t, 0))} |")
+    md.append("")
     if len(plan):
         md.append("## By generator\n")
         gg = plan.groupby("generator").size().sort_values(ascending=False)
@@ -557,16 +807,24 @@ def build_phase_b_plan(df: pd.DataFrame, edges: dict, labelled: set[str],
         for g, n in gg.items():
             md.append(f"| {g} | {n} |")
         md.append("")
-        md.append("## Sparse bins addressed (top 40 by deployment weight)\n")
-        md.append("| bin | realised | labelled | need | planned | occurrences |")
-        md.append("|---|---:|---:|---:|---:|---:|")
         planned_per_bin = plan.groupby("target_bin").size()
-        for _, b in sparse.head(40).iterrows():
-            md.append(f"| {md_cell(b['bin'])} | {int(b['n_realised'])} | "
-                      f"{int(b['n_labelled'])} | {int(b['need'])} | "
-                      f"{int(planned_per_bin.get(b['bin'], 0))} | "
-                      f"{int(b['occurrences'])} |")
-        md.append("")
+        for t in (1, 2, 3):
+            sub = sparse[sparse["tier"] == t]
+            if not len(sub):
+                continue
+            md.append(f"## Tier {t} bins ({sub['tier_reason'].iloc[0]}) — "
+                      f"{len(sub)}, top 40 by deployment weight\n")
+            md.append("| bin | realised | labelled | need (labels+edge) | "
+                      "planned | cap edge | occurrences |")
+            md.append("|---|---:|---:|---:|---:|---|---:|")
+            for _, b in sub.head(40).iterrows():
+                md.append(f"| {md_cell(b['bin'])} | {int(b['n_realised'])} | "
+                          f"{int(b['n_labelled'])} | {int(b['need'])} "
+                          f"({int(b['need_labels'])}+{int(b['need_edge'])}) | "
+                          f"{int(planned_per_bin.get(b['bin'], 0))} | "
+                          f"{'yes' if b['is_cap_edge'] else 'no'} | "
+                          f"{int(b['occurrences'])} |")
+            md.append("")
     still = sparse[~sparse["bin"].isin(
         set(plan["target_bin"]) if len(plan) else set())]
     md.append(f"## Bins the plan cannot reach: {len(still)}\n")
@@ -606,51 +864,84 @@ def write_plan(plan: pd.DataFrame, md: list[str], out_dir: Path) -> None:
 
 def build_selection(manifest_path: Path, out_dir: Path, n_a: int,
                     pin_bins: bool = False, extra: set[str] | None = None,
-                    write: bool = True,
-                    copies_dir: Path | None = None) -> pd.DataFrame:
+                    write: bool = True, copies_dir: Path | None = None,
+                    enforce_floor: bool = True) -> pd.DataFrame:
     """Manifest -> ranked, binned, selected DataFrame (written to *out_dir*).
 
     ``write=False`` returns the ranking WITHOUT persisting it — used by the
     solver's throughput probe, which needs a provisional ranking at the cap
     before it knows ``N_A``. Persisting that provisional selection would make
-    its 400 rows "carried" and pin the final selection at 400 regardless of
+    its rows "carried" and pin the final selection at the cap regardless of
     the measured budget.
+
+    ``enforce_floor=True`` (the default) raises ``n_a`` to ``n_a_required``
+    when the requested budget cannot give every non-empty bin
+    ``min(BIN_FLOOR, n)`` selected rows. The floor is the whole point of the
+    stratification, so it must not depend on the caller happening to pass a
+    large enough number — before this, reaching it took three manual passes
+    (757 -> 863 -> 877) because each pass carries the previous one and the
+    caller could only see the shortfall after the fact.
     """
     man = load_manifest(manifest_path,
                         copies_dir or (out_dir / "_manifestcopy"))
     edges = load_edges(out_dir) if pin_bins else None
     man, edges = assign_bins(man, edges)
+    solved = read_solved(out_dir)
     already = load_already(out_dir)
-    man = rank_rows(man, already)
+    man = rank_rows(man, already, dead=dead_ids(solved))
+
+    required = int(man.attrs["n_a_required"])
+    n_a_in = int(n_a)
+    log(f"[selection] N_A requested {n_a_in}; n_a_required = "
+        f"{man.attrs['n_carried']} carried + {man.attrs['n_coverage']} "
+        f"coverage = {required} for a full floor of {BIN_FLOOR}/bin")
+    if enforce_floor and required > n_a_in:
+        log(f"[selection] raising N_A {n_a_in} -> {required} so every "
+            "non-empty bin reaches the floor (--no-enforce-floor to opt out)")
+        n_a = required
+
     man = select(man, n_a, extra=extra)
     if not write:
         return man
     write_selection(man, out_dir, edges, {
-        "n_a": int(n_a), "n_manifest": int(len(man)),
+        "n_a": int(n_a), "n_a_requested": n_a_in, "n_a_required": required,
+        "enforce_floor": bool(enforce_floor),
+        "n_manifest": int(len(man)),
         "n_selected": int(man["selected"].sum()),
-        "n_carried": int(len(already & set(man["bundle_id"]))),
+        "n_carried": int(man.attrs["n_carried"]),
+        "n_unroutable": int((man["rank_reason"] == "unroutable").sum()),
         "n_bins": int(man["bin"].nunique()),
         "bin_floor": BIN_FLOOR, "pin_bins": bool(pin_bins),
         "caps": {"max_tour_stops": float(MAX_TOUR_STOPS),
                  "max_tour_area_km2": float(MAX_TOUR_AREA_KM2),
                  "max_hull_ratio": float(MAX_HULL_RATIO)},
+        "training_exclude": TRAINING_EXCLUDE_EXPR,
         "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
     })
     return man
 
 
-def print_selection_summary(df: pd.DataFrame) -> None:
-    cov = coverage_table(df)
+def print_selection_summary(df: pd.DataFrame,
+                            labelled: set[str] | None = None) -> None:
+    cov = coverage_table(df, labelled)
     n_sel = int(df["selected"].sum())
     log(f"[selection] {len(df)} realised bundles, {df['bin'].nunique()} "
         f"non-empty bins, {n_sel} selected")
     vc = df.loc[df["selected"], "selected_reason"].value_counts()
     for k, v in vc.items():
         log(f"    {k:<12s} {v}")
+    n_dead = int((df["rank_reason"] == "unroutable").sum())
+    if n_dead:
+        log(f"    {'unroutable':<12s} {n_dead} (excluded from selection)")
     short = cov[cov["short_of_floor"] > 0]
     log(f"[selection] bins at/above the floor of {BIN_FLOOR}: "
         f"{len(cov) - len(short)}/{len(cov)}; {len(short)} short "
         f"({int(short['short_of_floor'].sum())} rows short in total)")
+    if labelled:
+        lab_short = cov[cov["n_labelled"] < cov["floor_target"]]
+        log(f"[selection] bins with >= {BIN_FLOOR} USABLE labels: "
+            f"{len(cov) - len(lab_short)}/{len(cov)} "
+            f"({len(labelled)} usable labels so far)")
     by_kind = df[df["selected"]].groupby(["kind", "nm_bin"]).size()
     log("[selection] selected by (kind, n_members):")
     for (k, nm), n in by_kind.items():
@@ -676,6 +967,13 @@ def main() -> None:
     ap.add_argument("--plan-only", action="store_true",
                     help="skip selection; rebuild the Phase-B plan from the "
                          "existing selection + solved table")
+    ap.add_argument("--no-enforce-floor", dest="enforce_floor",
+                    action="store_false",
+                    help="do NOT auto-raise N_A to n_a_required; leaves bins "
+                         "below the coverage floor (reported, not hidden)")
+    ap.add_argument("--suspect-bins", type=Path, default=None,
+                    help=f"Task 10's mispriced-bin list (default: "
+                         f"{SUSPECT_JSON} in --out-dir when present)")
     args = ap.parse_args()
 
     if args.plan_only:
@@ -686,14 +984,16 @@ def main() -> None:
         assert edges is not None, f"no {BINS_JSON} in {args.out_dir}"
     else:
         man = build_selection(args.manifest, args.out_dir, args.n_a,
-                              pin_bins=args.pin_bins)
+                              pin_bins=args.pin_bins,
+                              enforce_floor=args.enforce_floor)
         edges = load_edges(args.out_dir)
-        print_selection_summary(man)
+        print_selection_summary(man, usable_label_ids(read_solved(args.out_dir)))
 
-    solved = load_solved(args.out_dir)
+    solved = read_solved(args.out_dir)
     if len(solved) and "vroom_status" in solved.columns:
-        lab = set(solved.loc[solved["vroom_status"].isin(LABEL_OK),
-                             "bundle_id"].astype(str))
+        # USABLE labels only: a PARTIAL row prices fewer parcels than it
+        # records and does not cover its bin (see TRAINING_EXCLUDE_EXPR).
+        lab = usable_label_ids(solved)
         n_a_rows = int((solved.get("phase") == "A").sum()) if "phase" in \
             solved.columns else len(solved)
     else:
@@ -705,7 +1005,18 @@ def main() -> None:
         n_a_rows = len(lab)
         log("[plan] no solved labels yet — planning against the SELECTION "
             "(intent), not actual labels; re-run --plan-only after Phase A")
-    plan, md = build_phase_b_plan(man, edges, lab, n_a_rows)
+    suspect, s_meta = load_suspect_bins(args.out_dir, edges, args.suspect_bins)
+    if suspect:
+        log(f"[plan] {len(suspect)} suspect bin(s) from "
+            f"{s_meta.get('source', SUSPECT_JSON)} get tier-1 priority "
+            f"(top up to {SUSPECT_TARGET} labels)")
+    else:
+        log(f"[plan] no {SUSPECT_JSON} — no tier-1 suspect bins; Task 10 "
+            "writes that file from its per-bin OOF")
+    plan, md = build_phase_b_plan(man, edges, lab, n_a_rows, suspect=suspect)
+    if s_meta:
+        md.insert(2, f"Suspect bins from `{s_meta.get('source', SUSPECT_JSON)}`"
+                     f" ({s_meta.get('n_bins', 0)} listed).\n")
     write_plan(plan, md, args.out_dir)
 
 
