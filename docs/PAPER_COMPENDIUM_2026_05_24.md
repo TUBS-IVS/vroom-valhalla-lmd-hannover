@@ -3751,3 +3751,27 @@ Design-Stand: docs/superpowers/specs/2026-08-25-percell-express-final-design.md
 (v2, Realismus-Direktive: universelle Min/Max-Tour-Regel, szenario-blind,
 Bundle-Head mit Train=Serve-Sampling, Gate U Do 27.08., Headline erwartet
 ~22,79 -> ~22,2 %).
+
+### 40.9 Korrektur zu 39.1 Bug C / D2: Ueberzaehlung, nicht Blindheit (2026-08-26)
+
+Die Diagnose in 39.1 ("Glaettung blind fuer Express-Flotte, 21,7 % unsichtbare
+Fahrzeugtage, Ungleichgewicht um 72,7 % unterschaetzt") war ein
+**Messartefakt**. `veh_3d` ist fuer JEDE aktive Instanz gesetzt — auch an
+Nicht-Liefertagen, wo `combined_demand` der Express-Nachfrage entspricht
+(costs.py ~597-602, ~670, ~892). Die Zielfunktion sah die Express-Fahrzeuge
+also durchaus, aber **pro Zelle**: eine gepoolte 14-PLZ-Tour zaehlte als 14
+Fahrzeuge. Mein Messskript summierte genau dieses veh_3d (inkl. der
+Pro-Zell-Express-Fahrzeuge) und addierte die gepoolten ceil-Werte obendrauf
+— die "unsichtbaren" Fahrzeugtage waren eine Doppelzaehlung im Messaufbau.
+
+Korrekter Befund: Der objektseitige Zwilling von Reporting-Bug A — eine
+verzerrte **Ueber**zaehlung (per-Zell statt gepoolt), kein blinder Fleck. Die
+Richtung des Fixes (partition-exakte gepoolte Fahrzeuge in der Zielfunktion)
+bleibt richtig; die Zahlen 21,7 %/72,7 % sind zurueckgezogen. Der erste
+Implementierungsversuch (Task 5) addierte die gepoolten Fahrzeuge auf das
+ungefilterte veh_3d und erzeugte damit eine echte Doppelzaehlung (DPD 0,5/0,1:
+Spitzentag +58 %, Spread 9 statt 47) — vom Review vor dem Grid-Abschluss
+gefangen, Grid gestoppt (159/615). Endgueltige Semantik = 50_-Reporting-Fix
+in der Zielfunktion: veh_3d auf Liefertage maskiert + gepoolte Express-
+Fahrzeuge einmal pro Partitionsgruppe + gepoolte Liefergruppen per Partition
+(Spec v3 §4.3).
