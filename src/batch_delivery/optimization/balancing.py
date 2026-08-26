@@ -34,6 +34,19 @@ from batch_delivery.utils import log
 # Step 2: Fleet balancing post-processing (swap-based)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _sched_active_mask(schedules: list[frozenset[int]]) -> np.ndarray:
+    """``(n_sched, N_DAYS)`` delivery-day mask, derived from *schedules*.
+
+    Fallback for call sites that do not carry ``matrices["sched_active"]``
+    (hand-built matrices in tests, the legacy Daganzo path). Cheap: 39x6.
+    """
+    sa = np.zeros((len(schedules), N_DAYS), dtype=bool)
+    for si, sched in enumerate(schedules):
+        for d in sched:
+            sa[si, d] = True
+    return sa
+
+
 def _daily_fleet_per_hub(
     chosen: np.ndarray,
     plz_hub_arr: np.ndarray,
@@ -41,20 +54,36 @@ def _daily_fleet_per_hub(
     veh_3d: np.ndarray,
     schedules: list[frozenset[int]],
     express_veh_fn=None,
+    sched_active: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compute daily vehicle count per hub: shape (n_hubs, N_DAYS).
 
-    ``veh_3d`` only carries per-cell DELIVERY-day vehicles (rev1 realistic
-    tours; no bundle rounding — this preserves the theta=1 profile
-    identity). A hub's express partition (rev1 hub-bundled non-delivery
-    tours, Task 4) runs invisibly to this count unless ``express_veh_fn(hi,
-    d, chosen) -> float`` is supplied — it adds that hub-day's express
-    vehicles on top (D2 fix). ``express_veh_fn=None`` reproduces the legacy
-    delivery-day-only count (the non-ML ``balance_fleet_per_hub`` Daganzo
+    A hub's express partition (rev1 hub-bundled non-delivery tours, Task 4)
+    runs invisibly to the per-cell count unless ``express_veh_fn(hi, d,
+    chosen) -> float`` is supplied — it adds that hub-day's POOLED vehicles
+    on top (D2 fix). ``express_veh_fn=None`` reproduces the legacy count over
+    the raw ``veh_3d`` slice (the non-ML ``balance_fleet_per_hub`` Daganzo
     path keeps this).
+
+    DOUBLE-COUNT FIX (2026-08-26): ``veh_3d`` is written for every ACTIVE
+    instance, and on a NON-delivery day a cell's ``combined_demand`` IS its
+    express residual (> 0 whenever theta < 1) — so the per-cell slice already
+    carries >= 1 vehicle for every non-delivering express cell. Summing it
+    over all six days AND adding the pooled express term counted every
+    express vehicle twice (measured on DPD 0.5/0.1: recorded 109-118 vs
+    69-116 correct, peak +58 %, hub spread 9 vs 47 true; it invalidated the
+    base grid's stage-2/3 choices). With a pooled closure supplied the
+    per-cell term is therefore masked to DELIVERY days — exactly the
+    reporting fix in ``scripts/revision/50_recompute_fleet_wait_fixed.py``
+    lines 138-151, now applied to the objective itself. ``sched_active``
+    defaults to a mask derived from *schedules*, so no call site can forget
+    it; pass ``matrices["sched_active"]`` to skip the (tiny) derivation.
     """
     n_hubs = len(hub_plz_list)
     plz_veh = veh_3d[np.arange(len(chosen)), chosen, :]  # (n_plz, N_DAYS)
+    if express_veh_fn is not None:
+        sa = _sched_active_mask(schedules) if sched_active is None else sched_active
+        plz_veh = plz_veh * sa[chosen, :]
     fleet = np.zeros((n_hubs, N_DAYS), dtype=np.float64)
     np.add.at(fleet, plz_hub_arr, plz_veh)
     if express_veh_fn is not None:
@@ -271,6 +300,12 @@ def balance_fleet_per_hub_ml(
     raw_express = matrices["raw_express"]
     expr_stops = matrices["expr_stops"]
     n_plz = len(plz_keys)
+    # Delivery-day mask: every per-cell fleet term below is masked with it,
+    # so the pooled express vehicles added on top are not double-counted
+    # (see _daily_fleet_per_hub).
+    sa_mx = matrices.get("sched_active")
+    if sa_mx is None:
+        sa_mx = _sched_active_mask(schedules)
 
     chosen = sa_result["chosen"].copy()
     cur_dd_cost = float(dd_cost_mx[np.arange(n_plz), chosen].sum())
@@ -325,7 +360,7 @@ def balance_fleet_per_hub_ml(
 
     fleet = _daily_fleet_per_hub(
         chosen, plz_hub_arr, hub_plz_list, veh_3d, schedules,
-        express_veh_fn=_express_veh_fn,
+        express_veh_fn=_express_veh_fn, sched_active=sa_mx,
     )
     imbalance_before = _fleet_imbalance(fleet)
 
@@ -405,8 +440,10 @@ def balance_fleet_per_hub_ml(
             if cur_obj + delta_obj > max_obj:
                 continue
 
-            old_veh = veh_3d[pi, old_si, :]
-            new_veh = veh_3d[pi, new_si, :]
+            # Delivery-day-masked, to match how `fleet` was built (the
+            # unmasked slice would re-introduce the express double count).
+            old_veh = veh_3d[pi, old_si, :] * sa_mx[old_si]
+            new_veh = veh_3d[pi, new_si, :] * sa_mx[new_si]
             new_fleet_hub = fleet[hi] - old_veh + new_veh
             # I1 fix: the veh_3d-only delta above misses the express-vehicle
             # movement a swap causes (pi joins day d_aff's express pool when
@@ -437,7 +474,9 @@ def balance_fleet_per_hub_ml(
             for d in range(N_DAYS):
                 ev = _express_veh_fn(hi, d, chosen)
                 evcache[hi, d] = ev
-                fleet[hi, d] = float(veh_3d[h_ps, chosen[h_ps], d].sum()) + ev
+                deliv = h_ps[sa_mx[chosen[h_ps], d]]
+                fleet[hi, d] = (
+                    float(veh_3d[deliv, chosen[deliv], d].sum()) + ev)
             cur_cost += best_delta
             cur_obj += best_delta_obj
             for d_val, val in best_expr_vals.items():
@@ -518,6 +557,9 @@ def system_smooth_pass(
     raw_express = matrices["raw_express"]
     expr_stops = matrices["expr_stops"]
     n_plz = len(plz_keys)
+    sa_mx = matrices.get("sched_active")
+    if sa_mx is None:
+        sa_mx = _sched_active_mask(schedules)
 
     chosen = chosen.copy()
     cur_dd_cost = float(dd_cost_mx[np.arange(n_plz), chosen].sum())
@@ -565,7 +607,7 @@ def system_smooth_pass(
 
     fleet = _daily_fleet_per_hub(
         chosen, plz_hub_arr, hub_plz_list, veh_3d, schedules,
-        express_veh_fn=_express_veh_fn,
+        express_veh_fn=_express_veh_fn, sched_active=sa_mx,
     )
     sys_fleet = fleet.sum(axis=0)
     system_spread_initial = float(sys_fleet.max() - sys_fleet.min())
@@ -603,7 +645,8 @@ def system_smooth_pass(
             old_days = schedules[old_si]
             old_size = len(old_days)
             hi = int(plz_hub_arr[pi])
-            old_veh = veh_3d[pi, old_si, :]
+            # Delivery-day-masked, to match how `fleet` was built.
+            old_veh = veh_3d[pi, old_si, :] * sa_mx[old_si]
 
             for new_si in range(len(schedules)):
                 if new_si == old_si:
@@ -620,7 +663,7 @@ def system_smooth_pass(
                 # decides whether this candidate is worth the expensive
                 # partition/surrogate evaluation below. Never used as the
                 # final accept decision -- see the I1 fix after it.)
-                new_veh = veh_3d[pi, new_si, :]
+                new_veh = veh_3d[pi, new_si, :] * sa_mx[new_si]
                 new_sys_fleet = sys_fleet + (new_veh - old_veh)
                 new_spread = float(new_sys_fleet.max() - new_sys_fleet.min())
                 reduction = cur_spread - new_spread
@@ -705,7 +748,8 @@ def system_smooth_pass(
         for d in range(N_DAYS):
             ev = _express_veh_fn(hi, d, chosen)
             evcache[hi, d] = ev
-            fleet[hi, d] = float(veh_3d[h_ps, chosen[h_ps], d].sum()) + ev
+            deliv = h_ps[sa_mx[chosen[h_ps], d]]
+            fleet[hi, d] = float(veh_3d[deliv, chosen[deliv], d].sum()) + ev
         sys_fleet = fleet.sum(axis=0)
         cur_cost += best_delta_cost
         cur_obj += best_delta_obj

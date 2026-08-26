@@ -40,6 +40,13 @@ def test_theta1_profile_unchanged_with_express_fn():
 
 
 def test_theta_lt1_profile_includes_express_vehicles():
+    """The express partition's vehicles must be VISIBLE in the profile.
+
+    Reference is the express-BLIND profile (same delivery-day masking, zero
+    pooled term) — not the unmasked ``veh_3d`` sum, which since the §0
+    double-count fix is no longer a meaningful baseline: it already contains
+    a per-cell copy of exactly the express vehicles being added here.
+    """
     m = tiny_matrices(theta_one=False)
     sch = enumerate_valid_schedules()
     hpl = [np.array([0, 1])]
@@ -49,11 +56,53 @@ def test_theta_lt1_profile_includes_express_vehicles():
     cache = {}
     fn = lambda hi, d, ch: _hub_express_vehicles(
         hi, d, ch, hpl, sch, m["raw_express"], m, cache)
-    base = _daily_fleet_per_hub(chosen, pha, hpl, m["veh_3d"], sch)
+    blind = _daily_fleet_per_hub(chosen, pha, hpl, m["veh_3d"], sch,
+                                 express_veh_fn=lambda hi, d, ch: 0.0)
     withx = _daily_fleet_per_hub(chosen, pha, hpl, m["veh_3d"], sch,
                                  express_veh_fn=fn)
     d_off = next(dd for dd in range(6) if dd not in sch[two])
-    assert withx[0, d_off] > base[0, d_off]     # invisible fifth appears
+    assert blind[0, d_off] == 0.0               # nobody delivers that day
+    assert withx[0, d_off] > blind[0, d_off]    # invisible fifth appears
+
+
+def test_express_vehicles_are_not_counted_twice():
+    """Task 6c §0 regression — the double count that killed the base grid.
+
+    ``veh_3d`` is written for EVERY ACTIVE instance, and on a NON-delivery day
+    a cell's ``combined_demand`` is its express residual (> 0 whenever
+    theta < 1). So the per-cell slice already carries >= 1 vehicle for every
+    non-delivering express cell; adding the hub's POOLED express vehicles on
+    top counted each express vehicle twice (measured on DPD 0.5/0.1: peak
+    +58 %, hub spread 9 vs 47 true).
+
+    With a pooled-vehicle closure supplied, the per-cell term must be masked
+    to DELIVERY days -- the reporting fix of
+    ``scripts/revision/50_recompute_fleet_wait_fixed.py:138-151``, now applied
+    to the objective itself.
+    """
+    m = tiny_matrices(theta_one=False)
+    sch = enumerate_valid_schedules()
+    hpl = [np.array([0, 1])]
+    pha = np.array([0, 0])
+    daily = next(i for i, s in enumerate(sch) if len(s) == 6)
+    two = next(i for i, s in enumerate(sch) if len(s) == 2)
+    chosen = np.array([two, daily])          # cell 0 does not deliver every day
+    veh = m["veh_3d"]
+    cache: dict = {}
+    fn = lambda hi, d, ch: _hub_express_vehicles(
+        hi, d, ch, hpl, sch, m["raw_express"], m, cache)
+
+    fleet = _daily_fleet_per_hub(chosen, pha, hpl, veh, sch,
+                                 express_veh_fn=fn)
+    sa = m["sched_active"]
+    h_ps = hpl[0]
+    for d in range(6):
+        deliv = sa[chosen[h_ps], d]
+        want = float(veh[h_ps[deliv], chosen[h_ps[deliv]], d].sum()) + fn(0, d, chosen)
+        double = float(veh[h_ps, chosen[h_ps], d].sum()) + fn(0, d, chosen)
+        assert fleet[0, d] == pytest.approx(want)
+        if not deliv.all():                  # the day the bug showed up on
+            assert fleet[0, d] < double
 
 
 def test_balance_ml_imbalance_before_sees_express_vehicles():
@@ -81,12 +130,17 @@ def test_balance_ml_imbalance_before_sees_express_vehicles():
         hi, d, ch, hpl, sch, m["raw_express"], m, fresh_cache)
     expected_fleet = _daily_fleet_per_hub(
         chosen, pha, hpl, m["veh_3d"], sch, express_veh_fn=fn)
-    legacy_fleet = _daily_fleet_per_hub(chosen, pha, hpl, m["veh_3d"], sch)
+    # Express-BLIND reference: same delivery-day masking, zero pooled term
+    # (see test_theta_lt1_profile_includes_express_vehicles on why the
+    # unmasked veh_3d sum stopped being a usable baseline in §0).
+    blind_fleet = _daily_fleet_per_hub(
+        chosen, pha, hpl, m["veh_3d"], sch,
+        express_veh_fn=lambda hi, d, ch: 0.0)
 
     assert res["imbalance_before"] == pytest.approx(
         _fleet_imbalance(expected_fleet))
     assert res["imbalance_before"] != pytest.approx(
-        _fleet_imbalance(legacy_fleet))    # D2: express now visible
+        _fleet_imbalance(blind_fleet))     # D2: express now visible
 
 
 # ─────────────────────────────────────────────────────────────────────────────

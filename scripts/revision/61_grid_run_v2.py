@@ -52,6 +52,7 @@ import os
 import sys
 import time
 import warnings
+from collections import Counter
 from pathlib import Path
 
 os.environ.setdefault("TQDM_DISABLE", "1")
@@ -80,7 +81,10 @@ from batch_delivery.optimization.schedules import enumerate_valid_schedules  # n
 
 logging.disable(logging.INFO)  # silence the package's INFO/DEBUG chatter
 
-OUT = C.ROOT / "results" / "revision_2026_08"
+# REV2_OUT_DIR redirects every output (and the resume bookkeeping with it) to
+# a scratch directory — how gate runs are done without touching the live grid.
+OUT = Path(os.environ.get("REV2_OUT_DIR")
+           or C.ROOT / "results" / "revision_2026_08")
 CHOSEN = OUT / "_tab_chosen_v2.csv"
 COSTS = OUT / "tab_costs_v2.csv"
 FLEET = OUT / "tab_fleet_per_hub_v2.csv"
@@ -140,11 +144,36 @@ def _key(P: float, th: float, prov: str) -> tuple[float, float, str]:
     return (round(float(P), 4), round(float(th), 4), str(prov))
 
 
-def load_done() -> set[tuple[float, float, str]]:
+def load_done(expected_rows: dict[str, int] | None = None) -> set[tuple[float, float, str]]:
+    """Triples present in CHOSEN, the per-triple completion marker.
+
+    M1 guard (Task 6c): a kill in the middle of CHOSEN's own append leaves a
+    TRUNCATED marker block — the triple then looks done while carrying fewer
+    than ``len(plz_keys)`` rows, and ``prune_partial`` (which only cleans the
+    other three files) would happily keep it. A triple therefore counts as
+    done only when its row count equals its provider's cell count; short
+    blocks are dropped from the file so the triple is redone cleanly instead
+    of being half-trusted.
+    """
     if not CHOSEN.exists():
         return set()
-    d = pd.read_csv(CHOSEN)
-    return {_key(r.penalty, r.share_willing, r.provider) for r in d.itertuples()}
+    d = pd.read_csv(CHOSEN, dtype={"plz": str})   # keep plz text byte-stable
+    if len(d) == 0:
+        return set()
+    keys = [_key(p, s, v)
+            for p, s, v in zip(d.penalty, d.share_willing, d.provider)]
+    counts = Counter(keys)
+    bad = {k for k, n in counts.items()
+           if (expected_rows or {}).get(k[2]) not in (None, n)}
+    if bad:
+        detail = ", ".join(f"{k[2]} P={k[0]} th={k[1]}: {counts[k]} rows "
+                           f"(want {expected_rows[k[2]]})"
+                           for k in sorted(bad, key=str))
+        print(f"[self-heal] {CHOSEN.name}: dropping {len(bad)} triple(s) with an "
+              f"incomplete row block — {detail}", flush=True)
+        keep = np.array([k not in bad for k in keys])
+        _rewrite(CHOSEN, d[keep])
+    return {k for k in counts if k not in bad}
 
 
 def prune_partial(done: set) -> None:
@@ -301,7 +330,13 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
                 hi, d, chosen_s3, hub_plz_list, schedules, m, pool_cache)
             if len(h_ps) == 0:
                 continue
-            dd_veh = float(veh_3d[h_ps, chosen_s3[h_ps], d].sum())
+            # Only DELIVERING cells contribute a per-cell tour. veh_3d is
+            # written for every ACTIVE instance, so on a non-delivery day it
+            # already holds the cell's express residual -- counting it here
+            # AND adding the pooled express term double-counted every express
+            # vehicle (Task 6c §0).
+            deliv = h_ps[sched_active[chosen_s3[h_ps], d]]
+            dd_veh = float(veh_3d[deliv, chosen_s3[deliv], d].sum())
             ex_veh = float(_ev(hi, d, chosen_s3))     # cache hit
             fleet_rows.append(dict(
                 penalty=P, share_willing=th, provider=prov,
@@ -423,7 +458,27 @@ def main() -> None:
     if not thetas or not providers:
         raise SystemExit(f"--only {args.only!r} matched no grid point")
 
-    done = load_done()
+    # Loaded BEFORE the resume bookkeeping: the M1 guard in load_done() needs
+    # each provider's cell count to recognise a truncated marker block.
+    print("[load] checkpoints + model ...", flush=True)
+    t_load = time.perf_counter()
+    provider_data, optim_data = C.load_checkpoints()
+    model = C.load_model()
+    ml_prep = C.build_ml_prep(provider_data)
+    del provider_data
+    gc.collect()
+    schedules = C.enumerate_schedules()
+    assert len(schedules) == 39, f"expected 39 schedules, got {len(schedules)}"
+    assert schedules == enumerate_valid_schedules(), (
+        "schedule ordering differs from batch_delivery.optimization.schedules "
+        "— stored schedule_idx_* columns would be meaningless")
+    sched_waits = np.array([C.avg_wait_days(sorted(s)) for s in schedules])
+    print(f"[load] done in {time.perf_counter() - t_load:.0f}s "
+          f"({len(schedules)} schedules, init_proxy={args.init_proxy}, "
+          f"smooth_budget={args.budget}%)", flush=True)
+
+    expected_rows = {p: len(od["plz_keys"]) for p, od in optim_data.items()}
+    done = load_done(expected_rows)
     prune_partial(done)
 
     todo: list[tuple[float, float, str]] = []
@@ -441,23 +496,6 @@ def main() -> None:
     if n_total == 0:
         print("nothing to do", flush=True)
         return
-
-    print("[load] checkpoints + model ...", flush=True)
-    t_load = time.perf_counter()
-    provider_data, optim_data = C.load_checkpoints()
-    model = C.load_model()
-    ml_prep = C.build_ml_prep(provider_data)
-    del provider_data
-    gc.collect()
-    schedules = C.enumerate_schedules()
-    assert len(schedules) == 39, f"expected 39 schedules, got {len(schedules)}"
-    assert schedules == enumerate_valid_schedules(), (
-        "schedule ordering differs from batch_delivery.optimization.schedules "
-        "— stored schedule_idx_* columns would be meaningless")
-    sched_waits = np.array([C.avg_wait_days(sorted(s)) for s in schedules])
-    print(f"[load] done in {time.perf_counter() - t_load:.0f}s "
-          f"({len(schedules)} schedules, init_proxy={args.init_proxy}, "
-          f"smooth_budget={args.budget}%)", flush=True)
 
     t_run = time.perf_counter()
     n_done = 0
