@@ -76,6 +76,8 @@ warnings.filterwarnings("ignore")   # LGBM feature-name notices, one per predict
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _stage3_common as C  # noqa: E402
@@ -111,6 +113,29 @@ MANIFEST_COLS = [
     "n_members", "occurrences", "first_seen",
 ]
 
+# Explicit pyarrow schema (Task 8 review, MINOR): an empty manifest (zero
+# complete triples) leaves pyarrow's own type inference nothing to key off,
+# and inference on an all-object empty DataFrame is not guaranteed stable
+# across pandas/pyarrow versions. Pinning the schema makes the empty and
+# populated cases deterministic and shape-identical either way.
+MANIFEST_SCHEMA = pa.schema([
+    ("provider", pa.string()),
+    ("hub_idx", pa.int64()),
+    ("day", pa.int64()),
+    ("kind", pa.string()),
+    ("members", pa.list_(pa.string())),
+    ("member_idx", pa.list_(pa.int64())),
+    ("parcels", pa.float64()),
+    ("stops", pa.float64()),
+    ("area_km2", pa.float64()),
+    ("features", pa.list_(pa.float64())),
+    ("demand_level_key", pa.string()),
+    ("n_members", pa.int64()),
+    ("occurrences", pa.int64()),
+    ("first_seen", pa.list_(pa.float64())),
+])
+assert list(MANIFEST_SCHEMA.names) == MANIFEST_COLS, "schema/column-list drift"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Copy-first IO — mirrors 62_gates_check.py's refresh_copies / _retry_copy,
@@ -140,6 +165,12 @@ def refresh_copy(copies_dir: Path) -> Path | None:
     """Copy the live ``_tab_chosen_v2.csv`` into *copies_dir*; ``None`` if the
     grid has not written anything yet. Safe to call at any point in the
     grid's lifetime.
+
+    Only this one file is copied. This script never reads
+    ``tab_costs_v2.csv`` / ``tab_fleet_per_hub_v2.csv`` / ``tab_wait_v2.csv``
+    at all, live or copied — it rebuilds costs/fleet numbers itself from the
+    (theta, provider) matrices plus the chosen vector, so those three simply
+    have nothing this script needs.
     """
     if not LIVE_CHOSEN.exists():
         return None
@@ -270,6 +301,19 @@ def extract_bundles(prov: str, P: float, th: float, chosen: np.ndarray,
     set never changes its total, so this does not need the partition call).
     ``bundled_parcels`` is the subset of that demand that actually landed in
     a >= 2-member group once ``build_partition`` ran.
+
+    Each accepted group's ``parcels``/``stops`` are computed with the SAME
+    trunc-per-member convention ``bundle_features`` uses for
+    ``n_parcels``/``n_stops`` (truncate each member's value first, THEN sum —
+    not sum-then-truncate — and floor ``n_stops`` at 1.0), which is also the
+    convention ``_express_partition_vehicles``/``_delivery_partition_vehicles``
+    use for fleet counting (costs.py). This keeps the manifest's
+    ``parcels``/``stops`` columns bit-identical to ``features[0]``/
+    ``features[1]`` (asserted at write time in ``write_manifest`` — Task 8
+    review, Important 1). Today this changes nothing for ``parcels`` (the
+    demand arrays are integer-valued, so sum-then-truncate ==
+    truncate-then-sum), but it does change ``stops`` (fractional per-cell
+    stop counts) and is the numerically-correct convention either way.
     """
     plz_keys = od["plz_keys"]
     hub_plz_list = od["hub_plz_list"]
@@ -296,8 +340,12 @@ def extract_bundles(prov: str, P: float, th: float, chosen: np.ndarray,
                     idx = sorted(int(z) for z in g)
                     if len(idx) < 2:
                         continue
-                    parcels = float(sum(raw_express[z, d] for z in idx))
-                    stops = float(sum(expr_stops[z, d] for z in idx))
+                    # trunc-per-member, THEN sum -- see extract_bundles'
+                    # docstring; matches bundle_features' npx/nsx exactly.
+                    parcels = float(np.trunc(
+                        sum(np.trunc(raw_express[z, d]) for z in idx)))
+                    stops = max(1.0, float(
+                        sum(np.trunc(expr_stops[z, d]) for z in idx)))
                     bundled += parcels
                     # _hub_express_day_ml's head path: price_group(g, d, m,
                     # kind="express", head=head) -> bundle_features(g, d, m,
@@ -319,8 +367,12 @@ def extract_bundles(prov: str, P: float, th: float, chosen: np.ndarray,
                     idx = sorted(int(z) for z in g)
                     if len(idx) < 2:
                         continue
-                    parcels = float(sum(parcels_arr[z] for z in idx))
-                    stops = float(sum(stops_arr[z] for z in idx))
+                    # Same trunc-per-member convention as the express branch
+                    # above -- see extract_bundles' docstring.
+                    parcels = float(np.trunc(
+                        sum(np.trunc(parcels_arr[z]) for z in idx)))
+                    stops = max(1.0, float(
+                        sum(np.trunc(stops_arr[z]) for z in idx)))
                     bundled += parcels
                     # _hub_smallday_pool_ml's head path: price_group(g, d, m,
                     # kind="delivery", parcels_by_cell=parcels,
@@ -439,14 +491,35 @@ def build_manifest(chosen_df: pd.DataFrame, done_triples: set, optim_data: dict,
 def write_manifest(manifest: dict[tuple, dict], out_dir: Path) -> pd.DataFrame:
     out_dir.mkdir(parents=True, exist_ok=True)
     records = list(manifest.values())
+
+    # Regression assert (Task 8 review, Important 1): parcels/stops must be
+    # bit-identical to features[0]/features[1] (n_parcels/n_stops) -- both are
+    # built from the SAME trunc-per-member convention in extract_bundles, so
+    # any mismatch means the two computations drifted. Fail loud, at write
+    # time, before anything is persisted -- not a silent downstream surprise
+    # for Task 9/10.
+    for r in records:
+        feat = r["features"]
+        exp_parcels, exp_stops = feat[_COL["n_parcels"]], feat[_COL["n_stops"]]
+        if r["parcels"] != exp_parcels or r["stops"] != exp_stops:
+            raise AssertionError(
+                "manifest row disagrees with its own bundle_features vector: "
+                f"provider={r['provider']} hub={r['hub_idx']} day={r['day']} "
+                f"kind={r['kind']} members={r['members']}: "
+                f"parcels={r['parcels']!r} vs features[n_parcels]={exp_parcels!r}, "
+                f"stops={r['stops']!r} vs features[n_stops]={exp_stops!r}")
+
     df = pd.DataFrame(records, columns=MANIFEST_COLS)
     if not df.empty:
         df = df.sort_values(
             ["provider", "hub_idx", "day", "kind", "n_members"]
         ).reset_index(drop=True)
 
+    # Explicit schema (not inferred) so an empty manifest can't trip pyarrow's
+    # type inference -- see MANIFEST_SCHEMA's own comment.
     pq_path = out_dir / "bundles_manifest.parquet"
-    df.to_parquet(pq_path, index=False)
+    table = pa.Table.from_pandas(df, schema=MANIFEST_SCHEMA, preserve_index=False)
+    pq.write_table(table, pq_path)
 
     csv_df = df.copy()
     for col in ("members", "member_idx", "features", "first_seen"):
