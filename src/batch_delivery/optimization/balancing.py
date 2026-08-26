@@ -614,6 +614,33 @@ RANGE_START_BUDGET_PCT: float = 5.0
 #: is what makes ``OpCost(v5) <= OpCost(v4)`` hold by construction.
 BEST_OF_N_STARTS: tuple[str, ...] = ("stage1", "range", "freqpres")
 
+#: Swap budget of the FREQUENCY-FREE range balancer when it builds the second
+#: candidate start of :func:`operator_polish_best_of_n` — and ONLY there.
+#:
+#: :func:`balance_fleet_per_hub_ml`'s outer loop runs its full ``max_swaps``
+#: iterations regardless of progress (it picks the most imbalanced hub and a
+#: RANDOM cell in it, and simply continues when nothing improves). With the
+#: frequency pin lifted each iteration scans 39 candidates instead of ~8, so
+#: the default 5 000 spends 30-50x the wall time of the useful part: measured
+#: on DHL/Amazon at theta = 1 and DHL at theta = 0.5, the balancer accepts all
+#: of its 19-28 swaps within the first few dozen iterations and then burns
+#: ~4 950 on hubs where nothing improves (17.3 / 22.9 / 11.5 s, versus 0.8 /
+#: 2.0 / 1.1 s at 250).
+#:
+#: The cap is safe because the search is a deterministic function of the seed:
+#: a run with budget N executes exactly the first N iterations of the run with
+#: budget 5 000, so as long as no swap is accepted after iteration N the two
+#: end states are IDENTICAL, not merely similar. 250 is ~9x the largest
+#: observed swap count (28); final OpCost, the whole plan and every reported
+#: branch figure were bit-identical to the uncapped run on all four probes
+#: (task-6f-report.md Sections 2 and 4). At 100 a probe already loses a swap.
+#:
+#: Deliberately NOT the default of :func:`operator_polish_best_of_two` nor of
+#: :func:`balance_fleet_per_hub_ml`: the ``operator-freqpres`` / ``range``
+#: ablations must stay bit-identical to grids v4 and run 2, and their range
+#: balancers are frequency-PINNED and therefore cheap anyway (0.1-2.2 s).
+RANGE_START_MAX_SWAPS: int = 250
+
 
 def _measurement_only(measured: dict, branches: tuple[str, ...],
                       winner: str) -> dict:
@@ -795,7 +822,7 @@ def operator_polish_best_of_n(
     week_fixed: float = WEEK_FIXED_COST_EUR,
     accept_eps: float = 1e-9,
     range_budget_pct: float = RANGE_START_BUDGET_PCT,
-    range_max_swaps: int = FLEET_BALANCE_MAX_SWAPS,
+    range_max_swaps: int = RANGE_START_MAX_SWAPS,
 ) -> dict:
     """The production stage 2 (Task 6f): a FREQUENCY-FREE polish from N starts.
 
@@ -831,7 +858,10 @@ def operator_polish_best_of_n(
       variable cost one cell can move, so the operator objective is flat in
       plateaus a strict descent cannot cross; ``max - min`` has no plateau and
       reaches basins the polish alone does not (see
-      :func:`operator_polish_best_of_two`).
+      :func:`operator_polish_best_of_two`). Its swap budget is
+      *range_max_swaps*, which defaults to :data:`RANGE_START_MAX_SWAPS`
+      (250) rather than 5 000 — see that constant for why the cap is exact and
+      not an approximation.
     * ``"freqpres"`` — :func:`operator_polish_best_of_two` with the frequency
       PIN, i.e. exactly the plan grid v4 shipped. Because the polish never
       worsens the state it is given, including it makes
@@ -906,6 +936,13 @@ def operator_polish_best_of_n(
         # The v4 plan itself: the frequency-PRESERVING best-of-two, regardless
         # of this call's own `preserve_frequency` (with the pin on, the two
         # coincide). Only the polish that follows it is frequency-free.
+        #
+        # Its own range balancer keeps the UNCAPPED FLEET_BALANCE_MAX_SWAPS
+        # budget, NOT *range_max_swaps*: this branch must reproduce the plan
+        # grid v4 shipped exactly, or `opcost_freqpres_start` would stop being
+        # v4's OpCost and the `OpCost(v5) <= OpCost(v4)` guarantee would be
+        # against a different plan. It is affordable because it is frequency-
+        # PINNED — ~8 candidates per cell instead of 39, measured 0.1-2.2 s.
         fp = operator_polish_best_of_two(
             {"chosen": chosen0}, plz_keys, plz_hub_arr, hub_plz_list,
             matrices, schedules,
@@ -913,7 +950,8 @@ def operator_polish_best_of_n(
             express_scale=express_scale, penalty_mx=penalty_mx,
             preserve_frequency=True, fixed_cost=fixed_cost,
             week_fixed=week_fixed, accept_eps=accept_eps,
-            range_budget_pct=range_budget_pct, range_max_swaps=range_max_swaps)
+            range_budget_pct=range_budget_pct,
+            range_max_swaps=FLEET_BALANCE_MAX_SWAPS)
         swaps_freqpres_plan = int(fp["swaps_made"])
         ends["freqpres"] = operator_polish(
             {"chosen": fp["chosen"]}, plz_keys, plz_hub_arr, hub_plz_list,

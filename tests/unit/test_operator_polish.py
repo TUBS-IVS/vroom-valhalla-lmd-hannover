@@ -42,9 +42,11 @@ import pytest
 from _stubs import StubPredictor, tiny_matrices
 
 from batch_delivery.config.constants import FIXED_COST_EUR, N_DAYS
+from batch_delivery.config.constants import FLEET_BALANCE_MAX_SWAPS
 from batch_delivery.optimization.balancing import (
     BEST_OF_N_STARTS,
     RANGE_START_BUDGET_PCT,
+    RANGE_START_MAX_SWAPS,
     WEEK_FIXED_COST_EUR,
     _daily_fleet_per_hub,
     balance_fleet_per_hub_ml,
@@ -743,6 +745,66 @@ def test_best_of_n_with_preserve_frequency_pins_every_cell():
         {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
         max_swaps=200, seed=0, preserve_frequency=True)
     assert np.array_equal(_sizes(sch, res["chosen"]), _sizes(sch, chosen))
+
+
+@pytest.mark.parametrize("fs,n_hubs,seed", [(0.5, 2, 0), (0.5, 2, 59),
+                                            (0.3, 1, 4)])
+def test_capping_the_range_start_gives_an_IDENTICAL_plan(fs, n_hubs, seed):
+    """The range start's swap budget is a wall-time knob, not a search knob.
+
+    ``balance_fleet_per_hub_ml`` is a deterministic function of its seed, so a
+    run with budget N executes exactly the first N iterations of the run with
+    budget 5 000. As long as no swap is accepted after iteration N the two end
+    states are IDENTICAL — bit-for-bit, not merely close — and so is everything
+    downstream of them. That is what makes
+    :data:`RANGE_START_MAX_SWAPS` = 250 safe: it is ~10x the largest swap count
+    the frequency-free balancer has been observed to accept, while cutting the
+    ~5 000 no-op iterations that dominate stage-2 wall time.
+
+    Guarded here on the fixtures and, on the real grid, by the TEXT-identical
+    OpCost of the four probes in task-6f-report.md.
+    """
+    plz_keys, m, sch, hpl, pha = _fixture(fs=fs, n_cells=10, n_hubs=n_hubs)
+    chosen = _start(m, sch, 10, seed)
+    pen = _penalty(m, sch, 10, scale=0.25)
+    kw = dict(max_swaps=200, seed=seed, penalty_mx=pen)
+
+    uncapped = operator_polish_best_of_n(
+        {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+        range_max_swaps=FLEET_BALANCE_MAX_SWAPS, **kw)
+    capped = operator_polish_best_of_n(
+        {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+        range_max_swaps=RANGE_START_MAX_SWAPS, **kw)
+
+    assert capped["swaps_range_balancer"] == uncapped["swaps_range_balancer"]
+    assert np.array_equal(capped["chosen"], uncapped["chosen"])
+    assert capped["opcost_after"] == uncapped["opcost_after"]      # exact ==
+    assert capped["opcost_from_range"] == uncapped["opcost_from_range"]
+    assert capped["opcost_range_start"] == uncapped["opcost_range_start"]
+    assert capped["stage2_start_winner"] == uncapped["stage2_start_winner"]
+    # ... and the v4 branch is untouched by the cap by construction: its own
+    # range balancer keeps the uncapped budget so it stays exactly grid v4's
+    # plan, which is what the OpCost(v5) <= OpCost(v4) guarantee is against.
+    assert capped["opcost_freqpres_start"] == uncapped["opcost_freqpres_start"]
+
+
+def test_the_capped_range_start_is_the_default_and_the_ablations_keep_5000():
+    """The cap applies to the best-of-N range start ONLY. The ablation
+    wrappers must keep ``FLEET_BALANCE_MAX_SWAPS``, or grids v4 / v3 / run 2
+    stop reproducing bit-for-bit."""
+    import inspect
+    assert RANGE_START_MAX_SWAPS == 250
+    assert RANGE_START_MAX_SWAPS < FLEET_BALANCE_MAX_SWAPS
+    sigs = {fn.__name__: inspect.signature(fn).parameters
+            for fn in (operator_polish_best_of_n,
+                       operator_polish_best_of_two,
+                       balance_fleet_per_hub_ml)}
+    assert sigs["operator_polish_best_of_n"]["range_max_swaps"].default == (
+        RANGE_START_MAX_SWAPS)
+    assert sigs["operator_polish_best_of_two"]["range_max_swaps"].default == (
+        FLEET_BALANCE_MAX_SWAPS)
+    assert sigs["balance_fleet_per_hub_ml"]["max_swaps"].default == (
+        FLEET_BALANCE_MAX_SWAPS)
 
 
 def test_best_of_n_does_not_mutate_its_inputs():

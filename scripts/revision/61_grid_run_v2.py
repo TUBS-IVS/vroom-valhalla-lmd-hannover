@@ -133,7 +133,9 @@ Outputs (results/revision_2026_08_v5/, or $REV2_OUT_DIR):
                             OpCost) and opcost_freqpres_start_eur (the v4
                             plan's own OpCost — the v5<=v4 guarantee's
                             reference, so no v4 re-run is needed to compare),
-                            with per-branch move counts and the unambiguous
+                            with per-branch move counts, the swap budget the
+                            range start was built under
+                            (range_start_max_swaps) and the unambiguous
                             cells_changed_vs_stage1 /
                             cells_freq_changed_vs_stage1
   tab_fleet_per_hub_v2.csv  per (P, theta, provider, hub, day): the fleet
@@ -180,6 +182,7 @@ sys.path.insert(0, str(C.ROOT / "src"))
 from batch_delivery.optimization.core import build_cost_matrices_ml  # noqa: E402
 from batch_delivery.optimization.coordinate_descent import optimize_cd_ml  # noqa: E402
 from batch_delivery.optimization.balancing import (  # noqa: E402
+    RANGE_START_MAX_SWAPS,
     WEEK_FIXED_COST_EUR,
     balance_fleet_per_hub_ml,
     operator_polish,
@@ -411,8 +414,9 @@ STAGE2_WINNER_FREQPRES = "freqpres-ablation-"    # + the best-of-two winner
 
 def stage2_plan(mode: str, th: float, chosen_s1: np.ndarray,
                 plz_keys: list, plz_hub_arr: np.ndarray, hub_plz_list: list,
-                m: dict, schedules: list,
-                penalty_mx: np.ndarray) -> tuple[dict, str]:
+                m: dict, schedules: list, penalty_mx: np.ndarray,
+                range_start_max_swaps: int = RANGE_START_MAX_SWAPS,
+                ) -> tuple[dict, str]:
     """Run stage 2 under *mode* on the stage-1 plan; return ``(bal, note)``.
 
     ``mode="operator"`` is production (Task 6f):
@@ -432,9 +436,14 @@ def stage2_plan(mode: str, th: float, chosen_s1: np.ndarray,
       documented pure-measurement path), so the operator-lens columns are
       still populated at the baseline plan.
 
-    The ablations keep the frequency pin and are unchanged:
+    *range_start_max_swaps* is the swap budget of the FREQUENCY-FREE range
+    balancer that builds the second candidate start, and applies to
+    ``mode="operator"`` ONLY. The ablations keep the frequency pin, are
+    unchanged, and must stay bit-identical to the grids they reproduce —
     ``operator-freqpres`` (grid v4), ``operator-solo`` (grid v3), ``range``
-    (run 2, with ``--stage3 on``).
+    (run 2, with ``--stage3 on``) — so none of them ever sees this value, and
+    neither does the frequency-preserving best-of-two that ``operator`` runs
+    internally to build its third start.
     """
     kw = dict(penalty_mx=penalty_mx)
     args_common = (plz_keys, plz_hub_arr, hub_plz_list, m, schedules)
@@ -447,7 +456,8 @@ def stage2_plan(mode: str, th: float, chosen_s1: np.ndarray,
         bal = operator_polish_best_of_n(
             {"chosen": chosen_s1}, *args_common,
             max_swaps=0, preserve_frequency=False,
-            range_budget_pct=FLEET_COST_BUDGET_PCT, **kw)
+            range_budget_pct=FLEET_COST_BUDGET_PCT,
+            range_max_swaps=range_start_max_swaps, **kw)
         bal["stage2_start_winner"] = STAGE2_WINNER_NOOP
         return bal, ("theta=0: stage 2 is a NO-OP (plan pinned to stage 1, "
                      "measurement only)")
@@ -456,7 +466,8 @@ def stage2_plan(mode: str, th: float, chosen_s1: np.ndarray,
         bal = operator_polish_best_of_n(
             {"chosen": chosen_s1}, *args_common,
             preserve_frequency=False,
-            range_budget_pct=FLEET_COST_BUDGET_PCT, **kw)
+            range_budget_pct=FLEET_COST_BUDGET_PCT,
+            range_max_swaps=range_start_max_swaps, **kw)
         note = (f"{bal['swaps_made']} moves / {bal['sweeps']} sweeps"
                 + (", BOUND BINDING" if bal["max_swaps_binding_any"] else "")
                 + f", start={bal['stage2_start_winner']} "
@@ -579,7 +590,8 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
     t0 = time.perf_counter()
     bal, s2_note = stage2_plan(
         args.stage2, th, chosen_s1,
-        plz_keys, plz_hub_arr, hub_plz_list, m, schedules, penalty_mx)
+        plz_keys, plz_hub_arr, hub_plz_list, m, schedules, penalty_mx,
+        range_start_max_swaps=args.range_start_max_swaps)
     # init_cost = bundled total (dd + hub-bundled express + pool) of the
     # refined init. Every stage-2 implementation measures it the same way
     # before its first move, so the stage-1 cost anchor is independent of
@@ -808,6 +820,13 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
         swaps_from_freqpres=_i("swaps_from_freqpres", is_bon),
         swaps_range_balancer=_i("swaps_range_balancer", is_multi),
         swaps_freqpres_plan=_i("swaps_freqpres_plan", is_bon),
+        # Self-describing: the swap budget of the FREQUENCY-FREE range
+        # balancer that built the second start. NaN wherever it does not
+        # apply, i.e. in every ablation (their range balancers are pinned and
+        # keep the uncapped 5 000, which is what makes them bit-identical to
+        # run 2 / v3 / v4).
+        range_start_max_swaps=(float(args.range_start_max_swaps) if is_bon
+                               else np.nan),
         cells_changed_vs_stage1=cells_changed,
         cells_freq_changed_vs_stage1=cells_freq_changed,
         imbalance_before=float(bal["imbalance_before"]),
@@ -926,6 +945,23 @@ def main() -> None:
                          "hub peaks already ARE the fleet the operator pays "
                          "for. With 'off', schedule_idx_system_smoothed == "
                          "schedule_idx_balanced")
+    ap.add_argument("--range-start-max-swaps", type=int,
+                    default=RANGE_START_MAX_SWAPS,
+                    help="swap budget of the FREQUENCY-FREE range balancer "
+                         "that builds stage 2's second candidate start "
+                         "(--stage2 operator only; the ablations keep the "
+                         "uncapped 5000 so they stay bit-identical to run 2 / "
+                         "v3 / v4). The search is deterministic in the seed, "
+                         "so a budget N runs exactly the first N iterations of "
+                         "the uncapped run: as long as no swap lands after "
+                         "iteration N the plan is IDENTICAL. Measured on four "
+                         "probes the balancer accepts all 19-25 of its swaps "
+                         "in the first few dozen iterations, and the final "
+                         "OpCost is bit-identical from 5000 down to 100; the "
+                         "default 250 is 10x the largest observed swap count "
+                         "and cuts stage 2 from ~15-44 s to ~3-6 s per triple. "
+                         "Pass 5000 to reproduce the uncapped search. Recorded "
+                         "per row as range_start_max_swaps")
     ap.add_argument("--budget", type=float, default=SMOOTH_BUDGET_PCT,
                     help="stage-3 system-smoothing cost budget in %% "
                          "(03_apply_smoothing.py default; --stage3 on only)")
@@ -961,7 +997,9 @@ def main() -> None:
         have = read_header(COSTS)
         for marker, task, older in (
                 ("stage2_start_winner", "6e", "run-2 or v3"),
-                ("opcost_from_freqpres_eur", "6f", "run-2, v3 or v4")):
+                ("opcost_from_freqpres_eur", "6f", "run-2, v3 or v4"),
+                ("range_start_max_swaps", "6f (capped range start)",
+                 "pre-cap v5 scratch")):
             if marker not in have:
                 raise SystemExit(
                     f"{COSTS} predates Task {task} (no {marker!r} column) — "
@@ -1003,7 +1041,8 @@ def main() -> None:
     print(f"[load] done in {time.perf_counter() - t_load:.0f}s "
           f"({len(schedules)} schedules, init_proxy={args.init_proxy}, "
           f"stage2={args.stage2}, stage3={args.stage3}, "
-          f"smooth_budget={args.budget}%)", flush=True)
+          f"smooth_budget={args.budget}%, "
+          f"range_start_max_swaps={args.range_start_max_swaps})", flush=True)
     print(f"[out] {OUT}", flush=True)
 
     expected_rows = {p: len(od["plz_keys"]) for p, od in optim_data.items()}
