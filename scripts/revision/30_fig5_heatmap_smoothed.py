@@ -122,29 +122,37 @@ def main():
     pivB = agb.pivot(index="penalty", columns="share_willing",
                       values="bal_sav")
 
-    # ---- Panel (c): Stage-3 wait, already parcels-weighted per cell ----
-    w = pd.read_csv(C.OUT_DIR / "tab_wait_smoothed.csv")
+    # ---- Panel (c): wait, willing-weighted (2026-08-25 fix) ----
+    # Only the willing fraction actually waits; standard parcels keep daily
+    # service. The earlier metric weighted ALL parcels with the schedule wait,
+    # overstating the wait at theta < 1 (identical at theta = 1).
+    w = pd.read_csv(C.OUT_DIR / "tab_wait_fixed.csv")
     w = w[~np.isclose(w.penalty, 0.4)].copy()
     pivW = w.pivot(index="penalty", columns="share_willing",
-                   values="avg_wait_d_stage3")
+                   values="wait_fixed")
 
-    # ---- Panels (d,e,f): Stage-3 fleet vs Stage-2 baseline ----
-    f = pd.read_csv(C.OUT_DIR / "tab_fleet_per_hub_smoothed.csv")
+    # ---- Panels (d,e,f): fleet with pooled express tour (2026-08-25 fix) ----
+    # The express parcels of all non-delivering cells at a hub ride ONE pooled
+    # tour (that is how their cost is computed); the earlier metric charged
+    # >= 1 vehicle per cell, overstating the fleet at theta < 1.
+    f = pd.read_csv(C.OUT_DIR / "tab_fleet_per_hub_fixed.csv")
     f = f[~np.isclose(f.penalty, 0.4)].copy()
     sys_day = (f.groupby(["penalty", "share_willing", "day"])
-                .agg(fb=("fleet_stage2", "sum"),
-                     fa=("fleet_stage3", "sum")).reset_index())
+                .agg(fb=("fleet_fixed", "sum"),
+                     fa=("fleet_fixed", "sum")).reset_index())
     base_day = (sys_day[np.isclose(sys_day.share_willing, 0.0)]
                   .groupby("day").fb.mean())
     base = np.array([base_day.loc[d] for d in range(C.N_DAYS)])
     base_peak = float(base.max())
     base_total = float(base.sum())
     base_cv = float(base.std() / base.mean())
-    print(f"Baseline Mo-Sa (Stage 2 @ theta=0, mean over P): peak={base_peak:.0f} "
+    print(f"Baseline Mo-Sa (@ theta=0, mean over P): peak={base_peak:.0f} "
           f"total={base_total:.0f} cv={base_cv:.3f}")
+    # At theta = 0 every cell delivers daily, so there is no express tour and
+    # the fix is a no-op -- the baseline must still reproduce 0.135.
     assert abs(round(base_cv, 3) - 0.135) < 1e-9, (
         f"baseline CV {base_cv:.3f} != submission value 0.135 -- "
-        "Stage-2 fleet baseline drifted, investigate before trusting fig5")
+        "fleet baseline drifted, investigate before trusting fig5")
 
     rows = []
     for (P, sh), g in sys_day.groupby(["penalty", "share_willing"]):
