@@ -1,6 +1,12 @@
 """Fleet balancing per hub + system-level smoothing.
 
-Two-stage balancing:
+Production path (spec v3 §4.3, Task 6e):
+
+* :func:`operator_polish` — local search over (cell, schedule) moves that
+  minimises what the operator actually pays for the week: the routing
+  cost's variable part plus one weekly fixed bill per hub PEAK vehicle.
+
+Kept for ablation against it (the pre-6e two-stage balancing):
 
 * :func:`balance_fleet_per_hub` / :func:`balance_fleet_per_hub_ml` —
   swap-based postprocessing that equalises daily vehicle counts within
@@ -9,7 +15,7 @@ Two-stage balancing:
   schedules across hubs when the imbalance crosses a threshold.
 
 ``_daily_fleet_per_hub`` and ``_fleet_imbalance`` are vectorised
-helpers used by both stages.
+helpers used by every stage.
 """
 
 
@@ -17,6 +23,7 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from batch_delivery.config.constants import (
+    FIXED_COST_EUR,
     FLEET_BALANCE_MAX_SWAPS,
     N_DAYS,
     SA_SEED,
@@ -104,6 +111,468 @@ def _daily_fleet_per_hub(
 def _fleet_imbalance(fleet: np.ndarray) -> float:
     """Sum of per-hub range (max - min daily vehicles)."""
     return float(np.sum(fleet.max(axis=1) - fleet.min(axis=1)))
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Operator-cost objective (spec v3 §4.3, Task 6e)
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Weekly fixed bill per PEAK vehicle at a hub. Six operating days (Mon-Sat)
+#: at ``FIXED_COST_EUR`` each: the van is leased and the driver employed for
+#: the whole week, so the hub's busiest day sizes the fleet it pays for.
+WEEK_FIXED_COST_EUR: float = FIXED_COST_EUR * N_DAYS
+
+
+def _pool_veh_closure(
+    hub_plz_list: list[np.ndarray],
+    schedules: list[frozenset[int]],
+    matrices: dict,
+    express_pred_cache: dict,
+    pool_pred_cache: dict,
+):
+    """``(hi, d, chosen) -> pooled vehicles``: express + small-delivery.
+
+    Shares *express_pred_cache* / *pool_pred_cache* with the
+    ``_hub_express_day_ml`` / ``_hub_smallday_pool_ml`` calls of the same
+    pass, so vehicle counts come from cache hits rather than a second round
+    of partition/surrogate calls.
+    """
+    def _fn(hi: int, d: int, ch: np.ndarray) -> float:
+        return (
+            _hub_express_vehicles(
+                hi, d, ch, hub_plz_list, schedules, matrices["raw_express"],
+                matrices, express_pred_cache,
+            )
+            + _hub_delivery_pool_vehicles(
+                hi, d, ch, hub_plz_list, schedules, matrices, pool_pred_cache,
+            )
+        )
+    return _fn
+
+
+def operator_cost_breakdown(
+    chosen: np.ndarray,
+    plz_keys: list[str],
+    plz_hub_arr: np.ndarray,
+    hub_plz_list: list[np.ndarray],
+    matrices: dict,
+    schedules: list[frozenset[int]],
+    penalty_mx: np.ndarray | None = None,
+    express_scale: float = 1.0,
+    fixed_cost: float = FIXED_COST_EUR,
+    week_fixed: float = WEEK_FIXED_COST_EUR,
+) -> dict:
+    """From-scratch operator-cost decomposition of one *chosen* vector.
+
+    No optimisation, no incremental state: everything is rebuilt from
+    *chosen*, which is what makes this the independent reference the
+    bookkeeping gate of :func:`operator_polish` compares against, and the
+    reporting path the runner writes its ``operator_cost_eur`` column from.
+
+    The cost model as the labels really contain it (Task 6e brief, verified
+    on the training pool)::
+
+        VROOM_cost = 189.15 * n_vehicles + 0.3864 * km + 36.00 * route_hours
+
+    Every predicted cost therefore carries a per-vehicle-DAY fixed term.
+    Subtracting ``fixed_cost * vehicle_days`` leaves the distance + time
+    part, and the fixed bill is re-charged once per week per hub PEAK
+    vehicle — below the peak an extra vehicle-day costs only its variable
+    part, because the van is owned and the driver employed anyway.
+
+    Returns a dict with ``dd_cost`` / ``express_cost`` / ``pool_cost`` /
+    ``routing_cost``, ``vehicle_days`` / ``fixed_cost`` / ``variable_cost``,
+    ``sum_hub_peak`` / ``week_fixed_cost``, ``penalty``, ``operator_cost``
+    (variable + weekly fixed, WITHOUT the penalty — the money the operator
+    pays) and ``opcost`` (``operator_cost + penalty`` — the objective the
+    polish minimises; the wait penalty is a shadow price, not a cost, so the
+    two are reported separately). ``fleet`` carries the profile itself.
+    """
+    n_plz = len(plz_keys)
+    n_hubs = len(hub_plz_list)
+    dd_cost_mx = matrices["dd_cost_mx"]
+    veh_3d = matrices["veh_3d"]
+    raw_express = matrices["raw_express"]
+    expr_stops = matrices["expr_stops"]
+    sa_mx = matrices.get("sched_active")
+    if sa_mx is None:
+        sa_mx = _sched_active_mask(schedules)
+
+    chosen = np.asarray(chosen)
+    express_pred_cache: dict = {}
+    pool_pred_cache: dict = {}
+    pool_veh_fn = _pool_veh_closure(
+        hub_plz_list, schedules, matrices, express_pred_cache, pool_pred_cache)
+
+    dd_cost = float(dd_cost_mx[np.arange(n_plz), chosen].sum())
+    express_cost = 0.0
+    pool_cost = 0.0
+    for hi in range(n_hubs):
+        for d in range(N_DAYS):
+            express_cost += _hub_express_day_ml(
+                hi, d, chosen, hub_plz_list, schedules,
+                raw_express, expr_stops, matrices,
+                express_pred_cache, express_scale,
+            )
+            pool_cost += _hub_smallday_pool_ml(
+                hi, d, chosen, hub_plz_list, schedules, matrices,
+                pool_pred_cache,
+            )
+    routing_cost = dd_cost + express_cost + pool_cost
+
+    fleet = _daily_fleet_per_hub(
+        chosen, plz_hub_arr, hub_plz_list, veh_3d, schedules,
+        pool_veh_fn=pool_veh_fn, sched_active=sa_mx,
+    )
+    vehicle_days = float(fleet.sum())
+    sum_hub_peak = float(fleet.max(axis=1).sum())
+    fixed = fixed_cost * vehicle_days
+    variable = routing_cost - fixed
+    week_fixed_cost = week_fixed * sum_hub_peak
+    penalty = (float(penalty_mx[np.arange(n_plz), chosen].sum())
+               if penalty_mx is not None else 0.0)
+    operator_cost = variable + week_fixed_cost
+
+    return {
+        "dd_cost": dd_cost,
+        "express_cost": express_cost,
+        "pool_cost": pool_cost,
+        "routing_cost": routing_cost,
+        "vehicle_days": vehicle_days,
+        "fixed_cost": fixed,
+        "variable_cost": variable,
+        "sum_hub_peak": sum_hub_peak,
+        "week_fixed_cost": week_fixed_cost,
+        "penalty": penalty,
+        "operator_cost": operator_cost,
+        "opcost": operator_cost + penalty,
+        "fleet": fleet,
+        "imbalance": _fleet_imbalance(fleet),
+    }
+
+
+def operator_polish(
+    sa_result: dict,
+    plz_keys: list[str],
+    plz_hub_arr: np.ndarray,
+    hub_plz_list: list[np.ndarray],
+    matrices: dict,
+    schedules: list[frozenset[int]],
+    max_swaps: int = FLEET_BALANCE_MAX_SWAPS,
+    max_sweeps: int = 50,
+    seed: int = SA_SEED + 1,
+    express_scale: float = 1.0,
+    penalty_mx: np.ndarray | None = None,
+    preserve_frequency: bool = False,
+    fixed_cost: float = FIXED_COST_EUR,
+    week_fixed: float = WEEK_FIXED_COST_EUR,
+    accept_eps: float = 1e-9,
+) -> dict:
+    """Stage 2 as an operator-cost minimisation (spec v3 §4.3, Task 6e).
+
+    Replaces :func:`balance_fleet_per_hub_ml`'s "flatten the per-hub range
+    inside a cost budget" with the one economic objective the operator
+    actually pays::
+
+        OpCost   = variable + W * Sigma_h peak_h  (+ penalty)
+        variable = routing_cost - 189.15 * vehicle_days
+        W        = 6 * 189.15 EUR per peak vehicle per hub per week
+        peak_h   = max_d fleet[h, d]
+
+    ``fleet`` is the v3 partition-aware profile of
+    :func:`_daily_fleet_per_hub`: per-cell tours masked to delivery days,
+    plus one ceil per pooled express tour and per pooled small-delivery
+    group. The range objective and the cost budget are both gone; a move is
+    accepted iff it strictly lowers OpCost::
+
+        dOpCost = d(variable) + W * d(peak_h) + d(penalty)
+        d(variable) = d(routing_cost) - 189.15 * d(vehicle_days_h)
+
+    Only the hub of the moved cell can change — neither pool is priced or
+    counted across hubs — so both fleet terms are evaluated on that one hub
+    row. The candidate machinery (masked ``veh_3d`` rows, ``ecache`` /
+    ``pcache`` / ``pvcache`` mirrors, exact pooled-vehicle deltas over
+    ``symmetric_difference | _pool_affected_days``) is the one
+    :func:`balance_fleet_per_hub_ml` uses; only the accept rule differs.
+
+    Search: sweeps over a seeded permutation of the cells, best improving
+    schedule per cell, applied immediately; it stops when a whole sweep
+    finds nothing (``max_swaps_binding`` False) or when *max_swaps* /
+    *max_sweeps* run out (``max_swaps_binding`` True — report it, the result
+    is then not a local optimum).
+
+    ``preserve_frequency=True`` restricts candidates to schedules of the same
+    SIZE, so stage 2 only redistributes WHICH days a cell is served on, never
+    how many: stage 1 owns the service-quality decision and the wait metric
+    is then stage-2-invariant. It is also what keeps the theta=0 baseline
+    pinned to daily (at theta=0 nobody waits, so the wait penalty is
+    identically zero and an unrestricted polish would happily batch the
+    baseline away).
+
+    Returns :func:`balance_fleet_per_hub_ml`'s dict plus ``opcost_before`` /
+    ``opcost_after`` (objective, penalty included), ``operator_cost_before`` /
+    ``_after`` (penalty excluded), ``variable_before`` / ``_after``,
+    ``sum_hub_peak_before`` / ``_after``, ``vehicle_days_before`` / ``_after``,
+    ``penalty_before`` / ``_after``, ``accepted_deltas`` (one dOpCost per
+    accepted move), ``sweeps`` and ``max_swaps_binding``.
+    """
+    dd_cost_mx = matrices["dd_cost_mx"]
+    veh_3d = matrices["veh_3d"]
+    raw_express = matrices["raw_express"]
+    expr_stops = matrices["expr_stops"]
+    n_plz = len(plz_keys)
+    n_hubs = len(hub_plz_list)
+    n_sched = len(schedules)
+    pidx = np.arange(n_plz)
+    # Delivery-day mask: every per-cell fleet term below is masked with it,
+    # so the pooled vehicles added on top are not double-counted
+    # (see _daily_fleet_per_hub).
+    sa_mx = matrices.get("sched_active")
+    if sa_mx is None:
+        sa_mx = _sched_active_mask(schedules)
+
+    chosen = sa_result["chosen"].copy()
+    express_pred_cache: dict = {}
+    pool_pred_cache: dict = {}
+    ecache = np.zeros((n_hubs, N_DAYS))
+    pcache = np.zeros((n_hubs, N_DAYS))
+    # Pooled-vehicle mirror of ecache/pcache, so the accept GATE (not just the
+    # accepted state) can correct its tentative fleet row for the pooled
+    # vehicles a move silently shifts (I1 fix, inherited from the sibling).
+    pvcache = np.zeros((n_hubs, N_DAYS))
+    _pool_veh_fn = _pool_veh_closure(
+        hub_plz_list, schedules, matrices, express_pred_cache, pool_pred_cache)
+
+    for hi in range(n_hubs):
+        for d in range(N_DAYS):
+            ecache[hi, d] = _hub_express_day_ml(
+                hi, d, chosen, hub_plz_list, schedules,
+                raw_express, expr_stops, matrices,
+                express_pred_cache, express_scale,
+            )
+            pcache[hi, d] = _hub_smallday_pool_ml(
+                hi, d, chosen, hub_plz_list, schedules, matrices,
+                pool_pred_cache,
+            )
+            pvcache[hi, d] = _pool_veh_fn(hi, d, chosen)
+
+    use_pen = penalty_mx is not None
+    fleet = _daily_fleet_per_hub(
+        chosen, plz_hub_arr, hub_plz_list, veh_3d, schedules,
+        pool_veh_fn=_pool_veh_fn, sched_active=sa_mx,
+    )
+
+    def _state() -> tuple[float, float, float, float, float]:
+        """The five tracked scalars, each re-derived from the live caches.
+
+        Deriving rather than accumulating is what makes the reported numbers
+        equal to a from-scratch recomputation (G-6e-3): ``ecache`` /
+        ``pcache`` / ``fleet`` are updated exactly on every accepted move, and
+        everything else is a sum over them — so no running total can drift.
+        Cheap: O(n_plz + n_hubs * N_DAYS) per accepted move.
+        """
+        cost = (float(dd_cost_mx[pidx, chosen].sum())
+                + float(ecache.sum()) + float(pcache.sum()))
+        pen = float(penalty_mx[pidx, chosen].sum()) if use_pen else 0.0
+        vdays = float(fleet.sum())
+        peaks = float(fleet.max(axis=1).sum())
+        opc = cost - fixed_cost * vdays + week_fixed * peaks + pen
+        return cost, pen, vdays, peaks, opc
+
+    cur_cost, cur_pen, veh_days, peak_sum, opcost = _state()
+    initial_total_cost = cur_cost
+    opcost_before = opcost
+    variable_before = cur_cost - fixed_cost * veh_days
+    veh_days_before = veh_days
+    peak_before = peak_sum
+    pen_before = cur_pen
+    imbalance_before = _fleet_imbalance(fleet)
+
+    rng = np.random.default_rng(seed)
+    swaps_made = 0
+    sweeps = 0
+    accepted_deltas: list[float] = []
+    hit_bound = False
+
+    # ``max_swaps=0`` is the pure-measurement call (the runner's stage-1 cost
+    # anchor): report the input state, search nothing, and do not pretend the
+    # bound says anything about local optimality.
+    pbar = tqdm(
+        range(max_sweeps if max_swaps > 0 else 0), desc="Operator polish",
+        unit="sweep", leave=False,
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+    )
+    for _sweep in pbar:
+        sweeps += 1
+        improved = False
+        for pi in rng.permutation(n_plz):
+            if swaps_made >= max_swaps:
+                hit_bound = True
+                break
+            pi = int(pi)
+            hi = int(plz_hub_arr[pi])
+            old_si = int(chosen[pi])
+            old_days = schedules[old_si]
+            old_cost_pi = dd_cost_mx[pi, old_si]
+            hub_row = fleet[hi]
+            old_row_sum = float(hub_row.sum())
+            old_row_peak = float(hub_row.max())
+
+            best_new_si = None
+            best_delta_op = -accept_eps
+            best_expr_vals: dict[int, float] = {}
+            best_pool_vals: dict[int, float] = {}
+
+            for new_si in range(n_sched):
+                if new_si == old_si:
+                    continue
+                if preserve_frequency and len(schedules[new_si]) != len(old_days):
+                    continue
+
+                delta_cost = float(dd_cost_mx[pi, new_si] - old_cost_pi)
+                new_days = schedules[new_si]
+                affected = old_days.symmetric_difference(new_days)
+                pool_affected = _pool_affected_days(pi, old_si, new_si, matrices)
+                new_expr_vals: dict[int, float] = {}
+                new_pool_vals: dict[int, float] = {}
+                new_pool_veh: dict[int, float] = {}
+                if affected or pool_affected:
+                    chosen[pi] = new_si
+                    for d_aff in affected:
+                        nv = _hub_express_day_ml(
+                            hi, d_aff, chosen, hub_plz_list, schedules,
+                            raw_express, expr_stops, matrices,
+                            express_pred_cache, express_scale,
+                        )
+                        delta_cost += nv - ecache[hi, d_aff]
+                        new_expr_vals[d_aff] = nv
+                    for d_aff in pool_affected:
+                        pv = _hub_smallday_pool_ml(
+                            hi, d_aff, chosen, hub_plz_list, schedules,
+                            matrices, pool_pred_cache,
+                        )
+                        delta_cost += pv - pcache[hi, d_aff]
+                        new_pool_vals[d_aff] = pv
+                    # Still in the TRIAL state and served from the caches the
+                    # two loops above just warmed for this exact
+                    # (hi, d_aff, chosen): the true pooled-vehicle count, for
+                    # the gate and not merely for the accepted state. Express
+                    # moves on the schedules' symmetric difference, the
+                    # delivery pool on _pool_affected_days (a day served by
+                    # BOTH schedules still changes the pool when the batched
+                    # demand behind it changes) -- hence the union.
+                    for d_aff in set(affected) | set(pool_affected):
+                        new_pool_veh[d_aff] = _pool_veh_fn(hi, d_aff, chosen)
+                    chosen[pi] = old_si
+
+                delta_pen = (
+                    float(penalty_mx[pi, new_si] - penalty_mx[pi, old_si])
+                    if use_pen else 0.0
+                )
+
+                # Delivery-day-masked, to match how `fleet` was built (the
+                # unmasked slice would re-introduce the express double count).
+                new_row = (hub_row
+                           - veh_3d[pi, old_si, :] * sa_mx[old_si]
+                           + veh_3d[pi, new_si, :] * sa_mx[new_si])
+                for d_aff, v in new_pool_veh.items():
+                    new_row[d_aff] += v - pvcache[hi, d_aff]
+
+                delta_vdays = float(new_row.sum()) - old_row_sum
+                delta_peak = float(new_row.max()) - old_row_peak
+                delta_op = (
+                    (delta_cost - fixed_cost * delta_vdays)
+                    + week_fixed * delta_peak
+                    + delta_pen
+                )
+                if delta_op < best_delta_op:
+                    best_delta_op = delta_op
+                    best_new_si = new_si
+                    best_expr_vals = new_expr_vals
+                    best_pool_vals = new_pool_vals
+
+            if best_new_si is None:
+                continue
+
+            # ── accept ──────────────────────────────────────────────────
+            chosen[pi] = best_new_si
+            for d_val, val in best_expr_vals.items():
+                ecache[hi, d_val] = val
+            for d_val, val in best_pool_vals.items():
+                pcache[hi, d_val] = val
+            # Full hub-row refresh (not an incremental veh_3d-only delta) so
+            # pooled vehicles -- which can shift for OTHER members of the
+            # hub's partitions, not just `pi` -- stay exact (D2 fix). Cheap:
+            # _pool_veh_fn hits the cache entries the candidate evaluation
+            # above already populated for this exact (hi, d, chosen).
+            h_ps = hub_plz_list[hi]
+            for d in range(N_DAYS):
+                pv = _pool_veh_fn(hi, d, chosen)
+                pvcache[hi, d] = pv
+                deliv = h_ps[sa_mx[chosen[h_ps], d]]
+                fleet[hi, d] = (
+                    float(veh_3d[deliv, chosen[deliv], d].sum()) + pv)
+            cur_cost, cur_pen, veh_days, peak_sum, opcost = _state()
+            accepted_deltas.append(best_delta_op)
+            swaps_made += 1
+            improved = True
+            pbar.set_postfix_str(
+                f"swaps={swaps_made}, opcost={opcost:.0f}")
+
+        if not improved:
+            break
+        if swaps_made >= max_swaps:
+            hit_bound = True
+            break
+    else:
+        # Every sweep improved something and the sweep budget ran out: like
+        # the swap bound, this is NOT a local optimum -- say so.
+        hit_bound = hit_bound or sweeps >= max_sweeps
+    pbar.close()
+
+    imbalance_after = _fleet_imbalance(fleet)
+    variable_after = cur_cost - fixed_cost * veh_days
+    log.debug(
+        f"Operator polish: {swaps_made} move(s) in {sweeps} sweep(s), "
+        f"OpCost {opcost_before:,.0f} → {opcost:,.0f} "
+        f"({(opcost / opcost_before - 1) * 100 if opcost_before else 0:+.2f}%), "
+        f"Sigma hub peak {peak_before:.0f} → {peak_sum:.0f}, "
+        f"vehicle-days {veh_days_before:.0f} → {veh_days:.0f}, "
+        f"routing {(cur_cost / initial_total_cost - 1) * 100 if initial_total_cost else 0:+.2f}%"
+        + (", BOUND BINDING" if hit_bound else "")
+    )
+
+    schedules_per_plz = {
+        plz_keys[pi]: schedules[int(chosen[pi])] for pi in range(n_plz)
+    }
+
+    return {
+        "chosen": chosen,
+        "cost": cur_cost,                          # routing total (dd+expr+pool)
+        "initial_total_cost": initial_total_cost,
+        "imbalance_before": imbalance_before,
+        "imbalance_after": imbalance_after,
+        "schedules_per_plz": schedules_per_plz,
+        "swaps_made": swaps_made,
+        # ── the operator lens ───────────────────────────────────────────
+        "opcost_before": opcost_before,
+        "opcost_after": opcost,
+        "operator_cost_before": opcost_before - pen_before,
+        "operator_cost_after": opcost - cur_pen,
+        "variable_before": variable_before,
+        "variable_after": variable_after,
+        "sum_hub_peak_before": peak_before,
+        "sum_hub_peak_after": peak_sum,
+        "vehicle_days_before": veh_days_before,
+        "vehicle_days_after": veh_days,
+        "penalty_before": pen_before,
+        "penalty_after": cur_pen,
+        "accepted_deltas": accepted_deltas,
+        "sweeps": sweeps,
+        "max_swaps_binding": hit_bound,
+    }
 
 
 

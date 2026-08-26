@@ -1,19 +1,37 @@
 """61: full grid under the realistic-tour rule (base run: head=None).
 
-Re-runs the whole (P, theta, provider) grid through stage 1 -> 2 -> 3 with the
-rev1 realistic-tour machinery (per-cell express cost, partition-priced hub
+Re-runs the whole (P, theta, provider) grid through stage 1 -> 2 (-> 3) with
+the rev1 realistic-tour machinery (per-cell express cost, partition-priced hub
 pooling, express-exact fleet objective). Where ``10_recompute_stage3_outputs``
 only RE-PRICES the stored 2026-05-29 schedule choices, this script OPTIMIZES:
 
   stage 1  argmin warm start + ``optimize_cd_ml``   -> schedule_idx_stage1
-  stage 2  ``balance_fleet_per_hub_ml``             -> schedule_idx_balanced
-  stage 3  ``system_smooth_pass``                   -> schedule_idx_system_smoothed
+  stage 2  ``operator_polish``                      -> schedule_idx_balanced
+  stage 3  ``system_smooth_pass``  (OFF by default) -> schedule_idx_system_smoothed
 
-The calls, argument construction and penalty wiring are copied verbatim from
-the canonical production run (``scripts/pipeline/02_optimize_grid.py`` for
-stages 1-2, ``scripts/pipeline/03_apply_smoothing.py`` for stage 3); only the
-matrices are new. ``matrices["bundle_head"]`` stays absent by design in this
-base run, so ``price_group`` falls back to Sigma-pricing.
+**Stage 2 is an operator-cost minimisation** (Task 6e, spec v3 §4.3): it
+accepts a (cell, schedule) move iff that move lowers what the operator pays
+for the week,
+
+    OpCost   = variable + 1134.90 * Sigma_h peak_h  (+ service penalty)
+    variable = routing_cost - 189.15 * vehicle_days
+
+— because every VROOM label the surrogate learned from was priced as
+``189.15 * n_vehicles + 0.3864 * km + 36.00 * route_hours``, so a predicted
+cost carries one fixed charge per vehicle-DAY while the operator's fixed bill
+is weekly and sized by each hub's PEAK day. ``--stage2 range`` restores the
+pre-6e ``balance_fleet_per_hub_ml`` (range objective inside a cost budget) for
+ablation. Stage 3 spread-smoothing is dropped from the production path —
+vehicles do not move between hubs, so the hub peaks ARE the fleet — and kept
+behind ``--stage3 on``. With stage 3 off, ``schedule_idx_system_smoothed``
+equals ``schedule_idx_balanced`` by construction, so every downstream consumer
+of that column keeps working unchanged.
+
+The stage-1 calls, argument construction and penalty wiring are copied verbatim
+from the canonical production run (``scripts/pipeline/02_optimize_grid.py``);
+only the matrices and the stage-2 objective are new.
+``matrices["bundle_head"]`` stays absent by design in this base run, so
+``price_group`` falls back to Sigma-pricing.
 
 ONE deliberate deviation from the canonical wiring, see ``--init-proxy``: the
 stage-1 warm-start proxy reads ``cost_3d_raw`` (the unpooled per-cell
@@ -30,14 +48,26 @@ amortized over all 8 penalties. Matrices are released between blocks.
 Resumable: completed (P, theta, provider) triples are skipped; a triple whose
 _tab_chosen_v2.csv block is short (killed mid-append) is redone, not trusted.
 Run OUTSIDE the agent harness (~59-min kill rule):
-  Start-Process .venv\\Scripts\\python.exe -ArgumentList "scripts/revision/61_grid_run_v2.py" -RedirectStandardOutput results/revision_2026_08/61.log
+  Start-Process .venv\\Scripts\\python.exe -ArgumentList "scripts/revision/61_grid_run_v2.py" -RedirectStandardOutput results/revision_2026_08_v3/61.log
 
-Outputs (results/revision_2026_08/, or $REV2_OUT_DIR):
+SCHEMA CHANGE (Task 6e): ``tab_costs_v2.csv`` gained the operator-lens columns
+below, and ``append_rows`` writes a header only when it CREATES the file — so
+appending v3 rows to the run-2 files would silently produce a ragged CSV. The
+default output directory is therefore ``results/revision_2026_08_v3/``; run 2
+stays where it is, read-only.
+
+Outputs (results/revision_2026_08_v3/, or $REV2_OUT_DIR):
   _tab_chosen_v2.csv        penalty, share_willing, provider, plz,
                             schedule_idx_stage1, schedule_idx_balanced,
                             schedule_idx_system_smoothed
+                            (== _balanced whenever stage 3 is off)
   tab_costs_v2.csv          per (P, theta, provider): dd / express / pool split
-                            at the system-smoothed choice (+ stage totals)
+                            at the final choice (+ stage totals), plus the
+                            operator lens — vehicle_days, fixed_cost_eur,
+                            variable_cost_eur, sum_hub_peak, operator_cost_eur
+                            (variable + weekly fixed, NO penalty) and
+                            operator_obj_eur (+ penalty, what stage 2
+                            minimises), with the stage-2 before/after pairs
   tab_fleet_per_hub_v2.csv  per (P, theta, provider, hub, day): the fleet
                             objective's three disjoint terms —
                             dd_single_veh (delivering cells with their own
@@ -77,10 +107,13 @@ sys.path.insert(0, str(C.ROOT / "src"))
 from batch_delivery.optimization.core import build_cost_matrices_ml  # noqa: E402
 from batch_delivery.optimization.coordinate_descent import optimize_cd_ml  # noqa: E402
 from batch_delivery.optimization.balancing import (  # noqa: E402
+    WEEK_FIXED_COST_EUR,
     balance_fleet_per_hub_ml,
+    operator_polish,
     system_smooth_pass,
     _daily_fleet_per_hub,
 )
+from batch_delivery.config.constants import FIXED_COST_EUR  # noqa: E402
 from batch_delivery.optimization.costs import (  # noqa: E402
     _hub_delivery_pool_vehicles,
     _hub_express_day_ml,
@@ -97,7 +130,7 @@ logging.disable(logging.INFO)  # silence the package's INFO/DEBUG chatter
 # REV2_OUT_DIR redirects every output (and the resume bookkeeping with it) to
 # a scratch directory — how gate runs are done without touching the live grid.
 OUT = Path(os.environ.get("REV2_OUT_DIR")
-           or C.ROOT / "results" / "revision_2026_08")
+           or C.ROOT / "results" / "revision_2026_08_v3")
 CHOSEN = OUT / "_tab_chosen_v2.csv"
 COSTS = OUT / "tab_costs_v2.csv"
 FLEET = OUT / "tab_fleet_per_hub_v2.csv"
@@ -315,40 +348,62 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
     t_s1 = time.perf_counter() - t0
     print(f"    P={P:<5g} th={th:<4g} {prov:<7s} stage1 {t_s1:7.1f}s", flush=True)
 
-    # ── STAGE 2: per-hub fleet balancing ────────────────────────────────
+    # ── STAGE 2: operator-cost polish (Task 6e) ─────────────────────────
+    # `preserve_frequency=True` is the canonical wiring and stays: stage 1
+    # owns the service-quality decision, so stage 2 only redistributes WHICH
+    # days a cell is served on. It is also what pins the theta=0 baseline to
+    # daily — at theta=0 nobody waits, the wait penalty is identically zero,
+    # and a frequency-free polish would batch the baseline away.
     t0 = time.perf_counter()
+    if args.stage2 == "operator":
+        bal = operator_polish(
+            {"chosen": chosen_s1},
+            plz_keys, plz_hub_arr, hub_plz_list, m, schedules,
+            penalty_mx=penalty_mx,
+            preserve_frequency=True,
+        )
+        s2_note = (f"{bal['swaps_made']} moves / {bal['sweeps']} sweeps"
+                   + (", BOUND BINDING" if bal["max_swaps_binding"] else ""))
+    else:
+        bal = balance_fleet_per_hub_ml(
+            {"chosen": chosen_s1, "best_cost": 0.0},
+            plz_keys, plz_hub_arr, hub_plz_list, m, schedules,
+            cost_budget_pct=FLEET_COST_BUDGET_PCT,
+            penalty_mx=penalty_mx,
+            preserve_frequency=True,
+        )
+        s2_note = f"{bal['swaps_made']} swaps"
     # init_cost = bundled total (dd + hub-bundled express + pool) of the
-    # refined init; balance_fleet_per_hub_ml(max_swaps=0) computes exactly that.
-    bal0 = balance_fleet_per_hub_ml(
-        {"chosen": chosen_s1, "best_cost": 0.0},
-        plz_keys, plz_hub_arr, hub_plz_list, m, schedules,
-        cost_budget_pct=FLEET_COST_BUDGET_PCT, max_swaps=0,
-    )
-    init_cost = float(bal0["initial_total_cost"])
-
-    bal = balance_fleet_per_hub_ml(
-        {"chosen": chosen_s1, "best_cost": init_cost},
-        plz_keys, plz_hub_arr, hub_plz_list, m, schedules,
-        cost_budget_pct=FLEET_COST_BUDGET_PCT,
-        penalty_mx=penalty_mx,
-        preserve_frequency=True,
-    )
+    # refined init. Both stage-2 implementations measure it the same way
+    # before their first move, so the stage-1 cost anchor is independent of
+    # `--stage2` (and of this script's history: the value is bit-identical to
+    # the extra `max_swaps=0` call it used to be read from).
+    init_cost = float(bal["initial_total_cost"])
     chosen_s2 = bal["chosen"].astype(np.int64)
     t_s2 = time.perf_counter() - t0
     print(f"    P={P:<5g} th={th:<4g} {prov:<7s} stage2 {t_s2:7.1f}s "
-          f"({bal['swaps_made']} swaps)", flush=True)
+          f"({s2_note})", flush=True)
 
-    # ── STAGE 3: system-level smoothing ─────────────────────────────────
+    # ── STAGE 3: system-level smoothing (off by default, Task 6e) ───────
     t0 = time.perf_counter()
-    res = system_smooth_pass(
-        chosen_s2, plz_keys, plz_hub_arr, hub_plz_list, m, schedules,
-        cost_budget_pct=args.budget, max_iterations=400,
-        penalty_mx=penalty_mx,
-    )
-    chosen_s3 = res["chosen"].astype(np.int64)
+    if args.stage3 == "on":
+        res = system_smooth_pass(
+            chosen_s2, plz_keys, plz_hub_arr, hub_plz_list, m, schedules,
+            cost_budget_pct=args.budget, max_iterations=400,
+            penalty_mx=penalty_mx,
+        )
+        chosen_s3 = res["chosen"].astype(np.int64)
+    else:
+        # Vehicles do not move between hubs, so the per-hub peaks ARE the
+        # fleet the operator pays for and a provider-aggregate spread pass has
+        # nothing left to buy. The stage-2 state is carried through verbatim.
+        res = {"chosen": chosen_s2, "cost": float(bal["cost"]),
+               "swaps_made": 0}
+        chosen_s3 = chosen_s2
     t_s3 = time.perf_counter() - t0
     print(f"    P={P:<5g} th={th:<4g} {prov:<7s} stage3 {t_s3:7.1f}s "
-          f"({res['swaps_made']} swaps)", flush=True)
+          f"({res['swaps_made']} swaps"
+          f"{'' if args.stage3 == 'on' else ', OFF'})", flush=True)
 
     # ── OUTPUT: cost split, partition-aware fleet, willing-weighted wait ─
     t0 = time.perf_counter()
@@ -414,29 +469,75 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
             f"fleet mismatch P={P} th={th} {prov} hub={r['hub']} d={d}: "
             f"{fleet_s3[hi, d]} != {r['fleet']}")
 
-    # Gate: the smoother's incrementally-tracked routing cost must equal the
+    # Gate: the last stage's incrementally-tracked routing cost must equal the
     # independent recomputation of dd + express + pool at its own choice.
     routing_total = dd_total + expr_total + pool_total
     assert abs(res["cost"] - routing_total) <= 1e-6 * max(1.0, abs(routing_total)), (
         f"cost bookkeeping drift P={P} th={th} {prov}: "
         f"tracked {res['cost']:.6f} != recomputed {routing_total:.6f}")
 
+    # ── the operator lens (Task 6e) ─────────────────────────────────────
+    # Every predicted cost carries 189.15 EUR per vehicle-DAY (VROOM's fixed
+    # term); the operator's fixed bill is weekly and sized by each hub's PEAK
+    # day. `fleet_s3` is the authoritative masked, partition-aware profile —
+    # the assert above has just proved the recorded rows ARE it.
+    penalty_total = float(penalty_mx[pidx, chosen_s3].sum())
+    vehicle_days = float(fleet_s3.sum())
+    sum_hub_peak = float(fleet_s3.max(axis=1).sum())
+    fixed_cost_eur = FIXED_COST_EUR * vehicle_days
+    variable_cost_eur = routing_total - fixed_cost_eur
+    operator_cost_eur = variable_cost_eur + WEEK_FIXED_COST_EUR * sum_hub_peak
+    sys_fleet = fleet_s3.sum(axis=0)
+    sys_spread = float(sys_fleet.max() - sys_fleet.min())
+
+    # Gate: with stage 3 off the final state IS stage 2's, so the polish's own
+    # incrementally-tracked objective must equal this from-scratch operator
+    # recomposition (G-6e-3, at grid scale).
+    if args.stage2 == "operator" and args.stage3 != "on":
+        obj_recomputed = operator_cost_eur + penalty_total
+        assert abs(bal["opcost_after"] - obj_recomputed) <= 1e-6 * max(
+                1.0, abs(obj_recomputed)), (
+            f"operator bookkeeping drift P={P} th={th} {prov}: tracked "
+            f"{bal['opcost_after']:.6f} != recomputed {obj_recomputed:.6f}")
+
+    is_op = args.stage2 == "operator"
     cost_rows = [dict(
         penalty=P, share_willing=th, provider=prov,
         dd_cost_eur=dd_total,
         express_cost_eur=expr_total,
         pool_cost_eur=pool_total,
         routing_total_eur=routing_total,
-        penalty_eur=float(penalty_mx[pidx, chosen_s3].sum()),
+        penalty_eur=penalty_total,
         cost_stage1_eur=init_cost,
         cost_stage2_eur=float(bal["cost"]),
         cost_stage3_eur=float(res["cost"]),
+        # operator lens at the FINAL choice
+        vehicle_days=vehicle_days,
+        fixed_cost_eur=fixed_cost_eur,
+        variable_cost_eur=variable_cost_eur,
+        sum_hub_peak=sum_hub_peak,
+        week_fixed_cost_eur=WEEK_FIXED_COST_EUR * sum_hub_peak,
+        operator_cost_eur=operator_cost_eur,          # no penalty
+        operator_obj_eur=operator_cost_eur + penalty_total,
+        # what stage 2 moved, in its own currency
+        opcost_before_eur=float(bal["opcost_before"]) if is_op else np.nan,
+        opcost_after_eur=float(bal["opcost_after"]) if is_op else np.nan,
+        variable_before_eur=float(bal["variable_before"]) if is_op else np.nan,
+        variable_after_eur=float(bal["variable_after"]) if is_op else np.nan,
+        sum_hub_peak_before=float(bal["sum_hub_peak_before"]) if is_op else np.nan,
+        sum_hub_peak_after=float(bal["sum_hub_peak_after"]) if is_op else np.nan,
+        vehicle_days_before=float(bal["vehicle_days_before"]) if is_op else np.nan,
+        vehicle_days_after=float(bal["vehicle_days_after"]) if is_op else np.nan,
+        sweeps_operator=int(bal["sweeps"]) if is_op else 0,
+        max_swaps_binding=bool(bal["max_swaps_binding"]) if is_op else False,
         imbalance_before=float(bal["imbalance_before"]),
         imbalance_after=float(bal["imbalance_after"]),
-        system_spread_before=float(res["system_spread_before"]),
-        system_spread_after=float(res["system_spread_after"]),
+        system_spread_before=float(res.get("system_spread_before", sys_spread)),
+        system_spread_after=float(res.get("system_spread_after", sys_spread)),
         swaps_balance=int(bal["swaps_made"]),
         swaps_smooth=int(res["swaps_made"]),
+        stage2=args.stage2,
+        stage3=args.stage3,
     )]
 
     # Willing-weighted wait — formula ported from 50_recompute_fleet_wait_fixed
@@ -510,9 +611,21 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default=None,
                     help="restrict the grid, e.g. P=0.5,th=0.1,prov=DPD")
+    ap.add_argument("--stage2", choices=("operator", "range"), default="operator",
+                    help="stage-2 objective: 'operator' = operator_polish "
+                         "(variable cost + weekly fixed cost per hub peak, "
+                         "Task 6e, default), 'range' = the pre-6e "
+                         "balance_fleet_per_hub_ml (hub range inside a cost "
+                         "budget) for ablation")
+    ap.add_argument("--stage3", choices=("off", "on"), default="off",
+                    help="provider-aggregate spread smoothing. Off by "
+                         "default: vehicles do not move between hubs, so the "
+                         "hub peaks already ARE the fleet the operator pays "
+                         "for. With 'off', schedule_idx_system_smoothed == "
+                         "schedule_idx_balanced")
     ap.add_argument("--budget", type=float, default=SMOOTH_BUDGET_PCT,
                     help="stage-3 system-smoothing cost budget in %% "
-                         "(03_apply_smoothing.py default)")
+                         "(03_apply_smoothing.py default; --stage3 on only)")
     ap.add_argument("--init-proxy", choices=("raw", "pooled"), default="raw",
                     help="stage-1 warm-start proxy matrix: 'raw' = cost_3d_raw "
                          "(pre-rev1 semantics, default), 'pooled' = the zeroed "
@@ -568,7 +681,9 @@ def main() -> None:
     sched_waits = np.array([C.avg_wait_days(sorted(s)) for s in schedules])
     print(f"[load] done in {time.perf_counter() - t_load:.0f}s "
           f"({len(schedules)} schedules, init_proxy={args.init_proxy}, "
+          f"stage2={args.stage2}, stage3={args.stage3}, "
           f"smooth_budget={args.budget}%)", flush=True)
+    print(f"[out] {OUT}", flush=True)
 
     expected_rows = {p: len(od["plz_keys"]) for p, od in optim_data.items()}
     done = load_done(expected_rows)
