@@ -3775,3 +3775,66 @@ gefangen, Grid gestoppt (159/615). Endgueltige Semantik = 50_-Reporting-Fix
 in der Zielfunktion: veh_3d auf Liefertage maskiert + gepoolte Express-
 Fahrzeuge einmal pro Partitionsgruppe + gepoolte Liefergruppen per Partition
 (Spec v3 §4.3).
+
+### 40.10 Was das Flotten-Balancing wirklich kauft (Teil-Grid v2, 2026-08-26)
+
+Rekonstruierte System-Flottenprofile (alle Provider, v3-Zaehlregel) je Stufe
+fuer vier Zellen, gegen die Stufenkosten gestellt (head=None, konservative
+Pool-Preise):
+
+| (P, theta) | Kosten St.1->3 | Peak | Trog | Fahrzeugtage/Wo | EUR je entferntem Peak-Fahrzeug/Wo |
+|---|---|---|---|---|---|
+| (0, 0.3) | +25.7k (+1.35 %) | 1178 -> 1139 (-39) | 778 -> 890 (+112) | +104 | 660 |
+| (0, 0.6) | +27.8k (+1.46 %) | 1149 -> 1058 (-91) | 775 -> 997 (+222) | +103 | 306 |
+| (0.5, 0.3) | +22.6k (+1.18 %) | 1203 -> 1183 (-20) | 767 -> 862 (+95) | +94 | 1128 |
+| (0.5, 0.6) | +18.8k (+0.99 %) | 1186 -> 1165 (-21) | 759 -> 873 (+114) | +68 | 897 |
+
+Vier Befunde:
+1. **Die Spread-Reduktion ist zu 3/4 Trog-Fuellung, nicht Peak-Senkung.** Das
+   Ziel "Summe der Hub-Spannweiten" ist indifferent zwischen beidem, und
+   Trog-Fuellung ist billiger. Oekonomischen Wert hat aber nur der Peak.
+2. **Die Wochen-Fahrzeugtage STEIGEN** um 1.1-1.7 % — das Balancing verteilt
+   Teilladungen auf mehr Tage. Mehr Fahrzeuge auf der Strasse, mehr km.
+3. **Das 5-%-Budget bindet nicht** (max. 2.7 % je Provider): der Balancer stoppt,
+   weil kein Swap die Spannweite weiter senkt — das Budget ist nicht der Regler.
+4. **Stufe 3 (System-Glaettung) ist fast wirkungslos** (0-6 Swaps, nur DHL mit
+   16 Hubs; alle Single-Hub-Provider 0). Kosten ~0.
+
+Einordnung: Stufe 1 allein senkt den Peak bereits von 1238 (Baseline) auf
+1149-1203. Das Balancing kauft weitere 20-91 Fahrzeuge fuer 306-1128 EUR je
+Fahrzeug und Woche. Gegen den Besitzwert eines Fahrzeugs (~150-200 EUR/Wo
+Leasing) lohnt es sich nur, wenn der Peak die FESTE Personaldecke bestimmt
+(FTE ~900 EUR/Wo) — dann rechnen sich 306 und 660, nicht 897-1128. Die
+Paper-Metrik (Flotten-CV) wird wie designt gesenkt; sie misst Flachheit, nicht
+Flottengroesse. Empfehlung: beide Betriebsmodi (kostenoptimal vs. geglaettet)
+mit explizitem Preis berichten; Balancing ueber Fahrzeugtag-Schranke oder
+Peak-Ziel begrenzen, nicht ueber das (nicht bindende) Budget.
+
+### 40.11 Korrektur zu 40.10: In der Betreiber-Sicht lohnt sich das Balancing deutlich
+
+40.10 verglich Routing-Euro (inkl. 189,15 EUR je zusaetzlichem Fahrzeugtag)
+mit Leasingkosten — falsche Waehrung. `FIXED_COST_EUR = 189.15` je Fahrzeug
+und TAG enthaelt den Fahrer; ein Betreiber besetzt jeden Hub aber fuer seinen
+WOCHEN-Peak: der Fahrer ist ohnehin angestellt, unterhalb des Peaks sind nur
+die variablen km-Kosten real. Betreiber-Kosten = variabel + 6 x 189,15
+(= 1 135 EUR) je Peak-Fahrzeug und Hub.
+
+| (P, theta) | Routing St.1->3 | Fahrzeugtage | variabel | Σ Hub-Peak | Betreiber-Kosten St.1->3 |
+|---|---|---|---|---|---|
+| (0, 0.3) | +25.7k | +104 | +6.1k | 1228 -> 1156 (-72) | **-75.7k EUR/Wo** |
+| (0, 0.6) | +27.8k | +103 | +8.3k | 1295 -> 1148 (-147) | **-158.5k** |
+| (0.5, 0.3) | +22.6k | +94 | +4.8k | 1216 -> 1184 (-32) | **-31.5k** |
+| (0.5, 0.6) | +18.8k | +68 | +6.0k | 1226 -> 1167 (-59) | **-61.0k** |
+| (0, 1.0) | +6.0k | +19 | +2.5k | 1666 -> 1406 (-260) | **-292.6k** |
+| (0.25, 1.0) | +13.6k | +60 | +2.2k | 1315 -> 1155 (-160) | **-179.3k** |
+
+Lesart: Von den +18..28k Routing-Euro des Balancings sind 13..20k blosse
+Fahrzeugtag-Fixkosten unterhalb des Peaks — in der Betreiber-Sicht kein
+Aufwand. Real kostet die Glaettung 2..8k EUR/Wo variabel und spart 32..260
+Peak-Fahrzeuge je 1 135 EUR. Trog-Fuellung (40.10) ist in dieser Sicht
+unschaedlich. Fazit: Balancing behalten; zwei Kostenlinsen berichten
+(Routing = vergleichbar mit Submission; Betreiber = Wochen-Fixkosten je
+Hub-Peak). Sauberere Loesung fuer Stufe 2/3: Zielfunktion Σ Hub-Peak statt
+Spannweite, Akzeptanz oekonomisch (Δvariabel < 1 135 x ΔPeak) statt
+5-%-Budget — Donnerstags-Option, falls Gate U und Validierung im Plan liegen.
+Offen: Betreiber-Baseline (theta=0-Profil) fuer Einsparungen in dieser Linse.
