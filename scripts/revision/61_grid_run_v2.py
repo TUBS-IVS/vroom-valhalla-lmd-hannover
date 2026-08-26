@@ -6,7 +6,7 @@ pooling, express-exact fleet objective). Where ``10_recompute_stage3_outputs``
 only RE-PRICES the stored 2026-05-29 schedule choices, this script OPTIMIZES:
 
   stage 1  argmin warm start + ``optimize_cd_ml``   -> schedule_idx_stage1
-  stage 2  ``operator_polish_best_of_two``          -> schedule_idx_balanced
+  stage 2  ``operator_polish_best_of_n``            -> schedule_idx_balanced
   stage 3  ``system_smooth_pass``  (OFF by default) -> schedule_idx_system_smoothed
 
 **Stage 2 is an operator-cost minimisation** (Task 6e, spec v3 §4.3): it
@@ -21,27 +21,52 @@ for the week,
 cost carries one fixed charge per vehicle-DAY while the operator's fixed bill
 is weekly and sized by each hub's PEAK day.
 
-It runs from TWO starts — stage 1, and the pre-6e range balancer's output —
-and keeps the cheaper end state (``stage2_start_winner``). W dwarfs what one
-cell can move, so the objective is flat in plateaus a strict descent cannot
-cross; on the v3 grid the old heuristic beat a stage-1-only polish on 10 of
-222 triples (worst +3 046 EUR). With the range state as a candidate start that
-cannot happen: the polish never worsens the state it is given.
+**Stage 2 is FREQUENCY-FREE at theta > 0** (Task 6f). It may add or drop a
+cell's delivery days, not merely re-time them. The v4 pin blocked the moves
+that carry most of the operator-lens value: a hub serving a single cell has
+nothing to rotate (``0 0 33 0 0 29`` under every rotation of a two-day
+pattern) and 9 of DHL's 16 hubs are exactly that — their peak only falls with
+MORE delivery days. Measured on DHL, P=0, theta=1: OpCost 814 314 -> 595 067,
+Sigma hub peak 654 -> 447, routing +4.2 %, parcel-weighted wait 0.952 ->
+0.621 d. Nothing a frequency change touches is unpriced at theta > 0: the
+objective carries Delta variable, W * Delta peak and Delta penalty.
 
-**Stage 2 can only ever RAISE the routing cost** (against stage 1, its own
-starting point): stage 1 already minimises the penalised routing objective, so
-every stage-2 move is by construction buying a lower weekly fixed bill with
-variable cost. Measured on the v3 grid (stage-1-only branch) the routing total
-never fell — median +0.39 %, max +2.36 %; the three re-gated best-of-two
-triples sit at +0.25 / +1.75 / +1.96 %. Task 13/14 must state this when the
-paper reports savings in both lenses: **the routing-lens saving is strictly
-the stage-1 number**, and the operator-lens saving is what stage 2 adds on top.
-(A stage-2 state can still be cheaper in routing than the OLD run-2 state — it
-is a different point — but never cheaper than its own stage 1.)
+**theta = 0 is a stage-2 NO-OP.** There nobody is willing to wait, so
+``penalty_mx`` is identically zero for EVERY P and a frequency-free polish
+would face an unpriced service dimension — it would batch away the daily
+baseline the whole paper is measured against. The runner pins the stage-2 plan
+to stage 1 and only measures it (asserted per triple: G-6f-1).
+
+Stage 2 runs from THREE starts — stage 1, the pre-6e range balancer's output,
+and the frequency-PRESERVING best-of-two plan (what grid v4 shipped) — and
+keeps the cheapest end state (``stage2_start_winner``). W dwarfs what one cell
+can move, so the objective is flat in plateaus a strict descent cannot cross;
+on the v3 grid the old range heuristic beat a stage-1-only polish on 10 of 222
+triples (worst +3 046 EUR). With both other plans as candidate starts that
+cannot happen — the polish never worsens the state it is given — so
+``OpCost(v5) <= OpCost(v4)`` and ``<= OpCost(range plan)`` hold by
+construction and are asserted per triple.
+
+**Stage 2 is expected to RAISE the routing cost** against stage 1, its own
+starting point: stage 1 already minimises the penalised routing objective, so
+an accepted stage-2 move is normally buying a lower weekly fixed bill with
+variable cost. That is a strong expectation, not a theorem — stage 1 is a
+single-cell/pair local optimum of routing PLUS penalty, so routing alone could
+in principle fall while the penalty rises. Measured: 0 of 102 v4 rows fell
+(median +0.000 %, max +1.94 %); on the v3 grid 0 of 222 fell (median +0.39 %,
+max +2.36 %). Task 13/14 must state this when the paper reports savings in
+both lenses: **the routing-lens saving is the stage-1 number**, and the
+operator-lens saving is what stage 2 adds on top. (A stage-2 state can still
+be cheaper in routing than the OLD run-2 state — a different point — but it
+has not been observed cheaper than its own stage 1.)
 
 ``--stage2 range`` restores the pre-6e ``balance_fleet_per_hub_ml`` (range
-objective inside a cost budget) for ablation, and ``--stage2 operator-solo``
-the stage-1-only polish (what grid v3 measured).
+objective inside a cost budget) for ablation, ``--stage2 operator-freqpres``
+the frequency-preserving best-of-two (what grid v4 measured), and
+``--stage2 operator-solo`` the frequency-preserving stage-1-only polish (grid
+v3). ``stage2_start_winner`` names the ABLATION in those modes
+(``range-ablation`` / ``solo-ablation`` / ``freqpres-ablation-{stage1,range}``)
+so no downstream filter can mistake an ablation row for a production one.
 Stage 3 spread-smoothing is dropped from the production path —
 vehicles do not move between hubs, so the hub peaks ARE the fleet — and kept
 behind ``--stage3 on``. With stage 3 off, ``schedule_idx_system_smoothed``
@@ -69,19 +94,25 @@ amortized over all 8 penalties. Matrices are released between blocks.
 Resumable: completed (P, theta, provider) triples are skipped; a triple whose
 _tab_chosen_v2.csv block is short (killed mid-append) is redone, not trusted.
 Run OUTSIDE the agent harness (~59-min kill rule):
-  Start-Process .venv\\Scripts\\python.exe -ArgumentList "scripts/revision/61_grid_run_v2.py" -RedirectStandardOutput results/revision_2026_08_v3/61.log
+  Start-Process .venv\\Scripts\\python.exe -ArgumentList "scripts/revision/61_grid_run_v2.py" -RedirectStandardOutput results/revision_2026_08_v5/61.log
 
-SCHEMA CHANGE (Task 6e): ``tab_costs_v2.csv`` gained the operator-lens columns
-below, and ``append_rows`` writes a header only when it CREATES the file — so
+SCHEMA CHANGE (Tasks 6e/6f): ``tab_costs_v2.csv`` gained the operator-lens and
+best-of-N columns below and ``tab_wait_v2.csv`` gained the stage-1 plan's wait,
+and ``append_rows`` writes a header only when it CREATES the file — so
 appending to an older run's files would silently produce a ragged CSV (the new
 columns sit BETWEEN ``cost_stage3_eur`` and ``imbalance_before``, so every
 later column would misalign). ``append_rows`` therefore compares an existing
 file's header against the frame it is about to append and RAISES on mismatch,
-and the default output directory is ``results/revision_2026_08_v4/``. Run 2
-(``revision_2026_08``) and the v3 stage-1-only ablation stay where they are,
-read-only.
+and the default output directory is ``results/revision_2026_08_v5/``. Run 2
+(``revision_2026_08``), the v3 stage-1-only ablation and the v4
+frequency-preserving grid stay where they are, read-only.
 
-Outputs (results/revision_2026_08_v4/, or $REV2_OUT_DIR):
+TWO PLANS, TWO LENSES. Every table now carries BOTH the stage-1 plan (the
+routing optimum) and the stage-2 plan (the operator-polished one). The
+convention is: **the plain column name is the STAGE-2 / final plan**, and the
+stage-1 value carries a ``_stage1`` suffix or lives in a ``*_before`` column.
+
+Outputs (results/revision_2026_08_v5/, or $REV2_OUT_DIR):
   _tab_chosen_v2.csv        penalty, share_willing, provider, plz,
                             schedule_idx_stage1, schedule_idx_balanced,
                             schedule_idx_system_smoothed
@@ -94,18 +125,30 @@ Outputs (results/revision_2026_08_v4/, or $REV2_OUT_DIR):
                             operator_obj_eur (+ penalty, what stage 2
                             minimises), the stage-2 before/after pairs
                             (before == the STAGE-1 anchor, always) incl.
-                            operator_cost_before_eur, and the best-of-two
-                            provenance: stage2_start_winner,
-                            opcost_from_stage1_eur, opcost_from_range_eur,
-                            opcost_range_start_eur
+                            operator_cost_before_eur and penalty_before_eur,
+                            and the best-of-N provenance:
+                            stage2_start_winner, opcost_from_stage1_eur,
+                            opcost_from_range_eur, opcost_from_freqpres_eur,
+                            opcost_range_start_eur (the range plan's own
+                            OpCost) and opcost_freqpres_start_eur (the v4
+                            plan's own OpCost — the v5<=v4 guarantee's
+                            reference, so no v4 re-run is needed to compare),
+                            with per-branch move counts and the unambiguous
+                            cells_changed_vs_stage1 /
+                            cells_freq_changed_vs_stage1
   tab_fleet_per_hub_v2.csv  per (P, theta, provider, hub, day): the fleet
                             objective's three disjoint terms —
                             dd_single_veh (delivering cells with their own
                             tour), dd_pool_veh (one ceil per pooled
                             small-delivery GROUP, spec §4.3 v3), express_veh
-                            (one ceil per express tour) — and their sum
+                            (one ceil per express tour) — and their sum.
+                            AT THE FINAL (stage-2) PLAN; the stage-1 plan's
+                            fleet totals are in tab_costs_v2's *_before columns
   tab_wait_v2.csv           per (P, theta, provider): willing-weighted wait
-                            numerator/denominator (50_'s fixed formula); the
+                            numerator/denominator (50_'s fixed formula) at the
+                            FINAL plan, the same pair at the stage-1 plan
+                            (``*_stage1``), and the mean delivery days per cell
+                            of both plans (mean_days / mean_days_stage1). The
                             cell-level wait is sum(num)/sum(den) over providers
 
 ``--dummy-head`` is a TIMING probe for the Task-6d decision: it installs a
@@ -140,6 +183,7 @@ from batch_delivery.optimization.balancing import (  # noqa: E402
     WEEK_FIXED_COST_EUR,
     balance_fleet_per_hub_ml,
     operator_polish,
+    operator_polish_best_of_n,
     operator_polish_best_of_two,
     system_smooth_pass,
     _daily_fleet_per_hub,
@@ -161,7 +205,7 @@ logging.disable(logging.INFO)  # silence the package's INFO/DEBUG chatter
 # REV2_OUT_DIR redirects every output (and the resume bookkeeping with it) to
 # a scratch directory — how gate runs are done without touching the live grid.
 OUT = Path(os.environ.get("REV2_OUT_DIR")
-           or C.ROOT / "results" / "revision_2026_08_v4")
+           or C.ROOT / "results" / "revision_2026_08_v5")
 CHOSEN = OUT / "_tab_chosen_v2.csv"
 COSTS = OUT / "tab_costs_v2.csv"
 FLEET = OUT / "tab_fleet_per_hub_v2.csv"
@@ -235,13 +279,34 @@ def _retry_write(path: Path, fn) -> None:
     raise last_err
 
 
+def read_header(path: Path) -> list[str]:
+    """Column names of an existing CSV, or ``SystemExit`` if it has none.
+
+    A 0-byte file (a kill between ``open`` and the first write, or a
+    hand-made placeholder) has no header at all. ``pd.read_csv`` raises a bare
+    ``EmptyDataError`` traceback for it, which reads like a crash rather than
+    the schema guard doing its job — so translate it into the guard's own
+    message. Fail loud either way: an empty file cannot be appended to
+    safely, because the append would write no header and every later reader
+    would see the first data row as one.
+    """
+    try:
+        return list(pd.read_csv(path, nrows=0).columns)
+    except pd.errors.EmptyDataError:
+        raise SystemExit(
+            f"{path} exists but is EMPTY (0 bytes / no header row). Appending "
+            "to it would produce a headerless CSV whose first data row every "
+            "reader would mistake for the header. Delete it, or point "
+            "REV2_OUT_DIR at a fresh directory.") from None
+
+
 def append_rows(path: Path, rows: list[dict]) -> None:
     """Append rows to *path*, writing the header only on first creation.
 
     SCHEMA GUARD: because the header is written only on CREATION, appending a
     frame whose columns differ from the file's would silently produce a ragged
-    CSV — and the Task-6e columns sit BETWEEN ``cost_stage3_eur`` and
-    ``imbalance_before``, so pointing ``REV2_OUT_DIR`` at a run-2 or v3
+    CSV — and the Task-6e/6f columns sit BETWEEN ``cost_stage3_eur`` and
+    ``imbalance_before``, so pointing ``REV2_OUT_DIR`` at a run-2, v3 or v4
     directory would misalign every later column instead of failing. Compare
     and refuse.
     """
@@ -249,7 +314,7 @@ def append_rows(path: Path, rows: list[dict]) -> None:
         return
     df = pd.DataFrame(rows)
     if path.exists():
-        have = list(pd.read_csv(path, nrows=0).columns)
+        have = read_header(path)
         want = list(df.columns)
         if have != want:
             missing = [c for c in want if c not in have]
@@ -331,6 +396,113 @@ def prune_partial(done: set) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Stage 2: which objective, from which start(s), and the theta=0 no-op
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: What ``stage2_start_winner`` may hold, per ``--stage2`` mode. Production
+#: (``operator``) keeps the bare start names of ``BEST_OF_N_STARTS``; every
+#: ablation is namespaced so a downstream filter on e.g. ``"range"`` cannot
+#: silently mix an ablation row into a production table.
+STAGE2_WINNER_NOOP = "stage1-noop"
+STAGE2_WINNER_SOLO = "solo-ablation"
+STAGE2_WINNER_RANGE = "range-ablation"
+STAGE2_WINNER_FREQPRES = "freqpres-ablation-"    # + the best-of-two winner
+
+
+def stage2_plan(mode: str, th: float, chosen_s1: np.ndarray,
+                plz_keys: list, plz_hub_arr: np.ndarray, hub_plz_list: list,
+                m: dict, schedules: list,
+                penalty_mx: np.ndarray) -> tuple[dict, str]:
+    """Run stage 2 under *mode* on the stage-1 plan; return ``(bal, note)``.
+
+    ``mode="operator"`` is production (Task 6f):
+
+    * **theta > 0** — ``operator_polish_best_of_n``, FREQUENCY-FREE. Stage 2
+      may add or drop a cell's delivery days, because at theta > 0 everything
+      such a move touches is priced: ``Delta variable``, ``W * Delta peak`` and
+      ``Delta penalty = P * willing * parcels * Delta wait``. The three starts
+      (stage 1, the range-balanced plan, the frequency-preserving best-of-two
+      plan) make the result no worse than either heuristic OR than grid v4, by
+      construction.
+    * **theta = 0** — a NO-OP (G-6f-1). Nobody is willing to wait there, so
+      ``penalty_mx`` is identically zero for every P: a frequency-free polish
+      would face an UNPRICED service dimension and would batch away the daily
+      baseline the whole paper is measured against. The plan is pinned to
+      stage 1 and only MEASURED (``operator_polish(max_swaps=0)``, the
+      documented pure-measurement path), so the operator-lens columns are
+      still populated at the baseline plan.
+
+    The ablations keep the frequency pin and are unchanged:
+    ``operator-freqpres`` (grid v4), ``operator-solo`` (grid v3), ``range``
+    (run 2, with ``--stage3 on``).
+    """
+    kw = dict(penalty_mx=penalty_mx)
+    args_common = (plz_keys, plz_hub_arr, hub_plz_list, m, schedules)
+
+    if mode == "operator" and th == 0.0:
+        # max_swaps=0 IS the pure-measurement contract: the wrapper searches
+        # nothing, builds no candidate start, and reports the input plan — so
+        # the row carries the full best-of-N schema with the branch fields
+        # honestly NaN rather than fabricated.
+        bal = operator_polish_best_of_n(
+            {"chosen": chosen_s1}, *args_common,
+            max_swaps=0, preserve_frequency=False,
+            range_budget_pct=FLEET_COST_BUDGET_PCT, **kw)
+        bal["stage2_start_winner"] = STAGE2_WINNER_NOOP
+        return bal, ("theta=0: stage 2 is a NO-OP (plan pinned to stage 1, "
+                     "measurement only)")
+
+    if mode == "operator":
+        bal = operator_polish_best_of_n(
+            {"chosen": chosen_s1}, *args_common,
+            preserve_frequency=False,
+            range_budget_pct=FLEET_COST_BUDGET_PCT, **kw)
+        note = (f"{bal['swaps_made']} moves / {bal['sweeps']} sweeps"
+                + (", BOUND BINDING" if bal["max_swaps_binding_any"] else "")
+                + f", start={bal['stage2_start_winner']} "
+                f"(s1 {bal['opcost_from_stage1']:,.0f} vs range "
+                f"{bal['opcost_from_range']:,.0f} vs freqpres "
+                f"{bal['opcost_from_freqpres']:,.0f}; range plan "
+                f"{bal['opcost_range_start']:,.0f}, v4 plan "
+                f"{bal['opcost_freqpres_start']:,.0f})")
+        return bal, note
+
+    if mode == "operator-freqpres":
+        bal = operator_polish_best_of_two(
+            {"chosen": chosen_s1}, *args_common,
+            preserve_frequency=True,
+            range_budget_pct=FLEET_COST_BUDGET_PCT, **kw)
+        note = (f"{bal['swaps_made']} moves / {bal['sweeps']} sweeps"
+                + (", BOUND BINDING" if bal["max_swaps_binding"] else "")
+                + f", start={bal['stage2_start_winner']} "
+                f"(s1 {bal['opcost_from_stage1']:,.0f} vs range "
+                f"{bal['opcost_from_range']:,.0f}; range plan "
+                f"{bal['opcost_range_start']:,.0f})")
+        bal["stage2_start_winner"] = (STAGE2_WINNER_FREQPRES
+                                      + bal["stage2_start_winner"])
+        return bal, note
+
+    if mode == "operator-solo":
+        bal = operator_polish(
+            {"chosen": chosen_s1}, *args_common,
+            preserve_frequency=True, **kw)
+        bal["stage2_start_winner"] = STAGE2_WINNER_SOLO
+        note = (f"{bal['swaps_made']} moves / {bal['sweeps']} sweeps"
+                + (", BOUND BINDING" if bal["max_swaps_binding"] else ""))
+        return bal, note
+
+    if mode == "range":
+        bal = balance_fleet_per_hub_ml(
+            {"chosen": chosen_s1, "best_cost": 0.0}, *args_common,
+            cost_budget_pct=FLEET_COST_BUDGET_PCT,
+            preserve_frequency=True, **kw)
+        bal["stage2_start_winner"] = STAGE2_WINNER_RANGE
+        return bal, f"{bal['swaps_made']} swaps"
+
+    raise SystemExit(f"unknown --stage2 mode {mode!r}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # One (P, theta, provider) triple: stage 1 -> 2 -> 3 + output rows
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -401,48 +573,31 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
     t_s1 = time.perf_counter() - t0
     print(f"    P={P:<5g} th={th:<4g} {prov:<7s} stage1 {t_s1:7.1f}s", flush=True)
 
-    # ── STAGE 2: operator-cost polish (Task 6e) ─────────────────────────
-    # `preserve_frequency=True` is the canonical wiring and stays: stage 1
-    # owns the service-quality decision, so stage 2 only redistributes WHICH
-    # days a cell is served on. It is also what pins the theta=0 baseline to
-    # daily — at theta=0 nobody waits, the wait penalty is identically zero,
-    # and a frequency-free polish would batch the baseline away.
+    # ── STAGE 2: operator-cost polish (Tasks 6e/6f) ─────────────────────
+    # Production is FREQUENCY-FREE at theta > 0 and a NO-OP at theta = 0; the
+    # ablations keep the frequency pin. See stage2_plan's docstring.
     t0 = time.perf_counter()
-    if args.stage2 in ("operator", "operator-solo"):
-        polish = (operator_polish_best_of_two if args.stage2 == "operator"
-                  else operator_polish)
-        extra = ({"range_budget_pct": FLEET_COST_BUDGET_PCT}
-                 if args.stage2 == "operator" else {})
-        bal = polish(
-            {"chosen": chosen_s1},
-            plz_keys, plz_hub_arr, hub_plz_list, m, schedules,
-            penalty_mx=penalty_mx,
-            preserve_frequency=True,
-            **extra,
-        )
-        s2_note = (f"{bal['swaps_made']} moves / {bal['sweeps']} sweeps"
-                   + (", BOUND BINDING" if bal["max_swaps_binding"] else ""))
-        if args.stage2 == "operator":
-            s2_note += (f", start={bal['stage2_start_winner']} "
-                        f"(s1 {bal['opcost_from_stage1']:,.0f} vs range "
-                        f"{bal['opcost_from_range']:,.0f}; range state "
-                        f"{bal['opcost_range_start']:,.0f})")
-    else:
-        bal = balance_fleet_per_hub_ml(
-            {"chosen": chosen_s1, "best_cost": 0.0},
-            plz_keys, plz_hub_arr, hub_plz_list, m, schedules,
-            cost_budget_pct=FLEET_COST_BUDGET_PCT,
-            penalty_mx=penalty_mx,
-            preserve_frequency=True,
-        )
-        s2_note = f"{bal['swaps_made']} swaps"
+    bal, s2_note = stage2_plan(
+        args.stage2, th, chosen_s1,
+        plz_keys, plz_hub_arr, hub_plz_list, m, schedules, penalty_mx)
     # init_cost = bundled total (dd + hub-bundled express + pool) of the
-    # refined init. Both stage-2 implementations measure it the same way
-    # before their first move, so the stage-1 cost anchor is independent of
+    # refined init. Every stage-2 implementation measures it the same way
+    # before its first move, so the stage-1 cost anchor is independent of
     # `--stage2` (and of this script's history: the value is bit-identical to
     # the extra `max_swaps=0` call it used to be read from).
     init_cost = float(bal["initial_total_cost"])
     chosen_s2 = bal["chosen"].astype(np.int64)
+    # G-6f-1: at theta=0 the wait penalty is identically zero for every P, so
+    # stage 2 has no priced service dimension and MUST NOT move. Every mode
+    # satisfies this — production by the explicit no-op above, the ablations
+    # because their frequency pin leaves only the daily schedule as a
+    # candidate. Assert it rather than trust it: this is the baseline the
+    # whole paper's savings are measured against.
+    if th == 0.0:
+        assert np.array_equal(chosen_s2, chosen_s1), (
+            f"G-6f-1 violated P={P} th={th} {prov}: stage 2 moved "
+            f"{int((chosen_s2 != chosen_s1).sum())} cell(s) off the theta=0 "
+            "daily baseline, where the wait penalty is identically zero")
     t_s2 = time.perf_counter() - t0
     print(f"    P={P:<5g} th={th:<4g} {prov:<7s} stage2 {t_s2:7.1f}s "
           f"({s2_note})", flush=True)
@@ -556,23 +711,47 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
     # Gate: with stage 3 off the final state IS stage 2's, so the polish's own
     # incrementally-tracked objective must equal this from-scratch operator
     # recomposition (G-6e-3, at grid scale).
-    is_op = args.stage2 in ("operator", "operator-solo")
-    is_bo2 = args.stage2 == "operator"
+    is_op = args.stage2 in ("operator", "operator-freqpres", "operator-solo")
+    is_multi = args.stage2 in ("operator", "operator-freqpres")   # has starts
+    is_bon = args.stage2 == "operator"                            # best-of-N
     if is_op and args.stage3 != "on":
         obj_recomputed = operator_cost_eur + penalty_total
         assert abs(bal["opcost_after"] - obj_recomputed) <= 1e-6 * max(
                 1.0, abs(obj_recomputed)), (
             f"operator bookkeeping drift P={P} th={th} {prov}: tracked "
             f"{bal['opcost_after']:.6f} != recomputed {obj_recomputed:.6f}")
-        # G-6e-4 at grid scale: the range heuristic's own end state is one of
-        # the two candidate starts, so it can never be cheaper than what we
-        # return. Fail loud instead of shipping a beaten solution.
-        if is_bo2:
-            assert bal["opcost_after"] <= bal["opcost_range_start"] + 1e-6 * max(
-                    1.0, abs(bal["opcost_range_start"])), (
-                f"G-6e-4 violated P={P} th={th} {prov}: returned "
-                f"{bal['opcost_after']:.6f} > range-balancer state "
-                f"{bal['opcost_range_start']:.6f}")
+        # G-6e-4 / G-6f-2 at grid scale: the range heuristic's own end state —
+        # and, for best-of-N, the frequency-preserving v4 plan — are candidate
+        # STARTS, so neither can be cheaper than what we return. Fail loud
+        # instead of shipping a beaten solution. Both are NaN on the theta=0
+        # no-op, where no candidate was built.
+        for gate, ref, active in (
+                ("G-6e-4", "opcost_range_start", is_multi),
+                ("G-6f-2", "opcost_freqpres_start", is_bon)):
+            if not active:
+                continue
+            ref_val = float(bal[ref])
+            if not np.isfinite(ref_val):
+                continue
+            assert bal["opcost_after"] <= ref_val + 1e-6 * max(
+                    1.0, abs(ref_val)), (
+                f"{gate} violated P={P} th={th} {prov}: returned "
+                f"{bal['opcost_after']:.6f} > {ref} {ref_val:.6f}")
+
+    # How far the final plan sits from stage 1, path-independently: the
+    # per-branch swap counts below describe ONE branch's descent each, so
+    # neither is "the number of stage-2 moves". These two are.
+    cells_changed = int((chosen_s3 != chosen_s1).sum())
+    sched_size = np.array([len(s) for s in schedules], dtype=np.float64)
+    cells_freq_changed = int(
+        (sched_size[chosen_s3] != sched_size[chosen_s1]).sum())
+
+    def _f(key: str, when: bool) -> float:
+        return float(bal[key]) if when else np.nan
+
+    def _i(key: str, when: bool) -> int:
+        return int(bal[key]) if when else 0
+
     cost_rows = [dict(
         penalty=P, share_willing=th, provider=prov,
         dd_cost_eur=dd_total,
@@ -592,39 +771,50 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
         operator_cost_eur=operator_cost_eur,          # no penalty
         operator_obj_eur=operator_cost_eur + penalty_total,
         # what stage 2 moved, in its own currency. Every *_before is the
-        # STAGE-1 anchor, whichever best-of-two start won.
-        opcost_before_eur=float(bal["opcost_before"]) if is_op else np.nan,
-        opcost_after_eur=float(bal["opcost_after"]) if is_op else np.nan,
+        # STAGE-1 anchor, whichever best-of-N start won.
+        opcost_before_eur=_f("opcost_before", is_op),
+        opcost_after_eur=_f("opcost_after", is_op),
         # ready-made for the savings tables: no reconstruction needed
         operator_cost_before_eur=(
             float(bal["variable_before"])
             + WEEK_FIXED_COST_EUR * float(bal["sum_hub_peak_before"])
             if is_op else np.nan),
-        variable_before_eur=float(bal["variable_before"]) if is_op else np.nan,
-        variable_after_eur=float(bal["variable_after"]) if is_op else np.nan,
-        sum_hub_peak_before=float(bal["sum_hub_peak_before"]) if is_op else np.nan,
-        sum_hub_peak_after=float(bal["sum_hub_peak_after"]) if is_op else np.nan,
-        vehicle_days_before=float(bal["vehicle_days_before"]) if is_op else np.nan,
-        vehicle_days_after=float(bal["vehicle_days_after"]) if is_op else np.nan,
-        sweeps_operator=int(bal["sweeps"]) if is_op else 0,
+        variable_before_eur=_f("variable_before", is_op),
+        variable_after_eur=_f("variable_after", is_op),
+        sum_hub_peak_before=_f("sum_hub_peak_before", is_op),
+        sum_hub_peak_after=_f("sum_hub_peak_after", is_op),
+        vehicle_days_before=_f("vehicle_days_before", is_op),
+        vehicle_days_after=_f("vehicle_days_after", is_op),
+        penalty_before_eur=_f("penalty_before", is_op),   # stage-1 plan's
+        sweeps_operator=_i("sweeps", is_op),
         max_swaps_binding=bool(bal["max_swaps_binding"]) if is_op else False,
-        # best-of-two provenance (NaN/"" under the solo and range ablations)
-        stage2_start_winner=(str(bal["stage2_start_winner"]) if is_bo2
-                             else args.stage2),
-        opcost_from_stage1_eur=(float(bal["opcost_from_stage1"]) if is_bo2
-                                else np.nan),
-        opcost_from_range_eur=(float(bal["opcost_from_range"]) if is_bo2
-                               else np.nan),
-        opcost_range_start_eur=(float(bal["opcost_range_start"]) if is_bo2
-                                else np.nan),
-        swaps_from_stage1=int(bal["swaps_from_stage1"]) if is_bo2 else 0,
-        swaps_from_range=int(bal["swaps_from_range"]) if is_bo2 else 0,
-        swaps_range_balancer=int(bal["swaps_range_balancer"]) if is_bo2 else 0,
+        max_swaps_binding_any=bool(
+            bal.get("max_swaps_binding_any", bal.get("max_swaps_binding",
+                                                     False))) if is_op else False,
+        # best-of-N provenance. `stage2_start_winner` is namespaced per mode
+        # (see STAGE2_WINNER_*), so an ablation row can never be mistaken for a
+        # production one by a filter that forgets to read `stage2`.
+        stage2_start_winner=str(bal["stage2_start_winner"]),
+        opcost_from_stage1_eur=_f("opcost_from_stage1", is_multi),
+        opcost_from_range_eur=_f("opcost_from_range", is_multi),
+        opcost_from_freqpres_eur=_f("opcost_from_freqpres", is_bon),
+        opcost_range_start_eur=_f("opcost_range_start", is_multi),
+        opcost_freqpres_start_eur=_f("opcost_freqpres_start", is_bon),
+        # Per-branch move counts: each is ONE branch's own descent. The
+        # winner's is `swaps_balance`; the path-independent size of the whole
+        # stage-2 step is `cells_changed_vs_stage1`.
+        swaps_from_stage1=_i("swaps_from_stage1", is_multi),
+        swaps_from_range=_i("swaps_from_range", is_multi),
+        swaps_from_freqpres=_i("swaps_from_freqpres", is_bon),
+        swaps_range_balancer=_i("swaps_range_balancer", is_multi),
+        swaps_freqpres_plan=_i("swaps_freqpres_plan", is_bon),
+        cells_changed_vs_stage1=cells_changed,
+        cells_freq_changed_vs_stage1=cells_freq_changed,
         imbalance_before=float(bal["imbalance_before"]),
         imbalance_after=float(bal["imbalance_after"]),
         system_spread_before=float(res.get("system_spread_before", sys_spread)),
         system_spread_after=float(res.get("system_spread_after", sys_spread)),
-        swaps_balance=int(bal["swaps_made"]),
+        swaps_balance=int(bal["swaps_made"]),   # the WINNING branch's moves
         swaps_smooth=int(res["swaps_made"]),
         stage2=args.stage2,
         stage3=args.stage3,
@@ -634,6 +824,14 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
     # (BUG 2: only the willing fraction actually waits). The cell-level metric
     # is sum(wait_num_willing) / sum(total_parcels) over the 7 providers, so
     # the per-provider numerator and denominator are stored, not the ratio.
+    #
+    # BOTH PLANS (Task 6f): the bare names are the FINAL (stage-2) plan, the
+    # `_stage1` ones the routing-optimal stage-1 plan. Stage 2 is now
+    # frequency-FREE, so it moves the wait through two channels — re-timing at
+    # constant frequency AND a changed number of delivery days — and the paper
+    # must be able to show the service metric of both plans. `mean_days` is the
+    # unweighted mean over CELLS of the chosen schedule's size (not
+    # parcel-weighted; the parcel weighting lives in the wait numerators).
     wk = weekly_pkts
     wait_rows = [dict(
         penalty=P, share_willing=th, provider=prov,
@@ -641,6 +839,11 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
         wait_num_all=float((sched_waits[chosen_s3] * wk).sum()),
         total_parcels=float(wk.sum()),
         willing_parcels=float((wk * local_willing).sum()),
+        wait_num_willing_stage1=float(
+            (sched_waits[chosen_s1] * wk * local_willing).sum()),
+        wait_num_all_stage1=float((sched_waits[chosen_s1] * wk).sum()),
+        mean_days=float(sched_size[chosen_s3].mean()),
+        mean_days_stage1=float(sched_size[chosen_s1].mean()),
     )]
 
     chosen_rows = [dict(
@@ -702,16 +905,21 @@ def main() -> None:
     ap.add_argument("--only", default=None,
                     help="restrict the grid, e.g. P=0.5,th=0.1,prov=DPD")
     ap.add_argument("--stage2",
-                    choices=("operator", "operator-solo", "range"),
+                    choices=("operator", "operator-freqpres", "operator-solo",
+                             "range"),
                     default="operator",
                     help="stage-2 objective: 'operator' = "
-                         "operator_polish_best_of_two (variable cost + weekly "
-                         "fixed cost per hub peak, from the stage-1 AND the "
-                         "range-balanced start, Task 6e, default); "
-                         "'operator-solo' = the same polish from stage 1 only "
-                         "(what grid v3 measured); 'range' = the pre-6e "
-                         "balance_fleet_per_hub_ml (hub range inside a cost "
-                         "budget)")
+                         "operator_polish_best_of_n (variable cost + weekly "
+                         "fixed cost per hub peak; FREQUENCY-FREE at theta>0, "
+                         "a no-op at theta=0, from the stage-1, range-balanced "
+                         "AND frequency-preserving-best-of-two starts, Task "
+                         "6f, default); 'operator-freqpres' = the "
+                         "frequency-PRESERVING best-of-two (what grid v4 "
+                         "measured); 'operator-solo' = the "
+                         "frequency-preserving polish from stage 1 only (grid "
+                         "v3); 'range' = the pre-6e balance_fleet_per_hub_ml "
+                         "(hub range inside a cost budget, run 2 with "
+                         "--stage3 on)")
     ap.add_argument("--stage3", choices=("off", "on"), default="off",
                     help="provider-aggregate spread smoothing. Off by "
                          "default: vehicles do not move between hubs, so the "
@@ -743,18 +951,23 @@ def main() -> None:
 
     OUT.mkdir(parents=True, exist_ok=True)
 
-    # Fail fast, before an hour of compute: a pre-6e output directory carries
-    # a tab_costs_v2.csv without the operator-lens columns, and appending to
-    # it would misalign every column after cost_stage3_eur. (append_rows
-    # catches this too, but only after the first triple is computed.)
+    # Fail fast, before an hour of compute: a pre-6f output directory carries
+    # a tab_costs_v2.csv without the best-of-N columns (and a pre-6e one none
+    # of the operator-lens columns either), and appending to it would misalign
+    # every column after cost_stage3_eur. (append_rows catches this too, but
+    # only after the first triple is computed.) read_header turns a 0-byte
+    # file into this guard's message instead of a bare EmptyDataError.
     if COSTS.exists():
-        have = list(pd.read_csv(COSTS, nrows=0).columns)
-        if "stage2_start_winner" not in have:
-            raise SystemExit(
-                f"{COSTS} predates Task 6e (no 'stage2_start_winner' column) "
-                "— that is a run-2 or v3 output directory. Point "
-                "REV2_OUT_DIR at a fresh directory; this run's schema cannot "
-                "be appended to it.")
+        have = read_header(COSTS)
+        for marker, task, older in (
+                ("stage2_start_winner", "6e", "run-2 or v3"),
+                ("opcost_from_freqpres_eur", "6f", "run-2, v3 or v4")):
+            if marker not in have:
+                raise SystemExit(
+                    f"{COSTS} predates Task {task} (no {marker!r} column) — "
+                    f"that is a {older} output directory. Point REV2_OUT_DIR "
+                    "at a fresh directory; this run's schema cannot be "
+                    "appended to it.")
 
     only_P, only_th, only_prov = (parse_only(args.only) if args.only
                                   else (None, None, None))

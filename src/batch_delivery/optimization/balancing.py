@@ -1,12 +1,20 @@
 """Fleet balancing per hub + system-level smoothing.
 
-Production path (spec v3 §4.3, Task 6e):
+Production path (spec v3 §4.3, Tasks 6e/6f):
 
 * :func:`operator_polish` — local search over (cell, schedule) moves that
   minimises what the operator actually pays for the week: the routing
   cost's variable part plus one weekly fixed bill per hub PEAK vehicle.
+* :func:`operator_polish_best_of_n` — the production wrapper: that polish,
+  frequency-FREE, from three starts (stage 1, the range-balanced plan, and
+  the frequency-preserving best-of-two plan), keeping the cheapest end state.
 
-Kept for ablation against it (the pre-6e two-stage balancing):
+Kept for ablation against it:
+
+* :func:`operator_polish_best_of_two` — the frequency-PRESERVING wrapper
+  grid v4 shipped; it is also the third candidate start above.
+
+Kept for ablation against both (the pre-6e two-stage balancing):
 
 * :func:`balance_fleet_per_hub` / :func:`balance_fleet_per_hub_ml` —
   swap-based postprocessing that equalises daily vehicle counts within
@@ -310,6 +318,16 @@ def operator_polish(
     waits, so ``penalty_mx`` is identically zero for every P and an
     unrestricted polish would face an unpriced service dimension).
 
+    **Since Task 6f the pin is NOT the production setting at theta > 0.** The
+    production caller (``61_grid_run_v2.stage2_plan`` via
+    :func:`operator_polish_best_of_n`) runs frequency-FREE there, because
+    everything a frequency change touches is priced — ``Delta variable``,
+    ``W * Delta peak``, ``Delta penalty`` — and the pin was blocking the moves
+    that carry most of the operator-lens value (a hub serving a single cell has
+    nothing to rotate; its peak only falls with MORE delivery days). The pin
+    survives as the theta=0 rule and as the ``operator-freqpres`` /
+    ``operator-solo`` ablations. Do not describe it as the canonical wiring.
+
     It does NOT pin the wait. Schedules of equal size differ in average wait
     (size 3: 0.50-0.67 days; size 4: 0.33-0.50), so moving a cell from
     ``{Mon, Wed, Fri}`` to ``{Mon, Tue, Thu}`` changes the service metric
@@ -590,6 +608,39 @@ def operator_polish(
 #: uses (``scripts/pipeline/02_optimize_grid.py``, paper revision 2026-05-27).
 RANGE_START_BUDGET_PCT: float = 5.0
 
+#: Candidate starts of the production stage-2 polish (Task 6f), in tie-break
+#: order: the stage-1 plan, the range-balanced plan, and the
+#: frequency-PRESERVING best-of-two plan (what grid v4 shipped). The third one
+#: is what makes ``OpCost(v5) <= OpCost(v4)`` hold by construction.
+BEST_OF_N_STARTS: tuple[str, ...] = ("stage1", "range", "freqpres")
+
+
+def _measurement_only(measured: dict, branches: tuple[str, ...],
+                      winner: str) -> dict:
+    """Package a ``max_swaps=0`` measurement in the best-of-N result schema.
+
+    ``operator_polish(max_swaps=0)`` searches nothing and reports the plan it
+    was handed — its documented pure-measurement contract, which the runner's
+    stage-1 anchor depends on. The wrappers honour it: no other candidate
+    start is built (the range balancer carries its OWN swap budget and would
+    return a different plan), nothing is compared, and every branch field but
+    the measured one is ``nan`` / 0 rather than a fabricated value.
+    """
+    res = dict(measured)
+    res["stage2_start_winner"] = winner
+    for b in branches:
+        res[f"opcost_from_{b}"] = (measured["opcost_after"] if b == winner
+                                   else float("nan"))
+        res[f"swaps_from_{b}"] = 0
+        res[f"sweeps_from_{b}"] = 0
+    res["opcost_range_start"] = float("nan")
+    res["swaps_range_balancer"] = 0
+    if "freqpres" in branches:
+        res["opcost_freqpres_start"] = float("nan")
+        res["swaps_freqpres_plan"] = 0
+    res["max_swaps_binding_any"] = False
+    return res
+
 
 def operator_polish_best_of_two(
     sa_result: dict,
@@ -650,6 +701,12 @@ def operator_polish_best_of_two(
     ``opcost_from_stage1`` / ``opcost_from_range`` (the two end states),
     ``opcost_range_start`` (the range balancer's own end state — the
     guarantee's reference), and the per-branch move counts.
+
+    ``max_swaps=0`` is the pure-measurement contract of :func:`operator_polish`,
+    honoured here too: the range balancer is NOT run (it has its own swap
+    budget and would return a different state), no branch is compared, and the
+    input plan is reported unchanged with the branch fields set to the
+    measured value / ``nan``.
     """
     kw = dict(
         max_swaps=max_swaps, max_sweeps=max_sweeps, seed=seed,
@@ -662,6 +719,9 @@ def operator_polish_best_of_two(
     from_s1 = operator_polish(
         {"chosen": chosen0}, plz_keys, plz_hub_arr, hub_plz_list,
         matrices, schedules, **kw)
+
+    if max_swaps <= 0:
+        return _measurement_only(from_s1, ("stage1", "range"), "stage1")
 
     rng_bal = balance_fleet_per_hub_ml(
         {"chosen": chosen0, "best_cost": 0.0}, plz_keys, plz_hub_arr,
@@ -711,6 +771,207 @@ def operator_polish_best_of_two(
         f"wins — from stage 1 {from_s1['opcost_after']:,.0f}, from range "
         f"{from_rng['opcost_after']:,.0f} (range state itself "
         f"{opcost_range_start:,.0f})"
+    )
+    return res
+
+
+
+
+def operator_polish_best_of_n(
+    sa_result: dict,
+    plz_keys: list[str],
+    plz_hub_arr: np.ndarray,
+    hub_plz_list: list[np.ndarray],
+    matrices: dict,
+    schedules: list[frozenset[int]],
+    starts: tuple[str, ...] = BEST_OF_N_STARTS,
+    max_swaps: int = FLEET_BALANCE_MAX_SWAPS,
+    max_sweeps: int = 50,
+    seed: int = SA_SEED + 1,
+    express_scale: float = 1.0,
+    penalty_mx: np.ndarray | None = None,
+    preserve_frequency: bool = False,
+    fixed_cost: float = FIXED_COST_EUR,
+    week_fixed: float = WEEK_FIXED_COST_EUR,
+    accept_eps: float = 1e-9,
+    range_budget_pct: float = RANGE_START_BUDGET_PCT,
+    range_max_swaps: int = FLEET_BALANCE_MAX_SWAPS,
+) -> dict:
+    """The production stage 2 (Task 6f): a FREQUENCY-FREE polish from N starts.
+
+    Why frequency-free
+    ------------------
+    With ``preserve_frequency=True`` (the v4 wiring) stage 2 may only re-TIME a
+    cell's delivery days, never add or drop one. That blocks the moves which
+    carry most of the operator-lens value, because a hub with a single cell has
+    nothing to rotate: its profile ``0 0 33 0 0 29`` is the same under every
+    rotation of a two-day pattern, and 9 of DHL's 16 hubs are exactly that. Its
+    peak only falls if the cell is served on MORE days. Measured on the v3
+    grid (DHL, P=0, theta=1): freeing the frequency moved OpCost
+    814 314 -> 595 067 EUR, Sigma hub peak 654 -> 447, at +4.2 % routing cost
+    and a LOWER wait (0.952 -> 0.621 parcel-weighted days).
+
+    Nothing about a frequency change is unpriced at theta > 0: the objective
+    already carries ``Delta variable``, ``W * Delta peak`` and
+    ``Delta penalty = P * willing * parcels * Delta wait``. The one case where
+    it IS unpriced is theta = 0 — nobody is willing to wait, so ``penalty_mx``
+    is identically zero for every P and an unrestricted polish would batch the
+    daily baseline away. That case is a stage-2 NO-OP, decided by the caller
+    (``scripts/revision/61_grid_run_v2.stage2_plan``), not by this function.
+
+    The start set
+    -------------
+    ``starts`` names the candidate starts, all polished with the SAME
+    (frequency-free) rule; the cheapest end state wins, ties going to the
+    earlier name in :data:`BEST_OF_N_STARTS`:
+
+    * ``"stage1"`` — the stage-1 plan (mandatory: it is also the reporting
+      anchor every ``*_before`` field is normalised to).
+    * ``"range"`` — :func:`balance_fleet_per_hub_ml`'s output. ``W`` dwarfs the
+      variable cost one cell can move, so the operator objective is flat in
+      plateaus a strict descent cannot cross; ``max - min`` has no plateau and
+      reaches basins the polish alone does not (see
+      :func:`operator_polish_best_of_two`).
+    * ``"freqpres"`` — :func:`operator_polish_best_of_two` with the frequency
+      PIN, i.e. exactly the plan grid v4 shipped. Because the polish never
+      worsens the state it is given, including it makes
+
+          OpCost(this function) <= OpCost(the v4 plan)
+
+      hold **by construction** — asserted below, so a v5 grid can never be
+      worse than v4 on the objective it optimises.
+
+    Returns
+    -------
+    :func:`operator_polish`'s dict for the WINNING branch, with every
+    ``*_before`` field (and ``initial_total_cost`` / ``imbalance_before``)
+    normalised to the stage-1 anchor, plus ``stage2_start_winner``,
+    ``opcost_from_{stage1,range,freqpres}`` (the three end states),
+    ``opcost_range_start`` / ``opcost_freqpres_start`` (the two candidate
+    plans' own OpCost — the guarantees' references, and the v4 comparison
+    number for free), the per-branch move counts
+    (``swaps_from_*``, ``sweeps_from_*``, ``swaps_range_balancer``,
+    ``swaps_freqpres_plan``) and ``max_swaps_binding_any`` (True if ANY branch
+    hit its bound, whereas ``max_swaps_binding`` describes the winner alone).
+    Fields belonging to a start that was not run are ``nan`` / 0.
+
+    ``max_swaps=0`` is :func:`operator_polish`'s pure-measurement contract and
+    is honoured here: no candidate is built, nothing is compared, the input
+    plan is reported unchanged.
+    """
+    unknown = [s for s in starts if s not in BEST_OF_N_STARTS]
+    assert not unknown, (
+        f"unknown start(s) {unknown} — expected a subset of {BEST_OF_N_STARTS}")
+    assert "stage1" in starts, (
+        "the stage-1 start is mandatory: it is the anchor every *_before "
+        "field is normalised to")
+
+    kw = dict(
+        max_swaps=max_swaps, max_sweeps=max_sweeps, seed=seed,
+        express_scale=express_scale, penalty_mx=penalty_mx,
+        preserve_frequency=preserve_frequency, fixed_cost=fixed_cost,
+        week_fixed=week_fixed, accept_eps=accept_eps,
+    )
+    chosen0 = sa_result["chosen"]
+
+    from_s1 = operator_polish(
+        {"chosen": chosen0}, plz_keys, plz_hub_arr, hub_plz_list,
+        matrices, schedules, **kw)
+    if max_swaps <= 0:
+        return _measurement_only(from_s1, BEST_OF_N_STARTS, "stage1")
+
+    ends: dict[str, dict] = {"stage1": from_s1}
+    nan = float("nan")
+    opcost_range_start = nan
+    opcost_freqpres_start = nan
+    swaps_range_balancer = 0
+    swaps_freqpres_plan = 0
+
+    if "range" in starts:
+        rng_bal = balance_fleet_per_hub_ml(
+            {"chosen": chosen0, "best_cost": 0.0}, plz_keys, plz_hub_arr,
+            hub_plz_list, matrices, schedules,
+            cost_budget_pct=range_budget_pct, max_swaps=range_max_swaps,
+            seed=seed, express_scale=express_scale, penalty_mx=penalty_mx,
+            preserve_frequency=preserve_frequency)
+        swaps_range_balancer = int(rng_bal["swaps_made"])
+        ends["range"] = operator_polish(
+            {"chosen": rng_bal["chosen"]}, plz_keys, plz_hub_arr,
+            hub_plz_list, matrices, schedules, **kw)
+        # The polish's own warm-up measured the range plan before it moved
+        # anything, on exactly the same caches.
+        opcost_range_start = ends["range"]["opcost_before"]
+
+    if "freqpres" in starts:
+        # The v4 plan itself: the frequency-PRESERVING best-of-two, regardless
+        # of this call's own `preserve_frequency` (with the pin on, the two
+        # coincide). Only the polish that follows it is frequency-free.
+        fp = operator_polish_best_of_two(
+            {"chosen": chosen0}, plz_keys, plz_hub_arr, hub_plz_list,
+            matrices, schedules,
+            max_swaps=max_swaps, max_sweeps=max_sweeps, seed=seed,
+            express_scale=express_scale, penalty_mx=penalty_mx,
+            preserve_frequency=True, fixed_cost=fixed_cost,
+            week_fixed=week_fixed, accept_eps=accept_eps,
+            range_budget_pct=range_budget_pct, range_max_swaps=range_max_swaps)
+        swaps_freqpres_plan = int(fp["swaps_made"])
+        ends["freqpres"] = operator_polish(
+            {"chosen": fp["chosen"]}, plz_keys, plz_hub_arr, hub_plz_list,
+            matrices, schedules, **kw)
+        opcost_freqpres_start = ends["freqpres"]["opcost_before"]
+
+    order = [s for s in BEST_OF_N_STARTS if s in ends]
+    winner = order[0]
+    for name in order[1:]:
+        if ends[name]["opcost_after"] < ends[winner]["opcost_after"]:
+            winner = name
+    res = dict(ends[winner])
+
+    # Fail loud rather than silently shipping a plan one of the candidate
+    # STATES already beats — the whole point of carrying them.
+    best_end = min(e["opcost_after"] for e in ends.values())
+    assert res["opcost_after"] <= best_end + 1e-9 * max(1.0, abs(best_end)), (
+        f"best-of-{len(ends)} returned {res['opcost_after']:.6f} > the "
+        f"cheapest branch {best_end:.6f}")
+    for ref_name, ref in (("range balancer", opcost_range_start),
+                          ("frequency-preserving best-of-two",
+                           opcost_freqpres_start)):
+        if np.isnan(ref):
+            continue
+        assert res["opcost_after"] <= ref + 1e-6 * max(1.0, abs(ref)), (
+            f"best-of-{len(ends)} returned {res['opcost_after']:.6f} > the "
+            f"{ref_name} state {ref:.6f} — operator_polish must never worsen "
+            "OpCost from the start it is given")
+
+    # ``before`` is always the stage-1 anchor, whichever branch won.
+    for key in ("initial_total_cost", "imbalance_before", "opcost_before",
+                "operator_cost_before", "variable_before",
+                "sum_hub_peak_before", "vehicle_days_before",
+                "penalty_before"):
+        res[key] = from_s1[key]
+
+    res.update({
+        "stage2_start_winner": winner,
+        "opcost_range_start": opcost_range_start,
+        "opcost_freqpres_start": opcost_freqpres_start,
+        "swaps_range_balancer": swaps_range_balancer,
+        "swaps_freqpres_plan": swaps_freqpres_plan,
+        "max_swaps_binding_any": any(e["max_swaps_binding"]
+                                     for e in ends.values()),
+    })
+    for name in BEST_OF_N_STARTS:
+        end = ends.get(name)
+        res[f"opcost_from_{name}"] = end["opcost_after"] if end else nan
+        res[f"swaps_from_{name}"] = int(end["swaps_made"]) if end else 0
+        res[f"sweeps_from_{name}"] = int(end["sweeps"]) if end else 0
+
+    log.debug(
+        f"Operator polish (best-of-{len(ends)}, "
+        f"{'frequency-preserving' if preserve_frequency else 'frequency-free'}"
+        f"): start '{winner}' wins — "
+        + ", ".join(f"{n} {ends[n]['opcost_after']:,.0f}" for n in order)
+        + f" (range plan {opcost_range_start:,.0f}, v4/freqpres plan "
+        f"{opcost_freqpres_start:,.0f})"
     )
     return res
 
@@ -893,15 +1154,30 @@ def balance_fleet_per_hub_ml(
 ) -> dict:
     """Fleet balancing post-processing using ML express predictions.
 
+    Since Task 6f this is not only the pre-6e ablation: it is also the second
+    CANDIDATE START of the production polish
+    (:func:`operator_polish_best_of_n`), so its own prose is production prose.
+
     When ``preserve_frequency`` is True, candidate swaps are restricted to
     schedules of the SAME size as the current one (same number of delivery days
-    per week). Balancing then only redistributes WHICH days are served, never
-    HOW MANY, so the per-area delivery frequency, average wait, and service
-    penalty are held at their cost-optimal (init) values. This keeps fleet
-    smoothing service-neutral and prevents the balancer from trading service
+    per week). Balancing is then FREQUENCY-PRESERVING: it redistributes WHICH
+    days are served, never HOW MANY, so a cell's delivery frequency stays at
+    its cost-optimal (init) value and the balancer cannot trade service
     quality for the (hub-bundled) routing savings of lower frequencies — the
-    cost model used for selection is per-PLZ unbundled, so under bundling lower
-    frequencies look cheaper and would otherwise be re-introduced here.
+    cost model used for selection is per-PLZ unbundled, so under bundling
+    lower frequencies look cheaper and would otherwise be re-introduced here.
+
+    It is NOT wait-preserving, and must never be described as
+    "service-neutral". Schedules of equal size differ in average wait (size 3
+    spans 0.50-0.67 days, size 4 spans 0.33-0.50), so moving a cell from
+    ``{Mon, Wed, Fri}`` to ``{Mon, Tue, Thu}`` changes the service metric at
+    constant frequency — measured on the v3 grid, the willing-weighted wait
+    moves at stage 2 in 94 of 176 theta > 0 triples, by up to -17.65 %. In
+    :func:`operator_polish` that change is PRICED (``Delta penalty`` is part of
+    every accept decision). Here it is not: this function ranks candidates by
+    fleet RANGE and only uses ``penalty_mx`` as a budget ceiling, so the wait
+    may drift anywhere inside that budget. That is one more reason its output
+    is a candidate start to be polished and re-priced, never a final plan.
 
     When ``penalty_mx`` (shape ``(n_plz, n_sched)``,
     ``P * willing_pi * pkts_pi * wait_si``) is supplied, the cost budget is

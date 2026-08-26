@@ -31,18 +31,26 @@ descent, which Task 6e does not touch: ``optimization/coordinate_descent.py``
 and ``optimization/costs.py`` carry no diff, and the runner-level identity is
 gated empirically in the task report.
 """
+import importlib.util
+import logging
+import warnings
+from functools import lru_cache
+from pathlib import Path
+
 import numpy as np
 import pytest
 from _stubs import StubPredictor, tiny_matrices
 
 from batch_delivery.config.constants import FIXED_COST_EUR, N_DAYS
 from batch_delivery.optimization.balancing import (
+    BEST_OF_N_STARTS,
     RANGE_START_BUDGET_PCT,
     WEEK_FIXED_COST_EUR,
     _daily_fleet_per_hub,
     balance_fleet_per_hub_ml,
     operator_cost_breakdown,
     operator_polish,
+    operator_polish_best_of_n,
     operator_polish_best_of_two,
 )
 from batch_delivery.optimization.costs import (
@@ -518,7 +526,9 @@ def test_best_of_two_keeps_the_stage_one_start_when_it_is_already_better():
 
 def test_best_of_two_respects_preserve_frequency_on_both_branches():
     """The range balancer runs with the same frequency pin as the polish, so
-    no branch can smuggle a frequency change into the result."""
+    no branch can smuggle a frequency change into the result — and the OpCost
+    guarantee holds under the pin too, which is the wiring grid v4 shipped and
+    the third candidate start of the Task-6f wrapper."""
     plz_keys, m, sch, hpl, pha = _fixture(fs=0.3, n_cells=10, n_hubs=1)
     chosen = _start(m, sch, 10, 0)
     best = operator_polish_best_of_two(
@@ -526,6 +536,311 @@ def test_best_of_two_respects_preserve_frequency_on_both_branches():
         max_swaps=200, seed=0, preserve_frequency=True)
     for pi in range(10):
         assert len(sch[int(best["chosen"][pi])]) == len(sch[int(chosen[pi])])
+    assert best["opcost_after"] <= best["opcost_range_start"] + 1e-9
+    assert best["opcost_after"] == pytest.approx(
+        min(best["opcost_from_stage1"], best["opcost_from_range"]), rel=1e-12)
+
+
+@pytest.mark.parametrize("wrapper", [operator_polish_best_of_two,
+                                     operator_polish_best_of_n])
+def test_max_swaps_zero_is_a_pure_measurement_through_the_wrappers(wrapper):
+    """``max_swaps=0`` is :func:`operator_polish`'s measurement contract and
+    must survive the wrappers: no candidate start is BUILT (the range balancer
+    carries its own swap budget and would return a different plan), nothing is
+    compared, and the input plan is reported unchanged with no bound claim."""
+    plz_keys, m, sch, hpl, pha = _fixture(fs=0.5, n_cells=10, n_hubs=2)
+    chosen = _start(m, sch, 10, 0)
+    pen = _penalty(m, sch, 10, scale=0.25)
+    res = wrapper({"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+                  max_swaps=0, seed=0, penalty_mx=pen)
+
+    assert np.array_equal(res["chosen"], chosen)
+    assert res["swaps_made"] == 0
+    assert res["swaps_range_balancer"] == 0
+    assert res["opcost_after"] == res["opcost_before"]
+    assert res["cost"] == res["initial_total_cost"]
+    assert not res["max_swaps_binding"]
+    assert res["stage2_start_winner"] == "stage1"
+    assert np.isnan(res["opcost_range_start"])
+    b = operator_cost_breakdown(chosen, plz_keys, pha, hpl, m, sch,
+                                penalty_mx=pen)
+    assert res["opcost_after"] == pytest.approx(b["opcost"], rel=1e-12)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Task 6f — the frequency-FREE polish and its best-of-THREE start set
+#
+# Stage 2 may now change a cell's delivery FREQUENCY (theta > 0), not merely
+# re-time it. The third candidate start is the frequency-preserving
+# best-of-two plan (what grid v4 shipped), which makes
+# ``OpCost(v5) <= OpCost(v4)`` hold by construction.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sizes(sch, chosen):
+    return np.array([len(sch[int(si)]) for si in chosen])
+
+
+@pytest.mark.parametrize("fs,n_hubs,seed", [(0.5, 2, 0), (0.3, 1, 4)])
+def test_best_of_n_never_loses_to_the_frequency_preserving_best_of_two(
+        fs, n_hubs, seed):
+    """G-6f-2. The v4 plan is one of the three starts, and the polish never
+    worsens the state it is given, so the free best-of-three can only ever be
+    at least as cheap as the frequency-preserving best-of-two it contains."""
+    plz_keys, m, sch, hpl, pha = _fixture(fs=fs, n_cells=10, n_hubs=n_hubs)
+    chosen = _start(m, sch, 10, seed)
+    pen = _penalty(m, sch, 10, scale=0.25)
+
+    v4 = operator_polish_best_of_two(
+        {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+        max_swaps=200, seed=seed, penalty_mx=pen, preserve_frequency=True)
+    v5 = operator_polish_best_of_n(
+        {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+        max_swaps=200, seed=seed, penalty_mx=pen, preserve_frequency=False)
+
+    assert v5["opcost_after"] <= v4["opcost_after"] + 1e-9
+    # the v4 state is recorded as such, on the same caches, so the guarantee
+    # is auditable from the returned dict alone
+    assert v5["opcost_freqpres_start"] == pytest.approx(
+        v4["opcost_after"], rel=1e-9, abs=1e-6)
+    # ... and against the range balancer too (the 6e guarantee still holds)
+    assert v5["opcost_after"] <= v5["opcost_range_start"] + 1e-9
+
+
+def test_best_of_n_returns_the_cheapest_of_its_three_candidates():
+    """G-6f-2's other half: the returned state IS the minimum over the three
+    polished candidates, and ``stage2_start_winner`` names the branch."""
+    plz_keys, m, sch, hpl, pha = _fixture(fs=0.5, n_cells=10, n_hubs=2)
+    for seed in (0, 3, 8, 17, 59):
+        chosen = _start(m, sch, 10, seed)
+        res = operator_polish_best_of_n(
+            {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+            max_swaps=200, seed=seed)
+        ends = {"stage1": res["opcost_from_stage1"],
+                "range": res["opcost_from_range"],
+                "freqpres": res["opcost_from_freqpres"]}
+        assert res["stage2_start_winner"] in BEST_OF_N_STARTS
+        assert res["opcost_after"] == pytest.approx(min(ends.values()),
+                                                    rel=1e-12)
+        assert ends[res["stage2_start_winner"]] == pytest.approx(
+            res["opcost_after"], rel=1e-12)
+        # black-box restatement of the two guarantees (the wrapper asserts
+        # them internally; check them from outside too, so removing the
+        # internal assert cannot pass silently)
+        assert res["opcost_after"] <= res["opcost_range_start"] + 1e-9
+        assert res["opcost_after"] <= res["opcost_freqpres_start"] + 1e-9
+        # the returned dict really describes the returned plan
+        b1 = operator_cost_breakdown(res["chosen"], plz_keys, pha, hpl, m, sch)
+        assert res["opcost_after"] == pytest.approx(b1["opcost"], rel=1e-9,
+                                                    abs=1e-6)
+        assert res["cost"] == pytest.approx(b1["routing_cost"], rel=1e-9,
+                                            abs=1e-6)
+
+
+def test_best_of_n_anchors_every_before_field_at_stage_one():
+    """Whichever branch wins, ``*_before`` describes STAGE 1 — the grid gates
+    ``initial_total_cost`` as the stage-1 routing anchor and the two-plan
+    tables read ``before -> after`` as "stage 1 -> final"."""
+    plz_keys, m, sch, hpl, pha = _fixture(fs=0.5, n_cells=10, n_hubs=2)
+    chosen = _start(m, sch, 10, 0)
+    pen = _penalty(m, sch, 10, scale=0.25)
+    res = operator_polish_best_of_n(
+        {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+        max_swaps=200, seed=0, penalty_mx=pen)
+    b0 = operator_cost_breakdown(chosen, plz_keys, pha, hpl, m, sch,
+                                 penalty_mx=pen)
+    for key, want in (("opcost_before", "opcost"),
+                      ("variable_before", "variable_cost"),
+                      ("sum_hub_peak_before", "sum_hub_peak"),
+                      ("vehicle_days_before", "vehicle_days"),
+                      ("penalty_before", "penalty"),
+                      ("initial_total_cost", "routing_cost")):
+        assert res[key] == pytest.approx(b0[want], rel=1e-9, abs=1e-6), key
+
+
+def test_the_free_polish_actually_changes_delivery_frequency():
+    """The leak Task 6f lifts: with ``preserve_frequency=False`` stage 2 may
+    add or drop delivery days, not merely re-time them. Without this the
+    one-cell hubs of the real grid have nothing to rotate."""
+    plz_keys, m, sch, hpl, pha = _fixture(fs=0.5, n_cells=10, n_hubs=2)
+    changed_free = False
+    beat_pinned = False
+    for seed in (0, 3, 8, 17, 59):
+        chosen = _start(m, sch, 10, seed)
+        free = operator_polish(
+            {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+            max_swaps=200, seed=seed, preserve_frequency=False)
+        pinned = operator_polish(
+            {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+            max_swaps=200, seed=seed, preserve_frequency=True)
+        assert np.array_equal(_sizes(sch, pinned["chosen"]),
+                              _sizes(sch, chosen))
+        assert free["opcost_after"] <= free["opcost_before"] + 1e-9
+        changed_free |= bool((_sizes(sch, free["chosen"])
+                              != _sizes(sch, chosen)).any())
+        beat_pinned |= free["opcost_after"] < pinned["opcost_after"] - 1e-9
+    assert changed_free, "the free polish never changed a cell's frequency"
+    # Not a domination theorem — both are greedy descents and the wider
+    # candidate set makes the free one take a DIFFERENT path, so it is not
+    # guaranteed to end lower on every instance. What must hold is that
+    # freeing the frequency buys something somewhere; that is the whole
+    # premise of Task 6f, and the best-of-three wrapper keeps the v4 plan as a
+    # candidate start precisely so the per-instance ordering is guaranteed too.
+    assert beat_pinned, "freeing the frequency never lowered OpCost"
+
+
+@pytest.mark.parametrize("use_pen", [False, True])
+@pytest.mark.parametrize("fs,seed,n_hubs", [(0.7, 8, 1), (0.5, 0, 2),
+                                            (0.5, 59, 3)])
+def test_bookkeeping_survives_a_frequency_changing_move(use_pen, fs, seed,
+                                                        n_hubs):
+    """G-6f-3. A move that changes schedule SIZE moves both pooled terms —
+    the express partition on the days the cell stops/starts delivering, and
+    the small-delivery pool on ``_pool_affected_days`` — so the caches the
+    polish carries forward have strictly more to keep exact than under the
+    frequency pin. Every tracked scalar must still equal an independent
+    from-scratch rebuild at the final plan."""
+    plz_keys, m, sch, hpl, pha = _fixture(fs=fs, n_cells=10, n_hubs=n_hubs)
+    chosen = _start(m, sch, 10, seed)
+    pen = _penalty(m, sch, 10, scale=0.25) if use_pen else None
+
+    res = operator_polish(
+        {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+        max_swaps=200, seed=seed, penalty_mx=pen, preserve_frequency=False)
+    assert res["swaps_made"] > 0
+    assert (_sizes(sch, res["chosen"]) != _sizes(sch, chosen)).any(), (
+        "no accepted move changed a cell's schedule SIZE — this "
+        "parametrisation no longer exercises the gate")
+
+    b0 = operator_cost_breakdown(chosen, plz_keys, pha, hpl, m, sch,
+                                 penalty_mx=pen)
+    b1 = operator_cost_breakdown(res["chosen"], plz_keys, pha, hpl, m, sch,
+                                 penalty_mx=pen)
+    for key, before, after in (
+        ("opcost", "opcost_before", "opcost_after"),
+        ("variable_cost", "variable_before", "variable_after"),
+        ("sum_hub_peak", "sum_hub_peak_before", "sum_hub_peak_after"),
+        ("vehicle_days", "vehicle_days_before", "vehicle_days_after"),
+        ("penalty", "penalty_before", "penalty_after"),
+    ):
+        assert res[before] == pytest.approx(b0[key], rel=1e-9, abs=1e-6), before
+        assert res[after] == pytest.approx(b1[key], rel=1e-9, abs=1e-6), after
+    assert res["initial_total_cost"] == pytest.approx(
+        b0["routing_cost"], rel=1e-9, abs=1e-6)
+    assert res["cost"] == pytest.approx(b1["routing_cost"], rel=1e-9, abs=1e-6)
+    # and the three routing terms individually, so a compensating error in the
+    # express/pool split cannot hide inside the total
+    assert res["cost"] == pytest.approx(
+        b1["dd_cost"] + b1["express_cost"] + b1["pool_cost"],
+        rel=1e-9, abs=1e-6)
+
+
+def test_best_of_n_with_preserve_frequency_pins_every_cell():
+    """The wrapper honours the pin on every branch when it is asked for — the
+    theta=0 fallback and the ``operator-freqpres`` ablation depend on it."""
+    plz_keys, m, sch, hpl, pha = _fixture(fs=0.3, n_cells=10, n_hubs=1)
+    chosen = _start(m, sch, 10, 0)
+    res = operator_polish_best_of_n(
+        {"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+        max_swaps=200, seed=0, preserve_frequency=True)
+    assert np.array_equal(_sizes(sch, res["chosen"]), _sizes(sch, chosen))
+
+
+def test_best_of_n_does_not_mutate_its_inputs():
+    plz_keys, m, sch, hpl, pha = _fixture(fs=0.5, n_cells=10, n_hubs=2)
+    chosen = _start(m, sch, 10, 0)
+    chosen_in = chosen.copy()
+    dd_in = m["dd_cost_mx"].copy()
+    veh_in = m["veh_3d"].copy()
+    operator_polish_best_of_n(
+        {"chosen": chosen_in}, plz_keys, pha, hpl, m, sch,
+        max_swaps=200, seed=0)
+    assert np.array_equal(chosen_in, chosen)
+    assert np.array_equal(m["dd_cost_mx"], dd_in)
+    assert np.array_equal(m["veh_3d"], veh_in)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# G-6f-1 — theta = 0 is a stage-2 NO-OP (the daily baseline the paper is
+# measured against). Tested on the runner's own wiring function, since the
+# rule is a property of that wiring, not of the polish.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_RUNNER = (Path(__file__).resolve().parents[2] / "scripts" / "revision"
+           / "61_grid_run_v2.py")
+
+
+@lru_cache(maxsize=1)
+def _runner():
+    """Import ``scripts/revision/61_grid_run_v2.py`` by path.
+
+    Its module body disables INFO logging and installs a blanket warnings
+    filter (both wanted for a multi-hour grid run, neither wanted in a test
+    session) — undone here so importing the runner has no session-wide side
+    effects.
+    """
+    filters = warnings.filters[:]
+    spec = importlib.util.spec_from_file_location("grid_run_v2", _RUNNER)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    logging.disable(logging.NOTSET)
+    warnings.filters[:] = filters
+    return mod
+
+
+def test_theta_zero_stage_two_is_a_no_op_on_the_daily_baseline():
+    """G-6f-1. At theta=0 nobody is willing to wait, so ``penalty_mx`` is
+    identically zero for every P and a frequency-free polish would face an
+    UNPRICED service dimension — it would batch the daily baseline away. The
+    runner therefore pins stage 2 to stage 1 there and only measures."""
+    mod = _runner()
+    plz_keys, m, sch, hpl, pha = _fixture(fs=1.0, n_cells=10, n_hubs=2)
+    daily_si = next(i for i, s in enumerate(sch) if len(s) == N_DAYS)
+    chosen_s1 = np.full(10, daily_si, dtype=np.int64)
+    pen = np.zeros((10, len(sch)))          # theta=0: nobody waits
+
+    bal, note = mod.stage2_plan(
+        "operator", 0.0, chosen_s1, plz_keys, pha, hpl, m, sch, pen)
+
+    assert np.array_equal(bal["chosen"], chosen_s1)          # bit-for-bit
+    assert bal["swaps_made"] == 0
+    assert bal["opcost_after"] == bal["opcost_before"]
+    assert bal["cost"] == bal["initial_total_cost"]
+    assert not bal["max_swaps_binding"]
+    assert "NO-OP" in note
+    # measurement only: the reported state is the stage-1 state
+    b0 = operator_cost_breakdown(chosen_s1, plz_keys, pha, hpl, m, sch,
+                                 penalty_mx=pen)
+    assert bal["opcost_after"] == pytest.approx(b0["opcost"], rel=1e-12)
+    # the row carries the full best-of-N schema, with the branches that were
+    # never built reported as absent rather than fabricated
+    assert bal["stage2_start_winner"] == mod.STAGE2_WINNER_NOOP
+    assert np.isnan(bal["opcost_from_range"])
+    assert np.isnan(bal["opcost_from_freqpres"])
+    assert np.isnan(bal["opcost_range_start"])
+    assert np.isnan(bal["opcost_freqpres_start"])
+    assert bal["swaps_range_balancer"] == 0
+
+
+def test_theta_positive_stage_two_runs_the_free_best_of_three():
+    """The other side of G-6f-1: above theta=0 the wiring hands the triple to
+    the frequency-FREE best-of-three, and the wait IS priced there."""
+    mod = _runner()
+    plz_keys, m, sch, hpl, pha = _fixture(fs=0.5, n_cells=10, n_hubs=2)
+    chosen_s1 = _start(m, sch, 10, 0)
+    pen = _penalty(m, sch, 10, scale=0.25)
+
+    bal, note = mod.stage2_plan(
+        "operator", 0.5, chosen_s1, plz_keys, pha, hpl, m, sch, pen)
+    assert bal["stage2_start_winner"] in BEST_OF_N_STARTS
+    assert np.isfinite(bal["opcost_from_freqpres"])
+    assert bal["opcost_after"] <= bal["opcost_freqpres_start"] + 1e-9
+    assert "start=" in note
+
+    # ... and the frequency-preserving ablation is still reachable, unchanged
+    fp, _ = mod.stage2_plan(
+        "operator-freqpres", 0.5, chosen_s1, plz_keys, pha, hpl, m, sch, pen)
+    assert np.array_equal(_sizes(sch, fp["chosen"]), _sizes(sch, chosen_s1))
+    assert bal["opcost_after"] <= fp["opcost_after"] + 1e-9
 
 
 def test_tiny_matrices_smoke():
