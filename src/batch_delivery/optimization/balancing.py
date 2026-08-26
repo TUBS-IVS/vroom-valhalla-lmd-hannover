@@ -22,6 +22,7 @@ from batch_delivery.config.constants import (
     SA_SEED,
 )
 from batch_delivery.optimization.costs import (
+    _hub_delivery_pool_vehicles,
     _hub_express_day,
     _hub_express_day_ml,
     _hub_express_vehicles,
@@ -53,17 +54,22 @@ def _daily_fleet_per_hub(
     hub_plz_list: list[np.ndarray],
     veh_3d: np.ndarray,
     schedules: list[frozenset[int]],
-    express_veh_fn=None,
+    pool_veh_fn=None,
     sched_active: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compute daily vehicle count per hub: shape (n_hubs, N_DAYS).
 
-    A hub's express partition (rev1 hub-bundled non-delivery tours, Task 4)
-    runs invisibly to the per-cell count unless ``express_veh_fn(hi, d,
-    chosen) -> float`` is supplied — it adds that hub-day's POOLED vehicles
-    on top (D2 fix). ``express_veh_fn=None`` reproduces the legacy count over
-    the raw ``veh_3d`` slice (the non-ML ``balance_fleet_per_hub`` Daganzo
-    path keeps this).
+    A hub's POOLED tours — the express partition on non-delivery days
+    (Task 4) and the small-delivery groups on delivery days (spec §4.3 v3) —
+    run invisibly to the per-cell count unless ``pool_veh_fn(hi, d, chosen)
+    -> float`` is supplied; it adds that hub-day's pooled vehicles on top
+    (D2 fix). ``pool_veh_fn=None`` reproduces the legacy count over the raw
+    ``veh_3d`` slice (the non-ML ``balance_fleet_per_hub`` Daganzo path
+    keeps this).
+
+    ``veh_3d`` no longer carries the pooled small-delivery members — see
+    ``build_cost_matrices_ml`` — so the per-cell term and the closure count
+    disjoint sets of tours by construction.
 
     DOUBLE-COUNT FIX (2026-08-26): ``veh_3d`` is written for every ACTIVE
     instance, and on a NON-delivery day a cell's ``combined_demand`` IS its
@@ -81,15 +87,15 @@ def _daily_fleet_per_hub(
     """
     n_hubs = len(hub_plz_list)
     plz_veh = veh_3d[np.arange(len(chosen)), chosen, :]  # (n_plz, N_DAYS)
-    if express_veh_fn is not None:
+    if pool_veh_fn is not None:
         sa = _sched_active_mask(schedules) if sched_active is None else sched_active
         plz_veh = plz_veh * sa[chosen, :]
     fleet = np.zeros((n_hubs, N_DAYS), dtype=np.float64)
     np.add.at(fleet, plz_hub_arr, plz_veh)
-    if express_veh_fn is not None:
+    if pool_veh_fn is not None:
         for hi in range(n_hubs):
             for d in range(N_DAYS):
-                fleet[hi, d] += express_veh_fn(hi, d, chosen)
+                fleet[hi, d] += pool_veh_fn(hi, d, chosen)
     return fleet
 
 
@@ -313,21 +319,27 @@ def balance_fleet_per_hub_ml(
     pool_pred_cache: dict = {}
     ecache = np.zeros((len(hub_plz_list), N_DAYS))
     pcache = np.zeros((len(hub_plz_list), N_DAYS))
-    # I1 fix: express-vehicle mirror of ecache. Needed so the swap GATE (not
-    # just the accepted state) can correct its tentative per-day fleet row for
-    # the express vehicles a swap silently moves -- see _express_veh_fn below.
-    evcache = np.zeros((len(hub_plz_list), N_DAYS))
+    # I1 fix: pooled-vehicle mirror of ecache/pcache. Needed so the swap GATE
+    # (not just the accepted state) can correct its tentative per-day fleet
+    # row for the pooled vehicles a swap silently moves -- see _pool_veh_fn.
+    pvcache = np.zeros((len(hub_plz_list), N_DAYS))
 
-    def _express_veh_fn(hi: int, d: int, ch: np.ndarray) -> float:
-        """Express-partition vehicles for hub `hi`/day `d` (D2 fix).
+    def _pool_veh_fn(hi: int, d: int, ch: np.ndarray) -> float:
+        """Pooled vehicles for hub `hi`/day `d`: express + small-delivery.
 
-        Shares ``express_pred_cache`` with the ``_hub_express_day_ml`` calls
-        above and below, so vehicle counts come from cache hits rather than a
-        second round of partition/surrogate calls.
+        Shares ``express_pred_cache`` / ``pool_pred_cache`` with the
+        ``_hub_express_day_ml`` / ``_hub_smallday_pool_ml`` calls above and
+        below, so vehicle counts come from cache hits rather than a second
+        round of partition/surrogate calls.
         """
-        return _hub_express_vehicles(
-            hi, d, ch, hub_plz_list, schedules, raw_express, matrices,
-            express_pred_cache,
+        return (
+            _hub_express_vehicles(
+                hi, d, ch, hub_plz_list, schedules, raw_express, matrices,
+                express_pred_cache,
+            )
+            + _hub_delivery_pool_vehicles(
+                hi, d, ch, hub_plz_list, schedules, matrices, pool_pred_cache,
+            )
         )
 
     for hi in range(len(hub_plz_list)):
@@ -341,7 +353,7 @@ def balance_fleet_per_hub_ml(
                 hi, d, chosen, hub_plz_list, schedules, matrices,
                 pool_pred_cache,
             )
-            evcache[hi, d] = _express_veh_fn(hi, d, chosen)
+            pvcache[hi, d] = _pool_veh_fn(hi, d, chosen)
 
     cur_cost = cur_dd_cost + ecache.sum() + pcache.sum()
     # FIX 2026-05-27: budget on TOTAL cost (dd + express), not dd-only.
@@ -360,7 +372,7 @@ def balance_fleet_per_hub_ml(
 
     fleet = _daily_fleet_per_hub(
         chosen, plz_hub_arr, hub_plz_list, veh_3d, schedules,
-        express_veh_fn=_express_veh_fn, sched_active=sa_mx,
+        pool_veh_fn=_pool_veh_fn, sched_active=sa_mx,
     )
     imbalance_before = _fleet_imbalance(fleet)
 
@@ -407,7 +419,7 @@ def balance_fleet_per_hub_ml(
             pool_affected = _pool_affected_days(pi, old_si, new_si, matrices)
             new_expr_vals: dict[int, float] = {}
             new_pool_vals: dict[int, float] = {}
-            new_expr_veh: dict[int, float] = {}
+            new_pool_veh: dict[int, float] = {}
             if affected or pool_affected:
                 chosen[pi] = new_si
                 for d_aff in affected:
@@ -418,12 +430,6 @@ def balance_fleet_per_hub_ml(
                     )
                     delta_total += nv - ecache[hi, d_aff]
                     new_expr_vals[d_aff] = nv
-                    # I1 fix: pure cache hit -- the _hub_express_day_ml call
-                    # just above already warmed express_pred_cache for this
-                    # exact (hi, d_aff, chosen) state, so this costs nothing
-                    # extra. Records the true express-vehicle count so the
-                    # gate below can be corrected, not just the accepted state.
-                    new_expr_veh[d_aff] = _express_veh_fn(hi, d_aff, chosen)
                 for d_aff in pool_affected:
                     pv = _hub_smallday_pool_ml(
                         hi, d_aff, chosen, hub_plz_list, schedules,
@@ -431,6 +437,16 @@ def balance_fleet_per_hub_ml(
                     )
                     delta_total += pv - pcache[hi, d_aff]
                     new_pool_vals[d_aff] = pv
+                # I1 fix: still inside the TRIAL state, and served from the
+                # caches the two loops above just warmed for this exact
+                # (hi, d_aff, chosen) -- so this records the true pooled
+                # vehicle count for the gate below, not just for the accepted
+                # state. Express moves on the schedules' symmetric difference,
+                # the delivery pool on _pool_affected_days (a day served by
+                # BOTH schedules still changes the pool when the batched
+                # demand behind it changes), hence the union.
+                for d_aff in set(affected) | set(pool_affected):
+                    new_pool_veh[d_aff] = _pool_veh_fn(hi, d_aff, chosen)
                 chosen[pi] = old_si
 
             delta_obj = delta_total + (
@@ -445,12 +461,14 @@ def balance_fleet_per_hub_ml(
             old_veh = veh_3d[pi, old_si, :] * sa_mx[old_si]
             new_veh = veh_3d[pi, new_si, :] * sa_mx[new_si]
             new_fleet_hub = fleet[hi] - old_veh + new_veh
-            # I1 fix: the veh_3d-only delta above misses the express-vehicle
+            # I1 fix: the veh_3d-only delta above misses the POOLED-vehicle
             # movement a swap causes (pi joins day d_aff's express pool when
-            # it stops delivering there, leaves it when it starts) -- correct
-            # the tentative row with the true value before ranking/gating.
-            for d_aff, v in new_expr_veh.items():
-                new_fleet_hub[d_aff] += v - evcache[hi, d_aff]
+            # it stops delivering there, leaves it when it starts; and its
+            # small-delivery group re-forms around a changed demand) --
+            # correct the tentative row with the true value before
+            # ranking/gating.
+            for d_aff, v in new_pool_veh.items():
+                new_fleet_hub[d_aff] += v - pvcache[hi, d_aff]
             new_range = float(new_fleet_hub.max() - new_fleet_hub.min())
             if new_range < best_new_range:
                 best_new_range = new_range
@@ -462,21 +480,21 @@ def balance_fleet_per_hub_ml(
 
         if best_new_si is not None:
             # D2 fix: full hub-row refresh (not the old incremental
-            # veh_3d-only delta) so express-partition vehicles — which can
-            # shift for OTHER members of the hub's non-delivery partition,
-            # not just `pi` — stay exact. Cheap: express_veh_fn hits the
-            # express_pred_cache entries the candidate evaluation above
-            # already populated for this exact (hi, d, chosen) state.
-            # I1 fix: evcache is refreshed in the same loop (not just fleet)
+            # veh_3d-only delta) so pooled vehicles — which can shift for
+            # OTHER members of the hub's partitions, not just `pi` — stay
+            # exact. Cheap: _pool_veh_fn hits the cache entries the candidate
+            # evaluation above already populated for this exact
+            # (hi, d, chosen) state.
+            # I1 fix: pvcache is refreshed in the same loop (not just fleet)
             # so the NEXT swap's gate correction reads the post-accept
-            # express-vehicle state, not a stale pre-swap one.
+            # pooled-vehicle state, not a stale pre-swap one.
             chosen[pi] = best_new_si
             for d in range(N_DAYS):
-                ev = _express_veh_fn(hi, d, chosen)
-                evcache[hi, d] = ev
+                pv = _pool_veh_fn(hi, d, chosen)
+                pvcache[hi, d] = pv
                 deliv = h_ps[sa_mx[chosen[h_ps], d]]
                 fleet[hi, d] = (
-                    float(veh_3d[deliv, chosen[deliv], d].sum()) + ev)
+                    float(veh_3d[deliv, chosen[deliv], d].sum()) + pv)
             cur_cost += best_delta
             cur_obj += best_delta_obj
             for d_val, val in best_expr_vals.items():
@@ -560,6 +578,11 @@ def system_smooth_pass(
     sa_mx = matrices.get("sched_active")
     if sa_mx is None:
         sa_mx = _sched_active_mask(schedules)
+    # Pruning-heuristic proxy only — see the pre-check below. Falls back to
+    # veh_3d for hand-built matrices that predate the pooled-vehicle rule.
+    veh_proxy = matrices.get("veh_3d_raw")
+    if veh_proxy is None:
+        veh_proxy = veh_3d
 
     chosen = chosen.copy()
     cur_dd_cost = float(dd_cost_mx[np.arange(n_plz), chosen].sum())
@@ -567,21 +590,27 @@ def system_smooth_pass(
     pool_pred_cache: dict = {}
     ecache = np.zeros((len(hub_plz_list), N_DAYS))
     pcache = np.zeros((len(hub_plz_list), N_DAYS))
-    # I1 fix: express-vehicle mirror of ecache. Needed so the swap GATE (not
-    # just the accepted state) can correct its tentative system-fleet row for
-    # the express vehicles a swap silently moves -- see _express_veh_fn below.
-    evcache = np.zeros((len(hub_plz_list), N_DAYS))
+    # I1 fix: pooled-vehicle mirror of ecache/pcache. Needed so the swap GATE
+    # (not just the accepted state) can correct its tentative system-fleet row
+    # for the pooled vehicles a swap silently moves -- see _pool_veh_fn below.
+    pvcache = np.zeros((len(hub_plz_list), N_DAYS))
 
-    def _express_veh_fn(hi: int, d: int, ch: np.ndarray) -> float:
-        """Express-partition vehicles for hub `hi`/day `d` (D2 fix).
+    def _pool_veh_fn(hi: int, d: int, ch: np.ndarray) -> float:
+        """Pooled vehicles for hub `hi`/day `d`: express + small-delivery.
 
-        Shares ``express_pred_cache`` with the ``_hub_express_day_ml`` calls
-        above and below, so vehicle counts come from cache hits rather than a
-        second round of partition/surrogate calls.
+        Shares ``express_pred_cache`` / ``pool_pred_cache`` with the
+        ``_hub_express_day_ml`` / ``_hub_smallday_pool_ml`` calls above and
+        below, so vehicle counts come from cache hits rather than a second
+        round of partition/surrogate calls.
         """
-        return _hub_express_vehicles(
-            hi, d, ch, hub_plz_list, schedules, raw_express, matrices,
-            express_pred_cache,
+        return (
+            _hub_express_vehicles(
+                hi, d, ch, hub_plz_list, schedules, raw_express, matrices,
+                express_pred_cache,
+            )
+            + _hub_delivery_pool_vehicles(
+                hi, d, ch, hub_plz_list, schedules, matrices, pool_pred_cache,
+            )
         )
 
     for hi in range(len(hub_plz_list)):
@@ -595,7 +624,7 @@ def system_smooth_pass(
                 hi, d, chosen, hub_plz_list, schedules, matrices,
                 pool_pred_cache,
             )
-            evcache[hi, d] = _express_veh_fn(hi, d, chosen)
+            pvcache[hi, d] = _pool_veh_fn(hi, d, chosen)
 
     cur_cost = cur_dd_cost + ecache.sum() + pcache.sum()
     initial_total_cost = cur_cost
@@ -607,7 +636,7 @@ def system_smooth_pass(
 
     fleet = _daily_fleet_per_hub(
         chosen, plz_hub_arr, hub_plz_list, veh_3d, schedules,
-        express_veh_fn=_express_veh_fn, sched_active=sa_mx,
+        pool_veh_fn=_pool_veh_fn, sched_active=sa_mx,
     )
     sys_fleet = fleet.sum(axis=0)
     system_spread_initial = float(sys_fleet.max() - sys_fleet.min())
@@ -647,6 +676,7 @@ def system_smooth_pass(
             hi = int(plz_hub_arr[pi])
             # Delivery-day-masked, to match how `fleet` was built.
             old_veh = veh_3d[pi, old_si, :] * sa_mx[old_si]
+            old_veh_p = veh_proxy[pi, old_si, :] * sa_mx[old_si]
 
             for new_si in range(len(schedules)):
                 if new_si == old_si:
@@ -658,14 +688,21 @@ def system_smooth_pass(
                 if d_max in new_days:
                     continue
 
-                # System-spread of swap (cheap, express-BLIND check before
+                # System-spread of swap (cheap, pool-BLIND check before
                 # paying for cost eval -- a pure pruning heuristic: it only
                 # decides whether this candidate is worth the expensive
                 # partition/surrogate evaluation below. Never used as the
                 # final accept decision -- see the I1 fix after it.)
-                new_veh = veh_3d[pi, new_si, :] * sa_mx[new_si]
-                new_sys_fleet = sys_fleet + (new_veh - old_veh)
-                new_spread = float(new_sys_fleet.max() - new_sys_fleet.min())
+                # It runs on ``veh_proxy`` (the UNPOOLED per-cell count):
+                # ``veh_3d`` is zero for a pooled small-delivery member, so a
+                # cell whose every instance pools would show a zero delta here
+                # and be pruned before its true (pooled) effect is ever
+                # evaluated. The proxy only ranks candidates for evaluation;
+                # the accept gate below stays exact.
+                new_veh_p = veh_proxy[pi, new_si, :] * sa_mx[new_si]
+                proxy_sys_fleet = sys_fleet + (new_veh_p - old_veh_p)
+                new_spread = float(
+                    proxy_sys_fleet.max() - proxy_sys_fleet.min())
                 reduction = cur_spread - new_spread
                 if reduction <= best_reduction:
                     continue
@@ -677,7 +714,7 @@ def system_smooth_pass(
                     pi, old_si, new_si, matrices)
                 expr_new: dict[tuple[int, int], float] = {}
                 pool_new: dict[tuple[int, int], float] = {}
-                expr_veh_new: dict[int, float] = {}
+                pool_veh_new: dict[int, float] = {}
                 if affected or pool_affected:
                     chosen[pi] = new_si
                     for d_aff in affected:
@@ -688,11 +725,6 @@ def system_smooth_pass(
                         )
                         delta_cost += nv - ecache[hi, d_aff]
                         expr_new[(hi, d_aff)] = nv
-                        # I1 fix: pure cache hit (the _hub_express_day_ml call
-                        # above just warmed this exact (hi, d_aff, chosen)
-                        # key) -- the true express-vehicle count, for the
-                        # exact gate correction below.
-                        expr_veh_new[d_aff] = _express_veh_fn(hi, d_aff, chosen)
                     for d_aff in pool_affected:
                         pv = _hub_smallday_pool_ml(
                             hi, d_aff, chosen, hub_plz_list, schedules,
@@ -700,6 +732,14 @@ def system_smooth_pass(
                         )
                         delta_cost += pv - pcache[hi, d_aff]
                         pool_new[(hi, d_aff)] = pv
+                    # I1 fix: still in the TRIAL state, served from the caches
+                    # the two loops above just warmed for this exact
+                    # (hi, d_aff, chosen) -- the true pooled-vehicle count for
+                    # the exact gate correction below. Express moves on the
+                    # symmetric difference, the delivery pool on
+                    # _pool_affected_days, hence the union.
+                    for d_aff in set(affected) | set(pool_affected):
+                        pool_veh_new[d_aff] = _pool_veh_fn(hi, d_aff, chosen)
                     chosen[pi] = old_si
 
                 delta_obj = float(delta_cost) + (
@@ -710,13 +750,15 @@ def system_smooth_pass(
                     continue
 
                 # I1 fix: the accept decision itself must be true-profile-
-                # exact, not the blind pre-check above. Correct the tentative
-                # SYSTEM fleet row (only hub `hi`'s entries can move -- express
-                # is priced per hub) with the true express-vehicle delta just
+                # exact, not the blind pre-check above. Rebuild the tentative
+                # SYSTEM fleet row from the POOLED-EXACT per-cell counts (only
+                # hub `hi`'s entries can move -- both pools are priced per
+                # hub), correct it with the true pooled-vehicle delta just
                 # computed, then re-derive spread/reduction from that.
-                true_sys_fleet = new_sys_fleet.copy()
-                for d_aff, v in expr_veh_new.items():
-                    true_sys_fleet[d_aff] += v - evcache[hi, d_aff]
+                true_sys_fleet = sys_fleet + (
+                    veh_3d[pi, new_si, :] * sa_mx[new_si] - old_veh)
+                for d_aff, v in pool_veh_new.items():
+                    true_sys_fleet[d_aff] += v - pvcache[hi, d_aff]
                 true_spread = float(true_sys_fleet.max() - true_sys_fleet.min())
                 true_reduction = cur_spread - true_spread
                 if true_reduction <= best_reduction:
@@ -734,22 +776,21 @@ def system_smooth_pass(
             break
 
         # Apply best swap. D2 fix: full hub-row refresh (not the old
-        # incremental veh_3d-only delta) so express-partition vehicles —
-        # which can shift for OTHER members of the hub's non-delivery
-        # partition, not just `best_pi` — stay exact. Cheap: express_veh_fn
-        # hits the express_pred_cache entries the candidate evaluation above
-        # already populated for this exact (hi, d, chosen) state.
-        # I1 fix: evcache is refreshed in the same loop (not just fleet) so
+        # incremental veh_3d-only delta) so pooled vehicles — which can shift
+        # for OTHER members of the hub's partitions, not just `best_pi` —
+        # stay exact. Cheap: _pool_veh_fn hits the cache entries the candidate
+        # evaluation above already populated for this exact (hi, d, chosen).
+        # I1 fix: pvcache is refreshed in the same loop (not just fleet) so
         # the NEXT iteration's gate correction reads the post-accept
-        # express-vehicle state, not a stale pre-swap one.
+        # pooled-vehicle state, not a stale pre-swap one.
         hi = int(plz_hub_arr[best_pi])
         chosen[best_pi] = best_si
         h_ps = hub_plz_list[hi]
         for d in range(N_DAYS):
-            ev = _express_veh_fn(hi, d, chosen)
-            evcache[hi, d] = ev
+            pv = _pool_veh_fn(hi, d, chosen)
+            pvcache[hi, d] = pv
             deliv = h_ps[sa_mx[chosen[h_ps], d]]
-            fleet[hi, d] = float(veh_3d[deliv, chosen[deliv], d].sum()) + ev
+            fleet[hi, d] = float(veh_3d[deliv, chosen[deliv], d].sum()) + pv
         sys_fleet = fleet.sum(axis=0)
         cur_cost += best_delta_cost
         cur_obj += best_delta_obj

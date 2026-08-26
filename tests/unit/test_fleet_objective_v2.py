@@ -1,15 +1,23 @@
-"""Fleet objective sees every vehicle (D2): express contributes to fleet.
+"""Fleet objective sees every vehicle, and counts each exactly once.
 
-``_daily_fleet_per_hub`` previously counted only the per-cell delivery-day
-``veh_3d`` slice, so a hub's express partition vehicles (rev1 realistic
-tours) were invisible to fleet balancing. An optional ``express_veh_fn``
-adds them in, sourced from the same partition/cache path
-``_hub_express_day_ml`` prices with (``_hub_express_vehicles``, Task 4).
+Three rules meet in ``_daily_fleet_per_hub``:
+
+* D2 (Task 4) — a hub's POOLED tours must be visible to fleet balancing.
+  ``pool_veh_fn(hi, d, chosen)`` supplies them from the same partition/cache
+  path the cost twins price with.
+* spec §4.3 v3 (Task 6c) — a pooled small-delivery group is ONE tour:
+  ``ceil(Sigma members / Q)``, not one vehicle per member. ``veh_3d`` is
+  zeroed for pooled members so the per-cell term and the closure count
+  disjoint tours.
+* §0 (Task 6c) — with a closure supplied the per-cell term is masked to
+  DELIVERY days, otherwise every express vehicle is counted twice (once as
+  the non-delivering cell's own ``veh_3d`` entry, once in the pool).
 """
 import numpy as np
 import pytest
-from _stubs import StubPredictor, tiny_matrices
+from _stubs import StubPredictor, cell_matrices, tiny_matrices
 
+from batch_delivery.config.constants import N_DAYS, VEHICLE_CAPACITY
 from batch_delivery.optimization.balancing import (
     _daily_fleet_per_hub,
     _fleet_imbalance,
@@ -17,10 +25,21 @@ from batch_delivery.optimization.balancing import (
     system_smooth_pass,
 )
 from batch_delivery.optimization.costs import (
+    _hub_delivery_pool_vehicles,
     _hub_express_vehicles,
     build_cost_matrices_ml,
 )
 from batch_delivery.optimization.schedules import enumerate_valid_schedules
+
+
+def _pool_fn(hpl, sch, m):
+    """The production closure: express + pooled-delivery vehicles."""
+    ec: dict = {}
+    pc: dict = {}
+    return lambda hi, d, ch: (
+        _hub_express_vehicles(hi, d, ch, hpl, sch, m["raw_express"], m, ec)
+        + _hub_delivery_pool_vehicles(hi, d, ch, hpl, sch, m, pc)
+    )
 
 
 def test_theta1_profile_unchanged_with_express_fn():
@@ -35,7 +54,7 @@ def test_theta1_profile_unchanged_with_express_fn():
         hi, d, ch, hpl, sch, m["raw_express"], m, cache)
     base = _daily_fleet_per_hub(chosen, pha, hpl, m["veh_3d"], sch)
     withx = _daily_fleet_per_hub(chosen, pha, hpl, m["veh_3d"], sch,
-                                 express_veh_fn=fn)
+                                 pool_veh_fn=fn)
     assert np.array_equal(base, withx)          # G1: no express at theta=1
 
 
@@ -57,9 +76,9 @@ def test_theta_lt1_profile_includes_express_vehicles():
     fn = lambda hi, d, ch: _hub_express_vehicles(
         hi, d, ch, hpl, sch, m["raw_express"], m, cache)
     blind = _daily_fleet_per_hub(chosen, pha, hpl, m["veh_3d"], sch,
-                                 express_veh_fn=lambda hi, d, ch: 0.0)
+                                 pool_veh_fn=lambda hi, d, ch: 0.0)
     withx = _daily_fleet_per_hub(chosen, pha, hpl, m["veh_3d"], sch,
-                                 express_veh_fn=fn)
+                                 pool_veh_fn=fn)
     d_off = next(dd for dd in range(6) if dd not in sch[two])
     assert blind[0, d_off] == 0.0               # nobody delivers that day
     assert withx[0, d_off] > blind[0, d_off]    # invisible fifth appears
@@ -93,7 +112,7 @@ def test_express_vehicles_are_not_counted_twice():
         hi, d, ch, hpl, sch, m["raw_express"], m, cache)
 
     fleet = _daily_fleet_per_hub(chosen, pha, hpl, veh, sch,
-                                 express_veh_fn=fn)
+                                 pool_veh_fn=fn)
     sa = m["sched_active"]
     h_ps = hpl[0]
     for d in range(6):
@@ -107,40 +126,125 @@ def test_express_vehicles_are_not_counted_twice():
 
 def test_balance_ml_imbalance_before_sees_express_vehicles():
     """The swap-loop wiring, not just the leaf helper: ``imbalance_before``
-    reported by ``balance_fleet_per_hub_ml`` must match an express-aware
-    recompute of the SAME ``chosen`` state, and must differ from the old
-    delivery-day-only accounting (the fleet no longer has an invisible
-    partition of express vehicles).
+    reported by ``balance_fleet_per_hub_ml`` must match a POOL-aware
+    recompute of the SAME ``chosen`` state, and must differ from a pool-blind
+    one (the fleet no longer has an invisible partition of express and
+    small-delivery tours).
     """
     m = tiny_matrices(theta_one=False)
     sch = enumerate_valid_schedules()
     hpl = [np.array([0, 1])]
     pha = np.array([0, 0])
-    daily = next(i for i, s in enumerate(sch) if len(s) == 6)
     two = next(i for i, s in enumerate(sch) if len(s) == 2)
-    chosen = np.array([two, daily])       # cell 0 has express off-days
+    # Both cells idle on four days (express pool) and deliver on two (cell 0
+    # sub-threshold -> delivery pool, cell 1 its own tours), so the pooled
+    # terms move the profile day by day instead of adding a flat offset.
+    chosen = np.array([two, two])
     sa_result = {"chosen": chosen}
 
     res = balance_fleet_per_hub_ml(
         sa_result, ["11111", "22222"], pha, hpl, m, sch, max_swaps=0)
     assert res["swaps_made"] == 0         # isolates the initial-fleet build
 
-    fresh_cache: dict = {}
-    fn = lambda hi, d, ch: _hub_express_vehicles(
-        hi, d, ch, hpl, sch, m["raw_express"], m, fresh_cache)
     expected_fleet = _daily_fleet_per_hub(
-        chosen, pha, hpl, m["veh_3d"], sch, express_veh_fn=fn)
+        chosen, pha, hpl, m["veh_3d"], sch, pool_veh_fn=_pool_fn(hpl, sch, m))
     # Express-BLIND reference: same delivery-day masking, zero pooled term
     # (see test_theta_lt1_profile_includes_express_vehicles on why the
     # unmasked veh_3d sum stopped being a usable baseline in §0).
     blind_fleet = _daily_fleet_per_hub(
         chosen, pha, hpl, m["veh_3d"], sch,
-        express_veh_fn=lambda hi, d, ch: 0.0)
+        pool_veh_fn=lambda hi, d, ch: 0.0)
 
     assert res["imbalance_before"] == pytest.approx(
         _fleet_imbalance(expected_fleet))
     assert res["imbalance_before"] != pytest.approx(
         _fleet_imbalance(blind_fleet))     # D2: express now visible
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# spec §4.3 v3 — a pooled delivery group is ONE tour
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_no_small_cells_leaves_the_profile_untouched():
+    """(a) With every instance >= MIN_TOUR_PARCELS nothing pools, so the
+    pooled-delivery term is identically zero and ``veh_3d`` is untouched —
+    the profile is exactly the pre-6c one."""
+    _, m, sch, hpl, pha = cell_matrices([(400, 60), (500, 80), (450, 70)], fs=0.4)
+    assert not m["small_delivery_mask"].any()
+    assert np.array_equal(m["veh_3d"], m["veh_3d_raw"])
+    daily = next(i for i, s in enumerate(sch) if len(s) == 6)
+    two = next(i for i, s in enumerate(sch) if len(s) == 2)
+    for chosen in (np.array([daily] * 3), np.array([two, daily, two])):
+        pc: dict = {}
+        for d in range(N_DAYS):
+            assert _hub_delivery_pool_vehicles(
+                0, d, chosen, hpl, sch, m, pc) == 0.0
+        expr_only = lambda hi, d, ch: _hub_express_vehicles(   # noqa: E731
+            hi, d, ch, hpl, sch, m["raw_express"], m, {})
+        assert np.array_equal(
+            _daily_fleet_per_hub(chosen, pha, hpl, m["veh_3d"], sch,
+                                 pool_veh_fn=_pool_fn(hpl, sch, m)),
+            _daily_fleet_per_hub(chosen, pha, hpl, m["veh_3d"], sch,
+                                 pool_veh_fn=expr_only))
+
+
+def test_two_pooled_cells_are_one_tour_not_two():
+    """(b) Two co-located sub-threshold cells sharing a delivery day count
+    ``ceil((d1 + d2) / Q)`` vehicles — 1 here — not one each."""
+    # 80 + 15 = 95 parcels/day/cell: below MIN_TOUR_PARCELS on a daily
+    # schedule, and 2 x 95 = 190 still fits one vehicle.
+    _, m, sch, hpl, pha = cell_matrices([(80, 15), (80, 15)], fs=0.5, spread=0.0)
+    daily = next(i for i, s in enumerate(sch) if len(s) == 6)
+    chosen = np.array([daily, daily])
+    cd = m["combined_demand"]
+    d = 0
+    assert m["small_delivery_mask"][0, daily, d]
+    assert m["small_delivery_mask"][1, daily, d]
+    tot = np.trunc(cd[0, daily, d]) + np.trunc(cd[1, daily, d])
+    assert tot <= VEHICLE_CAPACITY               # fixture must exercise it
+
+    pc: dict = {}
+    veh = _hub_delivery_pool_vehicles(0, d, chosen, hpl, sch, m, pc)
+    assert veh == float(np.ceil(tot / VEHICLE_CAPACITY)) == 1.0
+    # ... and the per-cell matrix no longer charges one vehicle each
+    assert m["veh_3d"][0, daily, d] == 0.0
+    assert m["veh_3d_raw"][0, daily, d] == 1.0
+    fleet = _daily_fleet_per_hub(chosen, pha, hpl, m["veh_3d"], sch,
+                                 pool_veh_fn=_pool_fn(hpl, sch, m))
+    assert fleet[0, d] == 1.0                    # one tour, not two
+
+
+def test_express_and_pool_vehicles_land_on_the_right_days():
+    """(d) Both pooled terms appear, each only where its tours actually run:
+    the delivery pool on the small cell's delivery days, express on the days
+    a cell does not deliver."""
+    # cell 0 small (pools on its delivery days), cell 1 large (own tour),
+    # cell 2 small; theta < 1 so non-delivery days carry express.
+    _, m, sch, hpl, pha = cell_matrices(
+        [(80, 15), (600, 90), (80, 15)], fs=0.5, spread=0.0)
+    two = next(i for i, s in enumerate(sch) if len(s) == 2)
+    daily = next(i for i, s in enumerate(sch) if len(s) == 6)
+    chosen = np.array([two, daily, two])
+    ec: dict = {}
+    pcache: dict = {}
+    sa = m["sched_active"]
+    seen_pool = seen_expr = False
+    for d in range(N_DAYS):
+        ex = _hub_express_vehicles(0, d, chosen, hpl, sch, m["raw_express"],
+                                   m, ec)
+        po = _hub_delivery_pool_vehicles(0, d, chosen, hpl, sch, m, pcache)
+        delivering = sa[two, d]
+        assert (ex > 0) == (not delivering)      # express only on off-days
+        assert (po > 0) == bool(delivering)      # pool only on delivery days
+        seen_pool |= po > 0
+        seen_expr |= ex > 0
+        deliv = hpl[0][sa[chosen[hpl[0]], d]]
+        want = float(m["veh_3d"][deliv, chosen[deliv], d].sum()) + ex + po
+        fleet = _daily_fleet_per_hub(chosen, pha, hpl, m["veh_3d"], sch,
+                                     pool_veh_fn=_pool_fn(hpl, sch, m))
+        assert fleet[0, d] == pytest.approx(want)
+        assert want > 0
+    assert seen_pool and seen_expr
 
 
 # ─────────────────────────────────────────────────────────────────────────────

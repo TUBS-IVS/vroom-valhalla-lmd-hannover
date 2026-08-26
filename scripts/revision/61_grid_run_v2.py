@@ -27,21 +27,30 @@ Loop order is theta-outer / provider-inner / penalty-innermost: the cost
 matrices depend on (theta, provider) but NOT on P, so one matrix build is
 amortized over all 8 penalties. Matrices are released between blocks.
 
-Resumable: completed (P, theta, provider) triples are skipped. Run OUTSIDE the
-agent harness (~59-min kill rule):
+Resumable: completed (P, theta, provider) triples are skipped; a triple whose
+_tab_chosen_v2.csv block is short (killed mid-append) is redone, not trusted.
+Run OUTSIDE the agent harness (~59-min kill rule):
   Start-Process .venv\\Scripts\\python.exe -ArgumentList "scripts/revision/61_grid_run_v2.py" -RedirectStandardOutput results/revision_2026_08/61.log
 
-Outputs (results/revision_2026_08/):
+Outputs (results/revision_2026_08/, or $REV2_OUT_DIR):
   _tab_chosen_v2.csv        penalty, share_willing, provider, plz,
                             schedule_idx_stage1, schedule_idx_balanced,
                             schedule_idx_system_smoothed
   tab_costs_v2.csv          per (P, theta, provider): dd / express / pool split
                             at the system-smoothed choice (+ stage totals)
-  tab_fleet_per_hub_v2.csv  per (P, theta, provider, hub, day): partition-aware
-                            fleet = veh_3d part + _hub_express_vehicles
+  tab_fleet_per_hub_v2.csv  per (P, theta, provider, hub, day): the fleet
+                            objective's three disjoint terms —
+                            dd_single_veh (delivering cells with their own
+                            tour), dd_pool_veh (one ceil per pooled
+                            small-delivery GROUP, spec §4.3 v3), express_veh
+                            (one ceil per express tour) — and their sum
   tab_wait_v2.csv           per (P, theta, provider): willing-weighted wait
                             numerator/denominator (50_'s fixed formula); the
                             cell-level wait is sum(num)/sum(den) over providers
+
+``--dummy-head`` is a TIMING probe for the Task-6d decision: it installs a
+partition-forcing stub head, requires ``--only``, and quarantines its (
+meaningless) outputs in ``_dummyhead/``.
 """
 from __future__ import annotations
 
@@ -73,11 +82,14 @@ from batch_delivery.optimization.balancing import (  # noqa: E402
     _daily_fleet_per_hub,
 )
 from batch_delivery.optimization.costs import (  # noqa: E402
+    _hub_delivery_pool_vehicles,
     _hub_express_day_ml,
     _hub_express_vehicles,
     _hub_smallday_pool_ml,
 )
 from batch_delivery.optimization.schedules import enumerate_valid_schedules  # noqa: E402
+from batch_delivery.features import ALL_COLS  # noqa: E402
+from batch_delivery.surrogate.bundle import _daganzo_scalar  # noqa: E402
 
 logging.disable(logging.INFO)  # silence the package's INFO/DEBUG chatter
 
@@ -95,6 +107,41 @@ SIDE_FILES = (COSTS, FLEET, WAIT)
 
 FLEET_COST_BUDGET_PCT = 5.0   # 02_optimize_grid.py:60 (paper revision 2026-05-27)
 SMOOTH_BUDGET_PCT = 1.0       # 03_apply_smoothing.py --budget default
+_COL = {c: k for k, c in enumerate(ALL_COLS)}   # 25-feature row index
+
+
+def _use_out_dir(path: Path) -> None:
+    """Point every output (and the resume bookkeeping) at *path*."""
+    global OUT, CHOSEN, COSTS, FLEET, WAIT, SIDE_FILES
+    OUT = path
+    CHOSEN, COSTS, FLEET, WAIT = (
+        OUT / "_tab_chosen_v2.csv", OUT / "tab_costs_v2.csv",
+        OUT / "tab_fleet_per_hub_v2.csv", OUT / "tab_wait_v2.csv")
+    SIDE_FILES = (COSTS, FLEET, WAIT)
+
+
+class DummyHead:
+    """TIMING-ONLY stand-in for ``BundleHead``: the backbone, no residual.
+
+    ``predict_single`` returns ``alpha * _daganzo_scalar(...)`` of the 25-row
+    — the same closed form ``BundleHead`` adds its LGB residual to, minus the
+    residual. Installing it makes ``price_group`` take the PARTITION path for
+    every group (Task 6d's decision input: how expensive is the head regime?)
+    at a fraction of a real head's per-call cost, so the measured wall time is
+    a LOWER bound on the real thing. Its numbers are meaningless — the runner
+    refuses to write them anywhere but ``_dummyhead/``.
+    """
+
+    def __init__(self, alpha: float) -> None:
+        self.alpha = float(alpha)
+
+    def predict_single(self, x25: np.ndarray) -> float:
+        return self.alpha * _daganzo_scalar(
+            n_parcels=x25[_COL["n_parcels"]],
+            n_stops=x25[_COL["n_stops"]],
+            area_km2=x25[_COL["area_km2"]],
+            hub_dist_km=x25[_COL["hub_dist_km"]],
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -311,6 +358,14 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
         return _hub_express_vehicles(hi, d, ch, hub_plz_list, schedules,
                                      raw_express, m, express_cache)
 
+    def _dv(hi: int, d: int, ch: np.ndarray) -> float:
+        return _hub_delivery_pool_vehicles(hi, d, ch, hub_plz_list, schedules,
+                                           m, pool_cache)
+
+    def _pv(hi: int, d: int, ch: np.ndarray) -> float:
+        """The fleet objective's pooled term: express + small-delivery."""
+        return _ev(hi, d, ch) + _dv(hi, d, ch)
+
     dd_total = float(m["dd_cost_mx"][pidx, chosen_s3].sum())
     expr_total = 0.0
     pool_total = 0.0
@@ -334,21 +389,25 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
             # written for every ACTIVE instance, so on a non-delivery day it
             # already holds the cell's express residual -- counting it here
             # AND adding the pooled express term double-counted every express
-            # vehicle (Task 6c §0).
+            # vehicle (Task 6c §0). veh_3d is also zeroed for pooled
+            # small-delivery members, whose tours dd_pool_veh counts once per
+            # GROUP (spec §4.3 v3) -- so the three columns are disjoint.
             deliv = h_ps[sched_active[chosen_s3[h_ps], d]]
-            dd_veh = float(veh_3d[deliv, chosen_s3[deliv], d].sum())
+            dd_single = float(veh_3d[deliv, chosen_s3[deliv], d].sum())
+            dd_pool = float(_dv(hi, d, chosen_s3))    # cache hit
             ex_veh = float(_ev(hi, d, chosen_s3))     # cache hit
             fleet_rows.append(dict(
                 penalty=P, share_willing=th, provider=prov,
                 hub=hub_names[hi], day=d,
-                dd_veh=dd_veh, express_veh=ex_veh, fleet=dd_veh + ex_veh,
+                dd_single_veh=dd_single, dd_pool_veh=dd_pool,
+                express_veh=ex_veh, fleet=dd_single + dd_pool + ex_veh,
             ))
             fleet_idx.append((hi, d))
 
     # Gate: the recorded fleet must BE _daily_fleet_per_hub's output (Task 7 G3).
     fleet_s3 = _daily_fleet_per_hub(
         chosen_s3, plz_hub_arr, hub_plz_list, veh_3d, schedules,
-        express_veh_fn=_ev)
+        pool_veh_fn=_pv, sched_active=sched_active)
     for (hi, d), r in zip(fleet_idx, fleet_rows):
         assert abs(fleet_s3[hi, d] - r["fleet"]) < 1e-9, (
             f"fleet mismatch P={P} th={th} {prov} hub={r['hub']} d={d}: "
@@ -438,7 +497,21 @@ def main() -> None:
                     help="stage-1 warm-start proxy matrix: 'raw' = cost_3d_raw "
                          "(pre-rev1 semantics, default), 'pooled' = the zeroed "
                          "cost_3d (literal canonical expression)")
+    ap.add_argument("--dummy-head", action="store_true",
+                    help="TIMING ONLY: install a DummyHead so every group is "
+                         "priced through the partition (the head regime). "
+                         "Requires --only; writes to <out>/_dummyhead/. Never "
+                         "use its numbers for results.")
     args = ap.parse_args()
+
+    if args.dummy_head:
+        if not args.only:
+            raise SystemExit(
+                "--dummy-head is a timing probe, not a results run: pass "
+                "--only P=..,th=..,prov=.. to bound it to a single triple")
+        _use_out_dir(OUT / "_dummyhead")
+        print("[dummy-head] TIMING RUN — the head regime is being timed, not "
+              f"evaluated. Outputs go to {OUT} and are NOT results.", flush=True)
 
     OUT.mkdir(parents=True, exist_ok=True)
 
@@ -524,6 +597,10 @@ def main() -> None:
             assert m.get("small_delivery_price") is not None, (
                 "matrices lack 'small_delivery_price' — the pooled twin would "
                 "fall back to per-member partition pricing")
+            if args.dummy_head:
+                # After the asserts on purpose: the base run must still be
+                # proven head-free before the probe overrides that.
+                m["bundle_head"] = DummyHead(model.alpha)
             t_mtx = time.perf_counter() - t0
             print(f"[mtx] th={th:<4g} {prov:<7s} built in {t_mtx:.1f}s "
                   f"({len(block)} penalty value(s) to run)", flush=True)

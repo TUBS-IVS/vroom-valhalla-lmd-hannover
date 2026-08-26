@@ -27,6 +27,7 @@ from batch_delivery.optimization.coordinate_descent import (
     optimize_cd_ml,
 )
 from batch_delivery.optimization.costs import (
+    _hub_delivery_pool_vehicles,
     _hub_express_day,
     _hub_express_day_ml,
     _hub_express_vehicles,

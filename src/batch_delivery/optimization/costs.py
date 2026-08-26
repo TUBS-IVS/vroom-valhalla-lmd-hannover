@@ -675,6 +675,7 @@ def build_cost_matrices_ml(
             "cost_3d": np.zeros((n_plz, n_sched, N_DAYS)),
             "cost_3d_raw": np.zeros((n_plz, n_sched, N_DAYS)),
             "veh_3d": np.zeros((n_plz, n_sched, N_DAYS)),
+            "veh_3d_raw": np.zeros((n_plz, n_sched, N_DAYS)),
             "wait_mx": np.zeros((n_plz, n_sched)),
             "raw_express": np.zeros((n_plz, N_DAYS)),
             "expr_stops": np.zeros((n_plz, N_DAYS)),
@@ -919,6 +920,14 @@ def build_cost_matrices_ml(
         & sched_active[None, :, :]
     )
     cost_3d[small_delivery_mask] = 0.0        # pooled twin owns these
+    # spec §4.3 v3: a pooled group is ONE tour, so its vehicles are counted by
+    # the group (``_hub_delivery_pool_vehicles``), never per member — exactly
+    # the rule the express partition already follows. The per-cell count would
+    # otherwise charge one vehicle to each member of a shared tour.
+    # ``veh_3d_raw`` keeps the unpooled per-cell count for diagnostics and for
+    # the cheap pruning heuristics that only need a movement magnitude.
+    veh_3d_raw = veh_3d.copy()
+    veh_3d[small_delivery_mask] = 0.0
 
     # Pool signature per (plz, schedule, day): the parcels/stops this cell
     # contributes to the hub pool, 0 when it does not participate. Two
@@ -1021,6 +1030,7 @@ def build_cost_matrices_ml(
         "cost_3d": cost_3d,
         "cost_3d_raw": cost_3d_raw,
         "veh_3d": veh_3d,
+        "veh_3d_raw": veh_3d_raw,
         "wait_mx": wait_mx,
         "raw_express": raw_express,
         "expr_stops": expr_stops,
@@ -1199,6 +1209,81 @@ def _hub_express_vehicles(
     return cached[1]
 
 
+def _smallday_members(
+    hi: int, d: int, chosen: np.ndarray,
+    hub_plz_list: list[np.ndarray], matrices: dict,
+) -> tuple[list[int], tuple | None]:
+    """The hub-day's pooled small-delivery cells and their cache key.
+
+    ``([], None)`` when the hub pools nothing that day (or the matrices
+    predate the rule) — both twins then answer 0.0 without touching the
+    cache. Shared so the cost twin and the vehicle twin can never derive
+    different keys for the same hub-day state.
+
+    The key carries ``(cell, schedule)`` pairs, not just the membership set
+    the express twin keys on: a member's pooled demand depends on how many
+    source days its own schedule holds behind this one.
+    """
+    mask3 = matrices.get("small_delivery_mask")
+    if mask3 is None:                         # legacy / hand-built matrices
+        return [], None
+    h_ps = hub_plz_list[hi]
+    sa = matrices["sched_active"]
+    small = [int(z) for z in h_ps
+             if sa[int(chosen[z]), d] and mask3[z, int(chosen[z]), d]]
+    if not small:
+        return [], None
+    return small, (hi, d, tuple(sorted((z, int(chosen[z])) for z in small)))
+
+
+def _smallday_partition(
+    hi: int, d: int, chosen: np.ndarray, small: list[int], matrices: dict,
+) -> tuple[tuple[tuple[int, ...], ...], np.ndarray, np.ndarray]:
+    """Who rides with whom in hub-day *d*'s pooled small-delivery groups.
+
+    Returns ``(parts, parcels, stops)`` — the grouping plus the per-cell
+    parcel/stop vectors it was built from, which the pricing path hands to
+    ``price_group`` and the vehicle path reduces with one ceil per group.
+    Factored out of :func:`_hub_smallday_pool_ml` so the cost path (which
+    skips it at ``head=None``) and :func:`_hub_delivery_pool_vehicles` (which
+    always needs it) build the identical grouping — same inputs, same tours,
+    whoever asks first.
+
+    ``hi`` is carried for call-site symmetry with the twins; the grouping is
+    fully determined by ``(d, small, chosen)``.
+    """
+    from batch_delivery.optimization.partition import build_partition
+    cd = matrices["combined_demand"]
+    cs = matrices["combined_stops"]
+    parcels = np.zeros(cd.shape[0])
+    stops = np.zeros(cd.shape[0])
+    for z in small:
+        parcels[z] = cd[z, int(chosen[z]), d]
+        stops[z] = max(1.0, cs[z, int(chosen[z]), d])
+    parts = build_partition(
+        np.array(small), parcels, stops, matrices["area_arr"],
+        matrices["hd_arr"], matrices["_cent_lon"], matrices["_cent_lat"],
+        pts_lon={z: matrices["plz_day_lon"][z][d] for z in small},
+        pts_lat={z: matrices["plz_day_lat"][z][d] for z in small},
+    )
+    return parts, parcels, stops
+
+
+def _delivery_partition_vehicles(
+    parts: tuple[tuple[int, ...], ...], parcels: np.ndarray,
+) -> float:
+    """Vehicles of a pooled delivery partition: one ceil per tour.
+
+    The delivery-side twin of :func:`_express_partition_vehicles` — the group
+    is ONE tour, so its members' parcels are summed BEFORE the ceil, never
+    rounded up individually (spec §4.3 v3).
+    """
+    return float(sum(
+        np.ceil(sum(np.trunc(parcels[z]) for z in g) / VEHICLE_CAPACITY)
+        for g in parts
+    ))
+
+
 def _hub_smallday_pool_ml(
     hi: int, d: int, chosen: np.ndarray,
     hub_plz_list: list[np.ndarray],
@@ -1216,6 +1301,9 @@ def _hub_smallday_pool_ml(
     ones), so the cache key carries ``(cell, schedule)`` pairs — not just the
     membership set the express twin keys on.
 
+    Results are cached as ``(cost, vehicles)``;
+    :func:`_hub_delivery_pool_vehicles` reads the second slot.
+
     At ``head=None`` the group price is a Sigma over per-member singleton
     prices, so the partition is skipped and the precomputed
     ``matrices["small_delivery_price"]`` table is summed instead; see the
@@ -1229,19 +1317,12 @@ def _hub_smallday_pool_ml(
     generalisation needs a weighting rule rather than a copy of the scalar.
     Until that is decided, pooled instances are priced as single-day ones.
     """
-    mask3 = matrices.get("small_delivery_mask")
-    if mask3 is None:                         # legacy / hand-built matrices
-        return 0.0
-    h_ps = hub_plz_list[hi]
-    sa = matrices["sched_active"]
-    small = [int(z) for z in h_ps
-             if sa[int(chosen[z]), d] and mask3[z, int(chosen[z]), d]]
+    small, key = _smallday_members(hi, d, chosen, hub_plz_list, matrices)
     if not small:
         return 0.0
-    key = (hi, d, tuple(sorted((z, int(chosen[z])) for z in small)))
     hit = pool_cache.get(key)
     if hit is not None:
-        return hit
+        return hit[0]
 
     head = matrices.get("bundle_head")
     sdp = matrices.get("small_delivery_price")
@@ -1258,33 +1339,63 @@ def _hub_smallday_pool_ml(
         # Summation order (cell order instead of group by group) is the only
         # difference from the partition path.
         cost = float(sum(sdp[z, int(chosen[z]), d] for z in small))
-        pool_cache[key] = cost
+        # Partition deferred: its one remaining consumer is the vehicle
+        # count, which fills the None slot in place (see the twin below).
+        pool_cache[key] = (cost, None)
         return cost
 
-    from batch_delivery.optimization.partition import build_partition
     from batch_delivery.surrogate.bundle import price_group
 
-    cd = matrices["combined_demand"]
-    cs = matrices["combined_stops"]
-    parcels = np.zeros(cd.shape[0])
-    stops = np.zeros(cd.shape[0])
-    for z in small:
-        parcels[z] = cd[z, int(chosen[z]), d]
-        stops[z] = max(1.0, cs[z, int(chosen[z]), d])
-    parts = build_partition(
-        np.array(small), parcels, stops, matrices["area_arr"],
-        matrices["hd_arr"], matrices["_cent_lon"], matrices["_cent_lat"],
-        pts_lon={z: matrices["plz_day_lon"][z][d] for z in small},
-        pts_lat={z: matrices["plz_day_lat"][z][d] for z in small},
-    )
+    parts, parcels, stops = _smallday_partition(
+        hi, d, chosen, small, matrices)
     cost = float(sum(
         price_group(g, d, matrices, kind="delivery",
                     parcels_by_cell=parcels, stops_by_cell=stops,
                     freq=1.0, head=head)
         for g in parts
     ))
-    pool_cache[key] = cost
+    pool_cache[key] = (cost, _delivery_partition_vehicles(parts, parcels))
     return cost
+
+
+def _hub_delivery_pool_vehicles(
+    hi: int, d: int, chosen: np.ndarray,
+    hub_plz_list: list[np.ndarray],
+    schedules: list[frozenset[int]],
+    matrices: dict,
+    pool_cache: dict,
+) -> float:
+    """Vehicles of the hub's pooled small-delivery groups on day *d*.
+
+    spec §4.3 v3: a pooled group is ONE tour and contributes
+    ``ceil(Sigma_members trunc(combined_demand[z, chosen[z], d]) / Q)``
+    vehicles — the same counting rule the express partition already uses,
+    the same rule VROOM's ``n_routes`` reports in validation. Singleton
+    (>= MIN_TOUR_PARCELS) delivery instances keep their per-cell ``veh_3d``
+    count, which ``build_cost_matrices_ml`` zeroes for pooled members so the
+    two never overlap.
+
+    Shares ``pool_cache`` with :func:`_hub_smallday_pool_ml` — one entry per
+    hub-day state holding ``(cost, vehicles)``. The vehicles slot is ``None``
+    when the cost was priced partition-free (``head=None``); this function is
+    the only consumer that needs the grouping, so it builds the partition
+    then — once — and upgrades the entry in place. The value is the one the
+    eager (``head`` installed) path stores.
+    """
+    small, key = _smallday_members(hi, d, chosen, hub_plz_list, matrices)
+    if not small:
+        return 0.0
+    cached = pool_cache.get(key)
+    if cached is None:
+        _hub_smallday_pool_ml(
+            hi, d, chosen, hub_plz_list, schedules, matrices, pool_cache)
+        cached = pool_cache[key]
+    if cached[1] is None:                     # partition deferred — pay it now
+        parts, parcels, _ = _smallday_partition(
+            hi, d, chosen, small, matrices)
+        cached = (cached[0], _delivery_partition_vehicles(parts, parcels))
+        pool_cache[key] = cached
+    return cached[1]
 
 
 def _pool_affected_days(

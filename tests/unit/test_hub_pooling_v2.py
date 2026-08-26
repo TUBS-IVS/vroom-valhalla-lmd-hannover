@@ -9,9 +9,10 @@ about the optimiser, not a broken test.
 import numpy as np
 import pytest
 
-from _stubs import tiny_matrices
+from _stubs import cell_matrices, tiny_matrices
 from batch_delivery.config.constants import N_DAYS, VEHICLE_CAPACITY
 from batch_delivery.optimization.costs import (
+    _hub_delivery_pool_vehicles,
     _hub_express_day_ml,
     _hub_express_vehicles,
     _hub_smallday_pool_ml,
@@ -118,6 +119,53 @@ def test_mask_only_marks_delivery_days():
     # express (non-delivery) instances are pooled by _hub_express_day_ml,
     # never by the delivery-day twin.
     assert not np.any(mask & ~sa[None, :, :])
+
+
+def test_pool_vehicles_lazily_upgrade_to_the_eager_value():
+    """spec §4.3 v3: the pooled group's vehicle count is one ceil per TOUR.
+
+    At ``head=None`` the cost is priced partition-free, so the cache entry is
+    ``(cost, None)``; ``_hub_delivery_pool_vehicles`` is the only consumer
+    that needs the grouping and pays for it once, upgrading the entry in
+    place. The value must equal the one the eager (``head`` installed) path
+    stores — same partition, whoever builds it.
+    """
+    class _Head:
+        def predict_single(self, x25):        # marker value per group
+            return 1000.0 + float(x25[0])
+
+    # Four co-located sub-threshold cells -> a genuinely multi-member tour.
+    _, m, sch, hpl, _ = cell_matrices([(80, 15)] * 4, fs=0.5, spread=0.0)
+    daily = next(i for i, s in enumerate(sch) if len(s) == N_DAYS)
+    chosen = np.full(4, daily, dtype=np.int64)
+    d = 0
+    assert m["small_delivery_mask"][:, daily, d].all()   # fixture pools
+
+    pc: dict = {}
+    cost = _hub_smallday_pool_ml(0, d, chosen, hpl, sch, m, pc)
+    key = next(iter(pc))
+    assert pc[key] == (cost, None)             # partition deferred
+    veh = _hub_delivery_pool_vehicles(0, d, chosen, hpl, sch, m, pc)
+    assert len(pc) == 1                        # upgraded in place
+    assert pc[key] == (cost, veh) and veh >= 1.0
+    # the twin still serves the cost from that same entry, as a float
+    assert _hub_smallday_pool_ml(0, d, chosen, hpl, sch, m, pc) == cost
+    # fleet-first order (no cost call at all) gives the same count
+    assert _hub_delivery_pool_vehicles(0, d, chosen, hpl, sch, m, {}) == veh
+
+    # ... and so does the eager path, which prices THROUGH the partition
+    m_head = dict(m)
+    m_head["bundle_head"] = _Head()
+    pc_eager: dict = {}
+    eager_cost = _hub_smallday_pool_ml(0, d, chosen, hpl, sch, m_head, pc_eager)
+    assert pc_eager[key][1] == veh
+    assert eager_cost != cost                  # different price, same tours
+
+    # one ceil per tour, not one per member
+    cd = m["combined_demand"]
+    tot = sum(np.trunc(cd[z, daily, d]) for z in range(4))
+    assert veh == float(np.ceil(tot / VEHICLE_CAPACITY))
+    assert veh < 4.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
