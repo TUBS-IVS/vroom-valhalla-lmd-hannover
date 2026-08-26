@@ -5,6 +5,13 @@ load are singletons; smaller cells are packed nearest-neighbour first (seeded
 at the cell farthest from the hub) under three caps: stops, area, and hull
 compactness. Canonical output (sorted tuples) so results are hashable cache
 keys and reproducible across process restarts.
+
+Task 6d (L2): the hull check is the expensive cap — one ``ConvexHull`` per
+candidate merge — and the point cloud of a member set is fixed for a given day.
+``build_partition`` therefore accepts an OPTIONAL ``hull_cache`` mapping, which
+the module never creates and never owns: the caller injects it (and scopes it
+to a day, see ``optimization/costs.py::_hull_cache``), so this module stays a
+pure function of its arguments.
 """
 from __future__ import annotations
 
@@ -36,7 +43,17 @@ def build_partition(
     max_stops: float = MAX_TOUR_STOPS,
     max_area: float = MAX_TOUR_AREA_KM2,
     max_hull_ratio: float = MAX_HULL_RATIO,
+    hull_cache: dict | None = None,
 ) -> tuple[tuple[int, ...], ...]:
+    """Group *cells* into tours. ``hull_cache`` is an optional exact memo.
+
+    ``hull_cache`` maps the ORDERED tuple of members actually concatenated ->
+    hull km². Ordered, not a frozenset: ``_hull_km2`` divides by
+    ``cos(radians(mean(lat)))`` and a pairwise mean over a permuted array can
+    differ in the last ULP, so keying on the set would make the memo an
+    approximation rather than a cache. The caller must scope the mapping to one
+    day (the points are day-dependent) and to one source of point geometry.
+    """
     cells = sorted(int(c) for c in np.asarray(cells).ravel())
     singles = [c for c in cells if parcels[c] >= min_parcels]
     small = [c for c in cells if parcels[c] < min_parcels]
@@ -78,10 +95,20 @@ def build_partition(
                         if len(pts_lon.get(c, ())) and len(pts_lat.get(c, ()))
                     ]
                     if have_pts:
-                        L = np.concatenate([pts_lon[c] for c in have_pts])
-                        A = np.concatenate([pts_lat[c] for c in have_pts])
-                        if (len(L) >= 3
-                                and _hull_km2(L, A) > max_hull_ratio * (a_sum + areas[j])):
+                        # L2 memo: the hull of THIS ordered point set. Missing
+                        # -> compute exactly as before. ``_hull_km2`` already
+                        # answers 0.0 for < 3 points, and 0.0 never exceeds the
+                        # (non-negative) cap, so folding the old ``len(L) >= 3``
+                        # short-circuit into the value is bit-identical.
+                        hk = None if hull_cache is None else tuple(have_pts)
+                        hull = None if hk is None else hull_cache.get(hk)
+                        if hull is None:
+                            L = np.concatenate([pts_lon[c] for c in have_pts])
+                            A = np.concatenate([pts_lat[c] for c in have_pts])
+                            hull = _hull_km2(L, A)
+                            if hk is not None:
+                                hull_cache[hk] = hull
+                        if hull > max_hull_ratio * (a_sum + areas[j]):
                             continue
                 picked = j
                 break

@@ -86,6 +86,7 @@ from batch_delivery.optimization.costs import (  # noqa: E402
     _hub_express_day_ml,
     _hub_express_vehicles,
     _hub_smallday_pool_ml,
+    _memo_stats,
 )
 from batch_delivery.optimization.schedules import enumerate_valid_schedules  # noqa: E402
 from batch_delivery.features import ALL_COLS  # noqa: E402
@@ -458,6 +459,25 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
         schedule_idx_system_smoothed=int(chosen_s3[pi]),
     ) for pi, pc in enumerate(plz_keys)]
     t_out = time.perf_counter() - t0
+
+    # Task 6d: the three exact memo layers, so a run's log says whether they
+    # are actually carrying the head regime (counters are cumulative over the
+    # (theta, provider) block, since the matrices — and their memos — are).
+    st = _memo_stats(m)
+    def _rate(h: int, mi: int) -> str:
+        return f"{100.0 * h / max(1, h + mi):4.1f}%"
+    print(f"    P={P:<5g} th={th:<4g} {prov:<7s} memo "
+          f"price {_rate(st['price_hit'], st['price_miss'])} "
+          f"({st['price_hit']}/{st['price_hit'] + st['price_miss']}) "
+          f"part {_rate(st['partition_hit'], st['partition_miss'])} "
+          f"({st['partition_hit']}/{st['partition_hit'] + st['partition_miss']}) "
+          f"hull {_rate(st['hull_hit'], st['hull_miss'])} "
+          f"({st['hull_hit']}/{st['hull_hit'] + st['hull_miss']}) "
+          f"| entries price={len(m.get('_group_price_memo', ()))} "
+          f"part={len(m.get('_partition_memo', ()))} "
+          f"hull={sum(len(c) for c in m.get('_hull_memo', {}).values())} "
+          f"clears={st['price_clear'] + st['partition_clear'] + st['hull_clear']}",
+          flush=True)
 
     rows = {"chosen": chosen_rows, "costs": cost_rows,
             "fleet": fleet_rows, "wait": wait_rows}

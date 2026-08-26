@@ -24,6 +24,54 @@ from batch_delivery.features import (
 _KM_PER_DEG_LAT = 111.32
 _I = {c: k for k, c in enumerate(ALL_COLS)}
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Task 6d memo plumbing — shared by this module (L1) and optimization/costs.py
+# (L2/L3), which imports these names. Defined HERE because ``price_group`` is
+# the hottest consumer and must not pay a deferred import per call; costs.py is
+# free to import at module level (nothing in ``batch_delivery.surrogate``
+# imports ``batch_delivery.optimization`` at import time).
+#
+# Every memo lives ON the matrices dict, so a fresh ``build_cost_matrices_ml``
+# starts empty and releasing the matrices releases the caches.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_MEMO = "_group_price_memo"          # L1: (members, day, kind, dem, freq, head) -> price
+_MEMO_PINS = "_group_price_memo_heads"   # id(head) -> head, so ids cannot recycle
+_MEMO_PART = "_partition_memo"       # L3: (kind, day, cell state) -> partition
+_MEMO_HULL = "_hull_memo"            # L2: day -> {ordered members: hull km2}
+_MEMO_STATS = "_memo_stats"
+
+#: Every key the memo layers add to a matrices dict. A caller that shallow-
+#: copies matrices and replaces an array the prices depend on must drop these.
+MEMO_KEYS = frozenset({_MEMO, _MEMO_PINS, _MEMO_PART, _MEMO_HULL, _MEMO_STATS})
+
+#: Bounded RAM. A memo may forget (clear) but must never misremember, so an
+#: overflow drops everything and refills — still an exact cache.
+_MEMO_CAP = 200_000
+_PART_CAP = 100_000
+_HULL_CAP = 200_000
+
+_STAT_FIELDS = (
+    "price_hit", "price_miss", "price_clear",
+    "partition_hit", "partition_miss", "partition_clear",
+    "hull_hit", "hull_miss", "hull_clear",
+)
+
+
+def _memo_stats(matrices) -> dict:
+    """Hit/miss counters for the three memo layers, created on first use."""
+    st = matrices.get(_MEMO_STATS)
+    if st is None:
+        st = matrices[_MEMO_STATS] = dict.fromkeys(_STAT_FIELDS, 0)
+    return st
+
+
+def _bump(matrices, field: str) -> None:
+    st = matrices.get(_MEMO_STATS)
+    if st is None:
+        st = _memo_stats(matrices)
+    st[field] += 1
+
 
 def _members_points(members, day, matrices):
     L = [matrices["plz_day_lon"][z][day] for z in members
@@ -163,20 +211,85 @@ class BundleHead:
                      + self.model.predict(x25.reshape(1, -1))[0])
 
 
+def _demand_sig(by_cell, members) -> bytes | None:
+    """Exact key fragment for a per-cell demand override — raw IEEE-754 bits.
+
+    ``None`` (the day-fixed default source) keys as ``None``. Bytes rather than
+    a tuple of rounded floats on purpose: rounding a KEY can merge two inputs
+    that ``np.trunc`` would separate (229.9999995 vs 230.0000005), which would
+    make the memo an approximation. Bit patterns cannot collide, and repeated
+    reads of the same array entry are bit-identical, so the hit rate is not
+    hurt by exactness.
+    """
+    if by_cell is None:
+        return None
+    return np.asarray([by_cell[z] for z in members], dtype=np.float64).tobytes()
+
+
 def price_group(members, day, matrices, *, kind, parcels_by_cell=None,
                 stops_by_cell=None, freq=1.0, head=None) -> float:
+    """Price one tour. The ONE choke point — memoised for the head regime (L1).
+
+    Deterministic in ``(members, day, kind, demand signature, freq, head)``
+    given a fixed ``matrices``, so the result is memoised on the matrices dict
+    (``_group_price_memo``). At ``head=None`` the group price is a Sigma over
+    per-member prices; with a head installed it is one ``bundle_features`` +
+    one surrogate call over the whole group — the expensive case Task 6d is
+    about. The memo returns exactly what the function would have computed, so
+    train (the Task 8/10 sampler) and serve stay the same expression.
+
+    Head identity is part of the key and the head object is PINNED by the memo,
+    so CPython cannot recycle a dead head's ``id`` into a live entry.
+
+    Scope: everything the price depends on beyond the key is read from
+    ``matrices`` (``express_cost``, ``raw_express``, ``expr_stops``, the
+    geometry, ``ml_predictor``, ``provider``). A caller that shallow-copies a
+    matrices dict and REPLACES one of those must drop the memo keys with it —
+    see ``optimization/costs.py::MEMO_KEYS``. The copies made in this repo
+    (``dict(m)`` + a new ``dd_cost_mx``, ``dict(m)`` + ``bundle_head``) touch
+    nothing the price reads, and ``bundle_head`` is in the key.
+    """
     members = tuple(sorted(int(z) for z in members))
     if len(members) == 1 and kind == "express" and parcels_by_cell is None:
+        # Already an O(1) array lookup; a memo here would only add a hash.
         return float(matrices["express_cost"][members[0], day])
+
+    memo = matrices.get(_MEMO)
+    if memo is None:
+        memo = matrices[_MEMO] = {}
+    if head is not None:
+        pins = matrices.get(_MEMO_PINS)
+        if pins is None:
+            pins = matrices[_MEMO_PINS] = {}
+        if id(head) not in pins:
+            pins[id(head)] = head            # keeps id(head) unrecyclable
+    key = (members, int(day), kind,
+           _demand_sig(parcels_by_cell, members),
+           _demand_sig(stops_by_cell, members),
+           float(freq), id(head))
+    hit = memo.get(key)
+    if hit is not None:
+        _bump(matrices, "price_hit")
+        return hit
+
     if head is None:
         if kind == "express" and parcels_by_cell is None:
-            return float(sum(matrices["express_cost"][z, day] for z in members))
-        return float(sum(
-            matrices["ml_predictor"].predict_single(
-                bundle_features((z,), day, matrices, kind=kind,
-                                parcels_by_cell=parcels_by_cell,
-                                stops_by_cell=stops_by_cell, freq=freq))
-            for z in members))
-    return head.predict_single(bundle_features(
-        members, day, matrices, kind=kind, parcels_by_cell=parcels_by_cell,
-        stops_by_cell=stops_by_cell, freq=freq))
+            val = float(sum(matrices["express_cost"][z, day] for z in members))
+        else:
+            val = float(sum(
+                matrices["ml_predictor"].predict_single(
+                    bundle_features((z,), day, matrices, kind=kind,
+                                    parcels_by_cell=parcels_by_cell,
+                                    stops_by_cell=stops_by_cell, freq=freq))
+                for z in members))
+    else:
+        val = head.predict_single(bundle_features(
+            members, day, matrices, kind=kind, parcels_by_cell=parcels_by_cell,
+            stops_by_cell=stops_by_cell, freq=freq))
+    _bump(matrices, "price_miss")
+    if len(memo) >= _MEMO_CAP:
+        # Bounded RAM, still exact: a memo may forget, never misremember.
+        memo.clear()
+        _bump(matrices, "price_clear")
+    memo[key] = val
+    return val

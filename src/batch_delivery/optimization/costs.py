@@ -34,6 +34,19 @@ from batch_delivery.features import (
 from batch_delivery.io.demand import compute_shifted_demand_plz, get_source_days
 from batch_delivery.legacy.daganzo import CalibratedDaganzo, predict_vec
 from batch_delivery.optimization.schedules import _compute_wait_mx
+from batch_delivery.surrogate.bundle import (  # memo plumbing, see bundle.py
+    _HULL_CAP,
+    _MEMO,
+    _MEMO_HULL,
+    _MEMO_PART,
+    _MEMO_PINS,
+    _MEMO_STATS,
+    _PART_CAP,
+    _STAT_FIELDS,
+    MEMO_KEYS,  # noqa: F401  (re-exported: callers/tests import it here)
+    _bump,
+    _memo_stats,
+)
 from batch_delivery.utils import log
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1010,20 +1023,45 @@ def build_cost_matrices_ml(
         "provider": provider, "fast_share_blend_arr": fast_share_blend_arr,
         "raw_express": raw_express, "expr_stops": expr_stops,
     }
+    #
+    # Task 6d: the per-row ``predict_single`` loop was 36.6 s of the 46.7 s
+    # build (6b report §7.4) — almost all of it the per-call DataFrame the
+    # predictor reconstructs. The 25-feature ROWS are built exactly as before,
+    # one per instance, and then priced in ONE batched ``predict``. That is a
+    # pure refactor only if ``predict`` and ``predict_single`` agree bit for
+    # bit on the same row; the production hybrid's ``predict_single`` IS
+    # ``predict`` on a 1-row frame, but a future predictor need not be, so the
+    # equality is ASSERTED on a sample before the batch result is trusted.
     _sd_parcels = np.zeros(n_plz, dtype=np.float64)
     _sd_stops = np.zeros(n_plz, dtype=np.float64)
     _sz, _ss, _sd = np.where(small_delivery_mask)
-    for _z, _s, _d in zip(_sz.tolist(), _ss.tolist(), _sd.tolist()):
-        _sd_parcels[_z] = combined_demand[_z, _s, _d]
-        _sd_stops[_z] = max(1.0, combined_stops[_z, _s, _d])
-        small_delivery_price[_z, _s, _d] = float(ml_predictor.predict_single(
-            bundle_features((_z,), _d, _bf_view, kind="delivery",
-                            parcels_by_cell=_sd_parcels,
-                            stops_by_cell=_sd_stops, freq=1.0)))
-        _sd_parcels[_z] = 0.0
-        _sd_stops[_z] = 0.0
+    _sd_idx = list(zip(_sz.tolist(), _ss.tolist(), _sd.tolist()))
+    if _sd_idx:
+        _sd_rows = np.empty((len(_sd_idx), len(ALL_COLS)), dtype=np.float64)
+        for _k, (_z, _s, _d) in enumerate(_sd_idx):
+            _sd_parcels[_z] = combined_demand[_z, _s, _d]
+            _sd_stops[_z] = max(1.0, combined_stops[_z, _s, _d])
+            _sd_rows[_k] = bundle_features(
+                (_z,), _d, _bf_view, kind="delivery",
+                parcels_by_cell=_sd_parcels, stops_by_cell=_sd_stops, freq=1.0)
+            _sd_parcels[_z] = 0.0
+            _sd_stops[_z] = 0.0
+        _sd_batch = np.asarray(ml_predictor.predict(
+            pd.DataFrame(_sd_rows, columns=ALL_COLS)), dtype=np.float64)
+        # G-6d guard: batch == per-row, or fall back to the per-row loop. A
+        # silent 1-ULP drift here would move every pooled price in the grid.
+        _chk = np.random.default_rng(20260826).choice(
+            len(_sd_idx), size=min(5, len(_sd_idx)), replace=False)
+        _exact = all(
+            float(ml_predictor.predict_single(_sd_rows[int(_k)]))
+            == float(_sd_batch[int(_k)]) for _k in _chk)
+        assert _exact, (
+            "ml_predictor.predict(batch) != predict_single(row) — the pooled "
+            "small-delivery price table cannot be batched with this predictor")
+        for _k, (_z, _s, _d) in enumerate(_sd_idx):
+            small_delivery_price[_z, _s, _d] = _sd_batch[_k]
     log.info("Pooled small-delivery prices: %d instance(s) precomputed",
-             len(_sz))
+             len(_sd_idx))
 
     return {
         "dd_cost_mx": dd_cost_mx,
@@ -1057,6 +1095,18 @@ def build_cost_matrices_ml(
         "plz_b2c_share": plz_b2c_share,
         "ml_predictor": ml_predictor,
         "provider": provider,
+        # ── Task 6d memo layers, empty and owned by THIS matrices dict ──
+        # Created here rather than lazily so that the shallow copies the
+        # optimisers make (``mat_pen = dict(m)`` with its own ``dd_cost_mx``)
+        # SHARE them: stage 1's partitions and prices are then still warm for
+        # stages 2 and 3. Safe because nothing a memo key omits differs
+        # between those copies — see ``price_group``'s scope note. Releasing
+        # the matrices releases the caches.
+        _MEMO: {},
+        _MEMO_PINS: {},
+        _MEMO_PART: {},
+        _MEMO_HULL: {},
+        _MEMO_STATS: dict.fromkeys(_STAT_FIELDS, 0),
     }
 
 
@@ -1065,6 +1115,72 @@ def build_cost_matrices_ml(
 # ─────────────────────────────────────────────────────────────────────────────
 # Hub-bundled express cost — ML version
 # ─────────────────────────────────────────────────────────────────────────────
+
+class _HullMemo(dict):
+    """A plain mapping as far as ``partition.py`` is concerned, plus counters.
+
+    ``build_partition`` only ever calls ``get`` and ``__setitem__``, so the
+    pure module stays unaware that anything is being measured. The overridden
+    ``get`` costs ~100 ns against the ~100 us ``ConvexHull`` it avoids.
+
+    Constraint: ``__init__`` takes a required argument, so a matrices dict
+    holding one of these is not picklable/deep-copyable as-is. Nothing in the
+    package does either (the shallow ``dict(m)`` copies the optimisers make are
+    fine); a caller that needs to would drop ``MEMO_KEYS`` first.
+    """
+
+    __slots__ = ("_stats",)
+
+    def __init__(self, stats: dict) -> None:
+        super().__init__()
+        self._stats = stats
+
+    def get(self, key, default=None):
+        val = super().get(key, default)
+        self._stats["hull_hit" if val is not default else "hull_miss"] += 1
+        return val
+
+
+def _hull_cache(matrices: dict, d: int) -> _HullMemo:
+    """The L2 hull memo for day *d*, created on first use.
+
+    Scoped per day because the point cloud of a member set is day-dependent;
+    the express and the pooled-delivery partitions read the SAME geometry
+    (``matrices["plz_day_lon"]``/``["plz_day_lat"]``), so they share it.
+    """
+    store = matrices.get(_MEMO_HULL)
+    if store is None:
+        store = matrices[_MEMO_HULL] = {}
+    cache = store.get(d)
+    if cache is None:
+        cache = store[d] = _HullMemo(_memo_stats(matrices))
+    elif len(cache) >= _HULL_CAP:             # bounded: forget, never misremember
+        cache.clear()
+        _bump(matrices, "hull_clear")
+    return cache
+
+
+def _partition_memo(matrices: dict) -> dict:
+    memo = matrices.get(_MEMO_PART)
+    if memo is None:
+        memo = matrices[_MEMO_PART] = {}
+    return memo
+
+
+def _cell_state_key(cells: list[int], parcels, stops) -> bytes:
+    """Compact exact key for a cell state: the ids plus the parcels and stops.
+
+    Bytes rather than a tuple of rounded floats: a rounded key can merge two
+    inputs that ``build_partition``'s ``>= min_parcels`` test would separate,
+    which would make the memo an approximation. Bit patterns cannot collide,
+    and repeated reads of the same array entry are bit-identical, so exactness
+    costs no hit rate. Compact because these keys are held for a whole
+    (theta, provider) block: ~12 bytes per cell instead of ~140.
+    """
+    return (np.asarray(cells, dtype=np.int32).tobytes()
+            + np.asarray([parcels[z] for z in cells], dtype=np.float64).tobytes()
+            + np.asarray([stops[z] for z in cells], dtype=np.float64).tobytes())
+
 
 def _express_partition(
     contributing: list[int], d: int,
@@ -1076,15 +1192,37 @@ def _express_partition(
     not need it at ``head=None``) and the vehicle path (which always does) can
     call it independently. Pure function of its arguments — same inputs, same
     grouping, whoever asks first.
+
+    Task 6d (L3): that purity is what makes it memoisable. The grouping depends
+    only on ``(d, contributing, raw_express[:, d], expr_stops[:, d])`` plus the
+    day-fixed geometry, so the result is cached on the matrices dict. CD
+    revisits hub-day states heavily (2 restarts x 8 rounds x pair-polish), and
+    ``_hub_express_vehicles`` asks for the very same grouping the cost path
+    skipped at ``head=None`` — both are served from here.
     """
     from batch_delivery.optimization.partition import build_partition
-    return build_partition(
-        np.array(contributing), raw_express[:, d], expr_stops[:, d],
+    cells = sorted(int(z) for z in contributing)   # build_partition sorts too
+    memo = _partition_memo(matrices)
+    key = ("express", int(d),
+           _cell_state_key(cells, raw_express[:, d], expr_stops[:, d]))
+    hit = memo.get(key)
+    if hit is not None:
+        _bump(matrices, "partition_hit")
+        return hit
+    _bump(matrices, "partition_miss")
+    parts = build_partition(
+        np.array(cells), raw_express[:, d], expr_stops[:, d],
         matrices["area_arr"], matrices["hd_arr"],
         matrices["_cent_lon"], matrices["_cent_lat"],
-        pts_lon={z: matrices["plz_day_lon"][z][d] for z in contributing},
-        pts_lat={z: matrices["plz_day_lat"][z][d] for z in contributing},
+        pts_lon={z: matrices["plz_day_lon"][z][d] for z in cells},
+        pts_lat={z: matrices["plz_day_lat"][z][d] for z in cells},
+        hull_cache=_hull_cache(matrices, d),
     )
+    if len(memo) >= _PART_CAP:
+        memo.clear()
+        _bump(matrices, "partition_clear")
+    memo[key] = parts
+    return parts
 
 
 def _express_partition_vehicles(
@@ -1251,21 +1389,40 @@ def _smallday_partition(
 
     ``hi`` is carried for call-site symmetry with the twins; the grouping is
     fully determined by ``(d, small, chosen)``.
+
+    Task 6d (L3): the GROUPING is memoised on the matrices dict, keyed by the
+    cell state ``(d, cells, parcels, stops)`` it was built from. The returned
+    parcel/stop vectors stay freshly built per call — callers hand them to
+    ``price_group`` as ``parcels_by_cell``/``stops_by_cell`` and are free to
+    treat them as their own.
     """
     from batch_delivery.optimization.partition import build_partition
     cd = matrices["combined_demand"]
     cs = matrices["combined_stops"]
     parcels = np.zeros(cd.shape[0])
     stops = np.zeros(cd.shape[0])
-    for z in small:
+    cells = sorted(int(z) for z in small)     # build_partition sorts too
+    for z in cells:
         parcels[z] = cd[z, int(chosen[z]), d]
         stops[z] = max(1.0, cs[z, int(chosen[z]), d])
+    memo = _partition_memo(matrices)
+    key = ("delivery", int(d), _cell_state_key(cells, parcels, stops))
+    hit = memo.get(key)
+    if hit is not None:
+        _bump(matrices, "partition_hit")
+        return hit, parcels, stops
+    _bump(matrices, "partition_miss")
     parts = build_partition(
-        np.array(small), parcels, stops, matrices["area_arr"],
+        np.array(cells), parcels, stops, matrices["area_arr"],
         matrices["hd_arr"], matrices["_cent_lon"], matrices["_cent_lat"],
-        pts_lon={z: matrices["plz_day_lon"][z][d] for z in small},
-        pts_lat={z: matrices["plz_day_lat"][z][d] for z in small},
+        pts_lon={z: matrices["plz_day_lon"][z][d] for z in cells},
+        pts_lat={z: matrices["plz_day_lat"][z][d] for z in cells},
+        hull_cache=_hull_cache(matrices, d),
     )
+    if len(memo) >= _PART_CAP:
+        memo.clear()
+        _bump(matrices, "partition_clear")
+    memo[key] = parts
     return parts, parcels, stops
 
 
