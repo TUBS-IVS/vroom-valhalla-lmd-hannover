@@ -23,7 +23,9 @@ from _stubs import StubPredictor
 from batch_delivery.config.constants import N_DAYS
 from batch_delivery.optimization.costs import (
     _express_partition,
+    _hub_delivery_pool_vehicles,
     _hub_express_day_ml,
+    _hub_express_vehicles,
     _hub_smallday_pool_ml,
     _memo_stats,
     _smallday_members,
@@ -328,8 +330,18 @@ def test_l2_hull_key_is_the_concatenation_order_not_the_set():
         np.array(cells), m["raw_express"][:, d], m["expr_stops"][:, d],
         m["area_arr"], m["hd_arr"], m["_cent_lon"], m["_cent_lat"],
         pts_lon=pts_lon, pts_lat=pts_lat, hull_cache=cache)
+    assert cache, "the fixture never reached a hull check"
     for members in cache:
         assert isinstance(members, tuple)          # ordered, not a frozenset
+    # The distinction has to BITE: build_partition seeds at the cell farthest
+    # from the hub and grows by nearest neighbour, so trial groups arrive in
+    # non-sorted order. If every key happened to be sorted, keying on the
+    # frozenset would be observationally equivalent and this test would be
+    # vacuous.
+    unsorted = [k for k in cache if list(k) != sorted(k)]
+    assert unsorted, (
+        f"every one of the {len(cache)} hull keys is in sorted order — the "
+        "ordered-vs-set distinction is untested by this fixture")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -454,6 +466,40 @@ def test_memo_layers_work_on_a_hand_built_matrices_dict():
 # ─────────────────────────────────────────────────────────────────────────────
 # End-to-end: the head regime's hub twins are unchanged by the memos
 # ─────────────────────────────────────────────────────────────────────────────
+
+def test_head_none_vehicle_counts_are_identical_with_and_without_memos():
+    """The ONLY memo-touched path the live base grid runs.
+
+    At ``head=None`` L1 is inert (the 6b fast paths never call ``price_group``)
+    and the cost is partition-free — but the FLEET is not: stage 2's balancing
+    loops ask ``_hub_express_vehicles`` and ``_hub_delivery_pool_vehicles`` for
+    a count, and those go through L3 (and L2 underneath). So this is where a
+    memo bug would land in ``tab_fleet_per_hub_v2.csv``. Warm matrices dict vs
+    a fresh memo-free view, every hub-day of every sweep state: 0 mismatches.
+    """
+    m, hpl = _matrices()
+    sch = enumerate_valid_schedules()
+    assert m.get("bundle_head") is None
+    n_cmp = n_nonzero = 0
+    for chosen in _chosen_vectors(m["raw_express"].shape[0], sch):
+        for d in range(N_DAYS):
+            cold = _cold(m)                    # fresh, un-memoised each call
+            want_x = _hub_express_vehicles(
+                0, d, chosen, hpl, sch, cold["raw_express"], cold, {})
+            got_x = _hub_express_vehicles(
+                0, d, chosen, hpl, sch, m["raw_express"], m, {})
+            assert got_x == want_x
+            want_p = _hub_delivery_pool_vehicles(
+                0, d, chosen, hpl, sch, _cold(m), {})
+            got_p = _hub_delivery_pool_vehicles(0, d, chosen, hpl, sch, m, {})
+            assert got_p == want_p
+            n_cmp += 2
+            n_nonzero += (got_x > 0) + (got_p > 0)
+    assert n_cmp and n_nonzero, "the sweep never counted a vehicle"
+    # ... and the memo really was exercised (otherwise warm == cold trivially)
+    assert _memo_stats(m)["partition_hit"] > 0
+    assert _memo_stats(m)["price_hit"] == _memo_stats(m)["price_miss"] == 0
+
 
 def test_head_regime_hub_costs_are_identical_with_and_without_memos():
     """The strongest statement: a warm memo changes no hub-day cost at all."""

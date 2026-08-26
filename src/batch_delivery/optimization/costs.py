@@ -1029,9 +1029,21 @@ def build_cost_matrices_ml(
     # predictor reconstructs. The 25-feature ROWS are built exactly as before,
     # one per instance, and then priced in ONE batched ``predict``. That is a
     # pure refactor only if ``predict`` and ``predict_single`` agree bit for
-    # bit on the same row; the production hybrid's ``predict_single`` IS
-    # ``predict`` on a 1-row frame, but a future predictor need not be, so the
-    # equality is ASSERTED on a sample before the batch result is trusted.
+    # bit on the same row, which is a property of the PREDICTOR, not of this
+    # code:
+    #
+    # * ``DaganzoLGBHybrid`` (production) is batch-invariant by construction —
+    #   ``predict_single`` IS ``predict`` on a 1-row frame, ``_daganzo_vec``
+    #   loops per row, and ``build_combo_features`` is element-wise, so no
+    #   arithmetic crosses row boundaries. Verified bit-identical over 800 rows
+    #   and over batch sizes 1/2/7/64/800 (Task 6d report §0).
+    # * A future predictor need NOT be. The 5-seed ``MLCostPredictor``
+    #   (StandardScaler -> MLPRegressor) reaches BLAS GEMM, and GEMM picks
+    #   different kernels/blocking by matrix shape, so the batch shape can move
+    #   the last ULP.
+    #
+    # Hence the sampled equality check below, which ASSERTS rather than
+    # degrades — see the guard.
     _sd_parcels = np.zeros(n_plz, dtype=np.float64)
     _sd_stops = np.zeros(n_plz, dtype=np.float64)
     _sz, _ss, _sd = np.where(small_delivery_mask)
@@ -1048,16 +1060,23 @@ def build_cost_matrices_ml(
             _sd_stops[_z] = 0.0
         _sd_batch = np.asarray(ml_predictor.predict(
             pd.DataFrame(_sd_rows, columns=ALL_COLS)), dtype=np.float64)
-        # G-6d guard: batch == per-row, or fall back to the per-row loop. A
-        # silent 1-ULP drift here would move every pooled price in the grid.
+        # G-6d guard: the batch must EQUAL the per-row prediction. It asserts
+        # and aborts the build by design — fail-loud, no silent degrade: a
+        # predictor that is not batch-invariant moves every pooled price in the
+        # grid, which is a scientific-correctness question for a human, not
+        # something this function should quietly work around. The runner is
+        # resumable (``61_grid_run_v2.py`` completion markers), so an abort
+        # costs at most the triple in flight.
         _chk = np.random.default_rng(20260826).choice(
             len(_sd_idx), size=min(5, len(_sd_idx)), replace=False)
         _exact = all(
             float(ml_predictor.predict_single(_sd_rows[int(_k)]))
             == float(_sd_batch[int(_k)]) for _k in _chk)
         assert _exact, (
-            "ml_predictor.predict(batch) != predict_single(row) — the pooled "
-            "small-delivery price table cannot be batched with this predictor")
+            f"{type(ml_predictor).__name__}.predict(batch) != "
+            "predict_single(row) — the pooled small-delivery price table "
+            "cannot be batched with this predictor (see the batch-invariance "
+            "note above); revert §9c to the per-row loop for it")
         for _k, (_z, _s, _d) in enumerate(_sd_idx):
             small_delivery_price[_z, _s, _d] = _sd_batch[_k]
     log.info("Pooled small-delivery prices: %d instance(s) precomputed",

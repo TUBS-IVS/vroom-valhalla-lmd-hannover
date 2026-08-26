@@ -36,7 +36,10 @@ _I = {c: k for k, c in enumerate(ALL_COLS)}
 # ─────────────────────────────────────────────────────────────────────────────
 
 _MEMO = "_group_price_memo"          # L1: (members, day, kind, dem, freq, head) -> price
-_MEMO_PINS = "_group_price_memo_heads"   # id(head) -> head, so ids cannot recycle
+# id(head) -> head, so ids cannot recycle. Never cleared, unlike the memos it
+# guards: an entry must outlive every price keyed on its id, and one pointer
+# per distinct head object (a handful per run) is bounded either way.
+_MEMO_PINS = "_group_price_memo_heads"
 _MEMO_PART = "_partition_memo"       # L3: (kind, day, cell state) -> partition
 _MEMO_HULL = "_hull_memo"            # L2: day -> {ordered members: hull km2}
 _MEMO_STATS = "_memo_stats"
@@ -47,6 +50,9 @@ MEMO_KEYS = frozenset({_MEMO, _MEMO_PINS, _MEMO_PART, _MEMO_HULL, _MEMO_STATS})
 
 #: Bounded RAM. A memo may forget (clear) but must never misremember, so an
 #: overflow drops everything and refills — still an exact cache.
+#: ``_HULL_CAP`` bounds ONE DAY's hull cache (they are scoped per day), so the
+#: hull worst case is ``N_DAYS x _HULL_CAP``. Never approached in practice —
+#: the largest observed was 7 827 entries across all six days.
 _MEMO_CAP = 200_000
 _PART_CAP = 100_000
 _HULL_CAP = 200_000
@@ -239,7 +245,10 @@ def price_group(members, day, matrices, *, kind, parcels_by_cell=None,
     train (the Task 8/10 sampler) and serve stay the same expression.
 
     Head identity is part of the key and the head object is PINNED by the memo,
-    so CPython cannot recycle a dead head's ``id`` into a live entry.
+    so CPython cannot recycle a dead head's ``id`` into a live entry. Identity,
+    not state: MUTATING a head in place (``head.alpha = ...``, refitting
+    ``head.model``) keeps its ``id`` and would therefore be served the prices
+    the old parameters produced. Install a NEW head object instead.
 
     Scope: everything the price depends on beyond the key is read from
     ``matrices`` (``express_cost``, ``raw_express``, ``expr_stops``, the
