@@ -63,10 +63,19 @@ def build_partition(
             for j in cands:
                 if pts_lon is not None:
                     trial = cur + [j]
-                    L = np.concatenate([pts_lon[c] for c in trial if len(pts_lon.get(c, ()))])
-                    A = np.concatenate([pts_lat[c] for c in trial if len(pts_lat.get(c, ()))])
-                    if len(L) >= 3 and _hull_km2(L, A) > max_hull_ratio * (a_sum + areas[j]):
-                        continue
+                    lon_parts = [pts_lon[c] for c in trial if len(pts_lon.get(c, ()))]
+                    # No member of the trial group carries point geometry for
+                    # this day (e.g. all-empty pts arrays) -- np.concatenate
+                    # on an empty list would raise. Treat as no-hull-
+                    # information, same as the <3-points -> hull 0.0 case
+                    # below: skip the hull check, size caps still bind.
+                    if lon_parts:
+                        lat_parts = [pts_lat[c] for c in trial if len(pts_lat.get(c, ()))]
+                        L = np.concatenate(lon_parts)
+                        A = np.concatenate(lat_parts)
+                        if (len(L) >= 3
+                                and _hull_km2(L, A) > max_hull_ratio * (a_sum + areas[j])):
+                            continue
                 picked = j
                 break
             if picked is None:

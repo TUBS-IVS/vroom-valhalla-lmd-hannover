@@ -56,3 +56,14 @@ def test_canonical_form():
     for g in p:
         assert list(g) == sorted(g)
     assert list(p) == sorted(p, key=lambda g: g[0])
+
+def test_hull_check_skips_when_trial_group_has_no_point_geometry():
+    # Both members of the candidate merge have EMPTY pts arrays (e.g. a PLZ
+    # with no geometry recorded for this day). np.concatenate([]) must not
+    # raise -- treated like the <3-points -> hull 0.0 case, so the merge
+    # proceeds under the size caps (mirrors test_small_adjacent_cells_pool).
+    k = _mk(2, [100, 100])
+    pts_lon = {0: np.array([]), 1: np.array([])}
+    pts_lat = {0: np.array([]), 1: np.array([])}
+    p = build_partition(**k, pts_lon=pts_lon, pts_lat=pts_lat)
+    assert p == ((0, 1),)

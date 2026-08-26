@@ -24,6 +24,7 @@ from batch_delivery.config.constants import (
 from batch_delivery.optimization.costs import (
     _hub_express_day,
     _hub_express_day_ml,
+    _hub_express_vehicles,
     _hub_smallday_pool_ml,
     _pool_affected_days,
 )
@@ -39,12 +40,27 @@ def _daily_fleet_per_hub(
     hub_plz_list: list[np.ndarray],
     veh_3d: np.ndarray,
     schedules: list[frozenset[int]],
+    express_veh_fn=None,
 ) -> np.ndarray:
-    """Compute daily vehicle count per hub: shape (n_hubs, N_DAYS)."""
+    """Compute daily vehicle count per hub: shape (n_hubs, N_DAYS).
+
+    ``veh_3d`` only carries per-cell DELIVERY-day vehicles (rev1 realistic
+    tours; no bundle rounding — this preserves the theta=1 profile
+    identity). A hub's express partition (rev1 hub-bundled non-delivery
+    tours, Task 4) runs invisibly to this count unless ``express_veh_fn(hi,
+    d, chosen) -> float`` is supplied — it adds that hub-day's express
+    vehicles on top (D2 fix). ``express_veh_fn=None`` reproduces the legacy
+    delivery-day-only count (the non-ML ``balance_fleet_per_hub`` Daganzo
+    path keeps this).
+    """
     n_hubs = len(hub_plz_list)
     plz_veh = veh_3d[np.arange(len(chosen)), chosen, :]  # (n_plz, N_DAYS)
     fleet = np.zeros((n_hubs, N_DAYS), dtype=np.float64)
     np.add.at(fleet, plz_hub_arr, plz_veh)
+    if express_veh_fn is not None:
+        for hi in range(n_hubs):
+            for d in range(N_DAYS):
+                fleet[hi, d] += express_veh_fn(hi, d, chosen)
     return fleet
 
 
@@ -273,6 +289,19 @@ def balance_fleet_per_hub_ml(
                 hi, d, chosen, hub_plz_list, schedules, matrices,
                 pool_pred_cache,
             )
+
+    def _express_veh_fn(hi: int, d: int, ch: np.ndarray) -> float:
+        """Express-partition vehicles for hub `hi`/day `d` (D2 fix).
+
+        Shares ``express_pred_cache`` with the ``_hub_express_day_ml`` calls
+        above and below, so vehicle counts come from cache hits rather than a
+        second round of partition/surrogate calls.
+        """
+        return _hub_express_vehicles(
+            hi, d, ch, hub_plz_list, schedules, raw_express, matrices,
+            express_pred_cache,
+        )
+
     cur_cost = cur_dd_cost + ecache.sum() + pcache.sum()
     # FIX 2026-05-27: budget on TOTAL cost (dd + express), not dd-only.
     # Previously max_cost used sa_result['best_cost'] which was only the
@@ -288,7 +317,10 @@ def balance_fleet_per_hub_ml(
     initial_obj = cur_obj
     max_obj = initial_obj * (1 + cost_budget_pct / 100.0)
 
-    fleet = _daily_fleet_per_hub(chosen, plz_hub_arr, hub_plz_list, veh_3d, schedules)
+    fleet = _daily_fleet_per_hub(
+        chosen, plz_hub_arr, hub_plz_list, veh_3d, schedules,
+        express_veh_fn=_express_veh_fn,
+    )
     imbalance_before = _fleet_imbalance(fleet)
 
     rng = np.random.default_rng(seed)
@@ -373,9 +405,18 @@ def balance_fleet_per_hub_ml(
                 best_pool_vals = new_pool_vals
 
         if best_new_si is not None:
-            fleet[hi] -= veh_3d[pi, old_si, :]
-            fleet[hi] += veh_3d[pi, best_new_si, :]
+            # D2 fix: full hub-row refresh (not the old incremental
+            # veh_3d-only delta) so express-partition vehicles — which can
+            # shift for OTHER members of the hub's non-delivery partition,
+            # not just `pi` — stay exact. Cheap: express_veh_fn hits the
+            # express_pred_cache entries the candidate evaluation above
+            # already populated for this exact (hi, d, chosen) state.
             chosen[pi] = best_new_si
+            for d in range(N_DAYS):
+                fleet[hi, d] = (
+                    float(veh_3d[h_ps, chosen[h_ps], d].sum())
+                    + _express_veh_fn(hi, d, chosen)
+                )
             cur_cost += best_delta
             cur_obj += best_delta_obj
             for d_val, val in best_expr_vals.items():
@@ -474,6 +515,19 @@ def system_smooth_pass(
                 hi, d, chosen, hub_plz_list, schedules, matrices,
                 pool_pred_cache,
             )
+
+    def _express_veh_fn(hi: int, d: int, ch: np.ndarray) -> float:
+        """Express-partition vehicles for hub `hi`/day `d` (D2 fix).
+
+        Shares ``express_pred_cache`` with the ``_hub_express_day_ml`` calls
+        above and below, so vehicle counts come from cache hits rather than a
+        second round of partition/surrogate calls.
+        """
+        return _hub_express_vehicles(
+            hi, d, ch, hub_plz_list, schedules, raw_express, matrices,
+            express_pred_cache,
+        )
+
     cur_cost = cur_dd_cost + ecache.sum() + pcache.sum()
     initial_total_cost = cur_cost
     use_pen = penalty_mx is not None
@@ -482,7 +536,10 @@ def system_smooth_pass(
     initial_obj = cur_obj
     max_obj = initial_obj * (1 + cost_budget_pct / 100.0)
 
-    fleet = _daily_fleet_per_hub(chosen, plz_hub_arr, hub_plz_list, veh_3d, schedules)
+    fleet = _daily_fleet_per_hub(
+        chosen, plz_hub_arr, hub_plz_list, veh_3d, schedules,
+        express_veh_fn=_express_veh_fn,
+    )
     sys_fleet = fleet.sum(axis=0)
     system_spread_initial = float(sys_fleet.max() - sys_fleet.min())
 
@@ -583,12 +640,21 @@ def system_smooth_pass(
         if best_si is None:
             break
 
-        # Apply best swap
-        old_si = int(chosen[best_pi])
+        # Apply best swap. D2 fix: full hub-row refresh (not the old
+        # incremental veh_3d-only delta) so express-partition vehicles —
+        # which can shift for OTHER members of the hub's non-delivery
+        # partition, not just `best_pi` — stay exact. Cheap: express_veh_fn
+        # hits the express_pred_cache entries the candidate evaluation above
+        # already populated for this exact (hi, d, chosen) state.
         hi = int(plz_hub_arr[best_pi])
-        fleet[hi] = fleet[hi] - veh_3d[best_pi, old_si, :] + veh_3d[best_pi, best_si, :]
-        sys_fleet = fleet.sum(axis=0)
         chosen[best_pi] = best_si
+        h_ps = hub_plz_list[hi]
+        for d in range(N_DAYS):
+            fleet[hi, d] = (
+                float(veh_3d[h_ps, chosen[h_ps], d].sum())
+                + _express_veh_fn(hi, d, chosen)
+            )
+        sys_fleet = fleet.sum(axis=0)
         cur_cost += best_delta_cost
         cur_obj += best_delta_obj
         for (hi_aff, d_aff), val in best_expr_new.items():
