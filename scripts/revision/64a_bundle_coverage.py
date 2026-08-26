@@ -68,6 +68,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -166,8 +167,41 @@ def add_bundle_ids(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def load_manifest(path: Path) -> pd.DataFrame:
-    df = pd.read_parquet(path)
+def load_manifest(path: Path, copies_dir: Path | None = None) -> pd.DataFrame:
+    """Read the manifest, tolerating a concurrent rewrite by 63_.
+
+    ``63_bundle_sampler.py`` rebuilds ``bundles_manifest.parquet`` FROM SCRATCH
+    every run and the controller re-runs it as the grid advances — possibly
+    while a multi-hour Phase A is live. A parquet read that lands inside that
+    rewrite raises (the footer is written last), which would kill a run hours
+    deep. So: copy first (into *copies_dir*, this script's own scratch dir, the
+    same discipline 62_/63_ use for the live CSVs), and retry copy+read for up
+    to ~5 minutes. A grown manifest is safe to pick up mid-run: completed
+    triples never change, so a re-run only ADDS rows, and previously
+    selected/solved ids are always carried.
+    """
+    src = Path(path)
+    last: Exception | None = None
+    df = None
+    for attempt in range(30):
+        try:
+            if copies_dir is None:
+                df = pd.read_parquet(src)
+            else:
+                copies_dir.mkdir(parents=True, exist_ok=True)
+                dst = copies_dir / src.name
+                shutil.copy2(src, dst)
+                df = pd.read_parquet(dst)
+            break
+        except Exception as exc:
+            last = exc
+            if attempt == 0:
+                log(f"  WARNING: manifest unreadable ({type(exc).__name__}: "
+                    f"{exc}) — 63_bundle_sampler.py may be rewriting it; "
+                    "retrying up to 5 min")
+            time.sleep(10)
+    if df is None:
+        raise last  # type: ignore[misc]
     assert len(df), f"empty manifest at {path}"
     df["members"] = df["members"].apply(lambda a: [str(x) for x in a])
     df["member_idx"] = df["member_idx"].apply(lambda a: [int(x) for x in a])
@@ -572,7 +606,8 @@ def write_plan(plan: pd.DataFrame, md: list[str], out_dir: Path) -> None:
 
 def build_selection(manifest_path: Path, out_dir: Path, n_a: int,
                     pin_bins: bool = False, extra: set[str] | None = None,
-                    write: bool = True) -> pd.DataFrame:
+                    write: bool = True,
+                    copies_dir: Path | None = None) -> pd.DataFrame:
     """Manifest -> ranked, binned, selected DataFrame (written to *out_dir*).
 
     ``write=False`` returns the ranking WITHOUT persisting it — used by the
@@ -581,7 +616,8 @@ def build_selection(manifest_path: Path, out_dir: Path, n_a: int,
     its 400 rows "carried" and pin the final selection at 400 regardless of
     the measured budget.
     """
-    man = load_manifest(manifest_path)
+    man = load_manifest(manifest_path,
+                        copies_dir or (out_dir / "_manifestcopy"))
     edges = load_edges(out_dir) if pin_bins else None
     man, edges = assign_bins(man, edges)
     already = load_already(out_dir)
