@@ -3874,3 +3874,68 @@ alpha = 1,343 absorbiert im Daganzo-Rueckgrat einen Teil des fehlenden
 Zeitterms. Request-Builder jetzt NICHT aendern (Label-Konsistenz); Paper-Text
 korrigieren; Roadmap. Fahrzeug-Proxy ceil(n/230) == VROOM n_routes in 99,7 %
 von 4 230 Instanzen.
+
+### 40.13 Buendel-Pool und Gate U: Stand und Regeln (2026-08-26 abends)
+
+- **Pool (Task 8/9):** volles Grid -> 2 589 einzigartige Buendel (Express 2-10
+  Mitglieder, Liefertag 2-5); Auswahl 877 = alle 235 Bins (Art x Mitglieder x
+  Nachfrage-Terzil x Flaechen-Terzil x Provider) mit >= 4 Zeilen; VROOM-
+  Durchsatz 158 Solves/h bei 3 parallelen Requests (Median 34 s seriell);
+  Label-Konsistenz mit dem Sweep numerisch bestaetigt (36,00 EUR/Routenstunde
+  im Pool = per_hour-Default aktiv, s. 40.12).
+- **Label-Rauschen:** Fahrzeug-Startoffsets aus hash(seed_key) (prozessweise
+  gesalzen) — geteilt mit dem Sweep, unverzerrt im Kleinen (±0,4 %), einseitig
+  nach oben bei Fahrzeugzahl-Flips (bis ~20 %). Floor fuer Gate-U-MAPE.
+- **Rundungs-Reihenfolge (Roadmap):** build_cost_matrices_ml rundet den
+  Express-Abzug einmal ueber die Summe der Haltetage (costs.py:596-601); der
+  skalare Produktionspfad (demand.compute_shifted_demand_plz:384-389) und die
+  Validierungsskripte runden pro Tag -> ±1 Paket in 2/274 Buendeln. costs.py
+  ist der Ausreisser.
+- **Gate U vorlaeufig (314 Zeilen, nur Phase A):** OOF-MAPE 4,61 %, Bias
+  +0,40 % (beide bestanden), Lernkurve 5,68/5,10/4,61 % (50/75/100 %).
+  Schwaches Stratum: 2-Mitglieder-Buendel (~7 % MAPE); 5 Bins mit >= 6 Labels
+  systematisch verzerrt (+5..+9 %, einer -7,6 %) -> Phase-B-Prioritaet.
+- **Gate-U-Regel (Ruling):** Kriterium 3 ("kein verdaechtiger Bin") gilt nur
+  fuer Bins mit >= 6 trainierbaren Labels; duenne Bins werden berichtet, nicht
+  gewertet, weil Task 11 deren Buendel per Support-Check (>= 4 Labels UND nicht
+  verdaechtig) ohnehin auf Σ-Einzelpreise zurueckfaellt — gezaehlt und im
+  Report ausgewiesen. Training schliesst Zeilen mit n_unassigned > 0 oder
+  jobs_removed > 0 aus; PARTIAL wird separat ausgewiesen.
+
+**Entscheidung zum per_hour-Term (Lasse, 2026-08-26 abends):** akzeptieren fuer
+diese Revision — kein Relabel, kein Retrain, kein VROOM-Neulauf. Begruendung:
+der Vergleich ist konsistent (Baseline, Szenarien, Prognose, Ist mit demselben
+Term), und die Richtung ist konservativ: die Routenzeit besteht grossteils aus
+Servicezeit an den Stopps (120 s/Paket), die ueber Baseline und Szenario nahezu
+gleich bleibt — ein fast konstanter Term in Zaehler und Nenner drueckt die
+Prozentzahl; ohne ihn laegen die relativen Einsparungen hoeher. Paper: effektives
+Modell benennen; Sensitivitaet an den validierten Punkten (Szenarioseite exakt
+via fixed + km; Baseline als Prognose gekennzeichnet). Betreiber-Linse: der Term
+zaehlt Arbeit doppelt (W enthaelt sie bereits) -> Ersparnisse fair, Absolutwerte
+~22 % zu hoch; 6e bewertet Zeitersparnis implizit mit 36 EUR/h (zweitrangig,
+Fixkosten dominieren). Roadmap: per_hour explizit setzen; VROOM-frei relabeln
+(Pool + Buendel-Pool haben Dauern; Validierung exakt via fixed + km) und
+retrainen — Routen bleiben dann leicht zeitoptimiert (konservativ).
+
+## 40.14 Operator-Linse: die Frequenzsperre der Stufe 2 war das eigentliche Leck (26.08., 20:10)
+
+- Messung v3 (P=0, θ=1): Σ Hub-Peaks 1 286 gegen flache Untergrenze Σ_h ⌈Fahrzeugtage_h/6⌉ = 969 → Lücke 317 Peak-Fahrzeuge = 360 k€/Woche = 17.1 % der Baseline-Operator-Kosten (Run 2: 438 = 497 k€).
+- Ursache: 9 der 16 DHL-Hubs bedienen genau EINE Zelle. Ein Ein-Zellen-Hub mit Zwei-Tage-Muster hat unter jeder Rotation das Profil `0 0 33 0 0 29`; der Peak sinkt nur durch mehr Liefertage. Stufe 2 durfte bisher nur um-timen (`preserve_frequency=True`).
+- Test frequenzfreier Polish (P=0, θ=1, Start Stufe 1): DHL Operator-Kosten 814 314 → 595 067 €/Woche (−27 %), Σ Hub-Peaks 654 → 447, Routing +4.2 %, Ø Liefertage 2.08 → 3.06, paketgewichtete Wartezeit 0.952 → 0.621 d; Ein-Zellen-Hubs → täglich, Güterbahnhof (13 Zellen) bleibt bei rotierten Zwei-Tage-Mustern. Hermes (1 Hub, viele Zellen) nur −1.6 %.
+- Konsequenz (Ruling, Task 6f): Stufe 2 bei θ>0 frequenzfrei, θ=0 gepinnt (Baseline = täglich), Best-of-3-Starts, Tabellen mit zwei Plänen × zwei Linsen. Erwartung: Operator-Ersparnis bei (0,1) deutlich über den 12.6 % von v3, Wartezeit sinkt. Paper-Botschaft: In der Operator-Linse zahlt sich Konsolidierung dort aus, wo ein Depot Liefertage über mehrere Zellen rotieren kann; Ein-Zellen-Depots fallen auf (fast) tägliche Zustellung zurück — temporale Konsolidierung spart dort nur Kilometer, nicht Flotte.
+
+## 40.15 Grid v5 (frequenzfreier Operator-Polish, Best-of-3) — Zwischenstand 27.08., 07:20
+
+- Lauf: 616 Triples in 107.6 min (Code 3fe1d9e), Baseline unverändert (1 909 432 € Routing / 2 109 742 € Operator / Σ Hub-Peaks 1 239). Stufe 1 bitidentisch zu Run 2 (max. Abweichung 0.000000 € über 616 Triples). v5 ≤ v4 auf allen 275 vergleichbaren Zeilen (Ø −0.84 %).
+- θ=1, zwei Pläne je Punkt (Routing-optimal | Operator-poliert): P=0: Routing 23.10 % | 20.43 %; Operator −7.79 % | **24.69 %**; Σ Hub-Peaks 1 666 | 1 030 (−16.9 % vs Baseline); Wartezeit 0.97 | 0.77 d; Ø Liefertage 2.03 | 2.37. P=0.25: 19.22 | 17.07; 8.25 | 22.82; Peaks −17.1 %; Wartezeit 0.44 | 0.39. P=0.5: 14.12 | 13.19; 10.88 | 18.48. P=0.75: 10.66 | 9.68; 9.91 | 14.79. P=1: 7.91 | 7.24; 6.81 | 11.82. P=2: 1.38 | 1.92; 1.06 | 6.04. P≥5: Stufe 1 täglich (0 %), Stufe 2 streicht wenige Tage (0.7–1.4 % Operator).
+- Lesart: Der routing-optimale Plan ist in der Operator-Linse bei P=0 SCHLECHTER als das Baseline (−7.8 %), weil Zwei-Tage-Muster die Hub-Peaks verdreifachen; der Operator-Polish holt daraus 24.7 % — hauptsächlich über die Frequenzfreiheit (Ein-Zellen-Hubs → täglich, Lücke zur flachen Untergrenze von 317 auf 50 Peak-Fahrzeuge) und den Range-Start (bei (0,1) gewinnt er alle 7 Provider). Die Operator-Linse bevorzugt jetzt wieder P=0 (24.7 %) vor P=0.25 (22.8 %), aber mit halber Wartezeit bei P=0.25 (0.39 vs 0.77 d) — der Knick bleibt bei P=0.25.
+- P=0 bei Teiladoption: Operator-Ersparnis 3.9 % (θ=0.1) → 11.0 % (θ=0.8), nirgends negativ (Run 2: −2.1 % bei θ=0.9). Routing-Ersparnis des Operator-Plans nur 0.4–4.6 %.
+- Wartezeit bewegt sich in beide Richtungen: bei P·θ klein streicht der Polish Liefertage (unbepreist bzw. billig), bei hohem θ fügt er hinzu. Immer pro Plan berichten, keine Richtungsaussage.
+- Offen: Head-Grid (Task 11) wird diese Zahlen mit BundleHead-Preisen nochmals leicht verändern; VROOM-Validierung θ<1 (Task 12) steht aus.
+
+## 40.16 Gate U final und die Support-Regel des BundleHead (27.08., 07:20)
+
+- Pool: 877 realisierte Bundles mit VROOM gelöst (alle OK), 235 Bins (kind × Mitglieder × Nachfrage-Terzil × Flächen-Terzil × LSP). Pool-weit OOF (GroupKFold nach Mitgliedermenge): MAPE 5.37 %, Bias +0.57 %; Lernkurve 50/75/100 %: 6.26 / 5.70 / 5.37 %. Drei getragene Bins mit |Bias| > 5 % (UPS 2-Zellen-Delivery +8.5 % bei 560 Vorkommen; DPD 2-Zellen-Delivery −5.7 %; Hermes 2-Zellen-Express +5.4 %).
+- 211 der 235 Bins sind dünn (< 6 Labels) und werden nie head-gepreist. Im zertifizierten Träger (21 Bins mit ≥ 6 Labels und |Bias| ≤ 5 %): OOF-MAPE 2.85 % (occurrence-gewichtet 2.71 %), |Bias| 1.35 %, Abdeckung 44 % der gepoolten Deployment-Instanzen (Delivery 53 %, Express 22 %).
+- Phase B (300 augmentierte Zeilen) entfällt: Sie brächte dem UPS-Blocker genau ein Label und den Kap-Kanten-Bins +2, die unter der 6er-Schwelle blieben — kein Deployment-Effekt, aber ~3 VROOM-Stunden. Kein Overshoot; die VROOM-Zeit geht in die Validierung (Task 12).
+- Ruling (Task 10b): Gate U zertifiziert die deployte Population (MAPE im zertifizierten Träger ≤ 5 %, Gesamt-Bias ≤ 2 %, Abdeckung ≥ 25 %); der Head preist nur zertifizierte Bins, überall sonst Σ-single, jeder Fallback wird gezählt; Verweigerung außerhalb des Trägers zur Serve-Zeit. Pool-weite Diagnostik bleibt im Report. Für das Paper: „Der BundleHead wird dort eingesetzt, wo er zertifiziert ist (21 Bins, 44 % der gepoolten Instanzen, 2.7 % OOF-MAPE); sonst Summe der Einzelzellenpreise."
