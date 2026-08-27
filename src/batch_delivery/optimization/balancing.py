@@ -314,27 +314,32 @@ def operator_polish(
     ``preserve_frequency=True`` restricts candidates to schedules of the same
     SIZE, so stage 2 only redistributes WHICH days a cell is served on, never
     how many. That pins each cell's delivery FREQUENCY — and with it the
-    theta=0 baseline, which would otherwise be batched away (at theta=0 nobody
-    waits, so ``penalty_mx`` is identically zero for every P and an
-    unrestricted polish would face an unpriced service dimension).
+    theta=0 baseline, which would otherwise be batched away.
 
     **Since Task 6f the pin is NOT the production setting at theta > 0.** The
     production caller (``61_grid_run_v2.stage2_plan`` via
-    :func:`operator_polish_best_of_n`) runs frequency-FREE there, because
-    everything a frequency change touches is priced — ``Delta variable``,
-    ``W * Delta peak``, ``Delta penalty`` — and the pin was blocking the moves
-    that carry most of the operator-lens value (a hub serving a single cell has
-    nothing to rotate; its peak only falls with MORE delivery days). The pin
-    survives as the theta=0 rule and as the ``operator-freqpres`` /
-    ``operator-solo`` ablations. Do not describe it as the canonical wiring.
+    :func:`operator_polish_best_of_n`) runs frequency-FREE there, because the
+    pin was blocking the moves that carry most of the operator-lens value (a
+    hub serving a single cell has nothing to rotate; its peak only falls with
+    MORE delivery days). The pin survives as the theta=0 rule and as the
+    ``operator-freqpres`` / ``operator-solo`` ablations. Do not describe it as
+    the canonical wiring.
+
+    A frequency change is priced through ``Delta variable``, ``W * Delta peak``
+    and ``Delta penalty``. **That last term is identically zero whenever
+    P * theta = 0**, not merely at theta = 0, so at P = 0 the polish trades
+    service at a price of exactly zero — deliberate, by definition of the
+    model; see :func:`operator_polish_best_of_n` for the ruling, the measured
+    directions, and which columns to read the effect off.
 
     It does NOT pin the wait. Schedules of equal size differ in average wait
     (size 3: 0.50-0.67 days; size 4: 0.33-0.50), so moving a cell from
     ``{Mon, Wed, Fri}`` to ``{Mon, Tue, Thu}`` changes the service metric
     without changing the frequency — measured on the v3 grid, the willing-
     weighted wait moves at stage 2 in 94 of 176 theta > 0 triples, by up to
-    -17.65 %. This is priced, not ignored: ``Delta penalty`` is part of every
-    accept decision. Any downstream text must say "frequency-preserving", never
+    -17.65 %. This is priced wherever P * theta > 0 (``Delta penalty`` is part
+    of every accept decision) and unpriced where it is not. Any downstream text
+    must say "frequency-preserving", never
     "wait-invariant".
 
     Returns :func:`balance_fleet_per_hub_ml`'s dict plus ``opcost_before`` /
@@ -792,6 +797,14 @@ def operator_polish_best_of_two(
         "swaps_range_balancer": rng_bal["swaps_made"],
         "sweeps_from_stage1": from_s1["sweeps"],
         "sweeps_from_range": from_rng["sweeps"],
+        # ``max_swaps_binding`` (inherited from the winning branch) describes
+        # the RETURNED state's local optimality; this one is the OR over both
+        # branches, so a losing branch that hit its bound cannot be reported
+        # as "no branch bound". Same meaning as in
+        # :func:`operator_polish_best_of_n`, so a caller can read the column
+        # without knowing which wrapper produced the row.
+        "max_swaps_binding_any": bool(from_s1["max_swaps_binding"]
+                                      or from_rng["max_swaps_binding"]),
     })
     log.debug(
         f"Operator polish (best-of-two): start '{res['stage2_start_winner']}' "
@@ -833,18 +846,47 @@ def operator_polish_best_of_n(
     carry most of the operator-lens value, because a hub with a single cell has
     nothing to rotate: its profile ``0 0 33 0 0 29`` is the same under every
     rotation of a two-day pattern, and 9 of DHL's 16 hubs are exactly that. Its
-    peak only falls if the cell is served on MORE days. Measured on the v3
-    grid (DHL, P=0, theta=1): freeing the frequency moved OpCost
-    814 314 -> 595 067 EUR, Sigma hub peak 654 -> 447, at +4.2 % routing cost
-    and a LOWER wait (0.952 -> 0.621 parcel-weighted days).
+    peak only falls if the cell is served on MORE days.
 
-    Nothing about a frequency change is unpriced at theta > 0: the objective
-    already carries ``Delta variable``, ``W * Delta peak`` and
-    ``Delta penalty = P * willing * parcels * Delta wait``. The one case where
-    it IS unpriced is theta = 0 — nobody is willing to wait, so ``penalty_mx``
-    is identically zero for every P and an unrestricted polish would batch the
-    daily baseline away. That case is a stage-2 NO-OP, decided by the caller
-    (``scripts/revision/61_grid_run_v2.stage2_plan``), not by this function.
+    Measured on DHL, P = 0, theta = 1 (gate probe, task-6f-report.md Section 2),
+    with every number anchored on the SAME stage-1 plan — OpCost 1 025 887 EUR,
+    Sigma hub peak 842, parcel-weighted wait 0.9355 d:
+
+    * the frequency-PRESERVING stage-2 plan (what grid v4 shipped) reaches
+      OpCost 814 314 EUR, Sigma hub peak 654;
+    * the frequency-FREE polish reaches OpCost 595 067 EUR, Sigma hub peak 447,
+      at +4.9 % routing cost, with the wait FALLING to 0.6212 d.
+
+    Do not read "814 314 -> 595 067" as stage 1 -> stage 2; it is one stage-2
+    plan against another.
+
+    What IS and IS NOT priced
+    -------------------------
+    A frequency change is priced through ``Delta variable``, ``W * Delta peak``
+    and ``Delta penalty = P * willing * parcels * Delta wait``. That last term
+    — the ONLY service-side price — is identically zero whenever **P * theta =
+    0**, not merely when theta = 0, because ``penalty_mx`` carries P as a
+    factor. So:
+
+    * **theta = 0** is a stage-2 NO-OP, decided by the caller
+      (``scripts/revision/61_grid_run_v2.stage2_plan``), not by this function.
+      The reason is NOT merely that the penalty vanishes: it is that the
+      theta = 0 plan is the DAILY BASELINE the whole paper measures its savings
+      against, and it is daily by definition of the model, so stage 2 must not
+      move it at all.
+    * **P = 0, any theta** — the wait is unpriced too, by definition of the
+      model: at zero service fee the customer's wait costs the operator
+      nothing, and stage 1 already batches freely there. The polish therefore
+      legitimately adds OR removes delivery days at P = 0 whenever that lowers
+      variable cost or a hub peak, and the DIRECTION is theta-dependent:
+      measured on the live v5 grid at DHL (P = 0, theta = 0.1) it REMOVES days
+      (23 of 48 cells, mean delivery days 5.69 -> 5.27, parcel-weighted wait
+      0.0027 -> 0.0100 d, operator cost 643 145 -> 623 707 EUR); at
+      (P = 0, theta = 1) it ADDS them and the wait FALLS 0.9355 -> 0.6212 d.
+      Nothing is wrong with either — but the service change at P = 0 is bought
+      at a price of exactly zero and must be READ OFF THE TWO WAIT COLUMNS
+      (``wait_num_willing_stage1`` vs ``wait_num_willing`` in
+      ``tab_wait_v2.csv``), never assumed to be bounded by the objective.
 
     The start set
     -------------

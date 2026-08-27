@@ -26,16 +26,37 @@ cell's delivery days, not merely re-time them. The v4 pin blocked the moves
 that carry most of the operator-lens value: a hub serving a single cell has
 nothing to rotate (``0 0 33 0 0 29`` under every rotation of a two-day
 pattern) and 9 of DHL's 16 hubs are exactly that — their peak only falls with
-MORE delivery days. Measured on DHL, P=0, theta=1: OpCost 814 314 -> 595 067,
-Sigma hub peak 654 -> 447, routing +4.2 %, parcel-weighted wait 0.952 ->
-0.621 d. Nothing a frequency change touches is unpriced at theta > 0: the
-objective carries Delta variable, W * Delta peak and Delta penalty.
+MORE delivery days. Measured on DHL, P=0, theta=1, every number anchored on
+the SAME stage-1 plan (OpCost 1 025 887 EUR, Sigma hub peak 842, parcel-
+weighted wait 0.9355 d): the frequency-PRESERVING stage-2 plan reaches
+814 314 / 654, the frequency-FREE one 595 067 / 447 at +4.9 % routing cost
+with the wait FALLING to 0.6212 d. "814 314 -> 595 067" is one stage-2 plan
+against another, NOT stage 1 -> stage 2.
 
-**theta = 0 is a stage-2 NO-OP.** There nobody is willing to wait, so
-``penalty_mx`` is identically zero for EVERY P and a frequency-free polish
-would face an unpriced service dimension — it would batch away the daily
-baseline the whole paper is measured against. The runner pins the stage-2 plan
-to stage 1 and only measures it (asserted per triple: G-6f-1).
+**What is priced, and where it is not.** A frequency change is priced through
+Delta variable, W * Delta peak and Delta penalty = P * willing * parcels *
+Delta wait. That last term — the only service-side price — is identically zero
+whenever **P * theta = 0**, not merely at theta = 0, since ``penalty_mx``
+carries P as a factor.
+
+**theta = 0 is a stage-2 NO-OP** — not merely because the penalty vanishes,
+but because the theta=0 plan IS the daily baseline the whole paper measures
+its savings against, and it is daily by definition of the model. The runner
+pins the stage-2 plan to stage 1 there and only measures it (asserted per
+triple, for every --stage2 mode: G-6f-1).
+
+**P = 0 (any theta) is the other unpriced corner, and it is deliberate.** At a
+zero service fee the customer's wait costs the operator nothing BY DEFINITION
+of the model — stage 1 already batches freely there — so stage 2 may add OR
+remove delivery days whenever that lowers variable cost or a hub peak. The
+direction is theta-dependent: at DHL (P=0, theta=0.1) it REMOVES days (23 of
+48 cells, mean delivery days 5.69 -> 5.27, parcel-weighted wait 0.0027 ->
+0.0100 d, operator cost 643 145 -> 623 707 EUR); at (P=0, theta=1) it ADDS
+them and the wait FALLS 0.9355 -> 0.6212 d. This is not a defect and needs no
+pin — but the service change at P = 0 is bought at a price of exactly zero, so
+Task 13/14 must READ it off the two wait columns of tab_wait_v2.csv
+(``wait_num_willing_stage1`` vs ``wait_num_willing``) rather than assume the
+objective bounded it.
 
 Stage 2 runs from THREE starts — stage 1, the pre-6e range balancer's output,
 and the frequency-PRESERVING best-of-two plan (what grid v4 shipped) — and
@@ -191,7 +212,10 @@ from batch_delivery.optimization.balancing import (  # noqa: E402
     system_smooth_pass,
     _daily_fleet_per_hub,
 )
-from batch_delivery.config.constants import FIXED_COST_EUR  # noqa: E402
+from batch_delivery.config.constants import (  # noqa: E402
+    FIXED_COST_EUR,
+    FLEET_BALANCE_MAX_SWAPS,
+)
 from batch_delivery.optimization.costs import (  # noqa: E402
     _hub_delivery_pool_vehicles,
     _hub_express_day_ml,
@@ -220,6 +244,20 @@ SIDE_FILES = (COSTS, FLEET, WAIT)
 FLEET_COST_BUDGET_PCT = 5.0   # 02_optimize_grid.py:60 (paper revision 2026-05-27)
 SMOOTH_BUDGET_PCT = 1.0       # 03_apply_smoothing.py --budget default
 _COL = {c: k for k, c in enumerate(ALL_COLS)}   # 25-feature row index
+
+
+#: Absolute floor of the from-scratch-recompute tolerances, in EUR. A tenth of
+#: a cent: far above the ~1e-6 EUR two different summation orders of the same
+#: terms can differ by at these magnitudes, and far below anything that could
+#: be a real bookkeeping defect. Replaces a bare ``1e-6 * |ref|``, which left a
+#: 0.5-0.6 EUR blind spot at a routing total / OpCost of ~5-6e5 (Task 6f
+#: review, MINOR 4).
+RECOMPUTE_ABS_TOL_EUR: float = 1e-3
+
+
+def _tol(ref: float) -> float:
+    """Comparison window for "tracked == recomputed from scratch" at *ref*."""
+    return max(RECOMPUTE_ABS_TOL_EUR, 1e-9 * abs(ref))
 
 
 def _use_out_dir(path: Path) -> None:
@@ -422,43 +460,58 @@ def stage2_plan(mode: str, th: float, chosen_s1: np.ndarray,
     ``mode="operator"`` is production (Task 6f):
 
     * **theta > 0** — ``operator_polish_best_of_n``, FREQUENCY-FREE. Stage 2
-      may add or drop a cell's delivery days, because at theta > 0 everything
-      such a move touches is priced: ``Delta variable``, ``W * Delta peak`` and
-      ``Delta penalty = P * willing * parcels * Delta wait``. The three starts
+      may add or drop a cell's delivery days. A move is priced through
+      ``Delta variable``, ``W * Delta peak`` and
+      ``Delta penalty = P * willing * parcels * Delta wait``; the three starts
       (stage 1, the range-balanced plan, the frequency-preserving best-of-two
       plan) make the result no worse than either heuristic OR than grid v4, by
-      construction.
-    * **theta = 0** — a NO-OP (G-6f-1). Nobody is willing to wait there, so
-      ``penalty_mx`` is identically zero for every P: a frequency-free polish
-      would face an UNPRICED service dimension and would batch away the daily
-      baseline the whole paper is measured against. The plan is pinned to
-      stage 1 and only MEASURED (``operator_polish(max_swaps=0)``, the
-      documented pure-measurement path), so the operator-lens columns are
-      still populated at the baseline plan.
+      construction. **The penalty term is identically zero whenever
+      P * theta = 0**, so at ``P = 0`` the service change is unpriced — by
+      definition of the model, not by oversight (see the module docstring): the
+      polish then adds or removes delivery days purely on variable cost and
+      peaks, in a theta-dependent direction, and the effect must be read off
+      the two wait columns of ``tab_wait_v2.csv``.
+    * **theta = 0** — a NO-OP (G-6f-1), because the theta=0 plan IS the daily
+      baseline the whole paper measures its savings against and is daily by
+      definition of the model. (The penalty vanishes there too, for every P,
+      but that is not on its own the reason — it also vanishes at P = 0, which
+      is NOT pinned.) The plan is pinned to stage 1 and only MEASURED
+      (``max_swaps=0``, the documented pure-measurement path), so the
+      operator-lens columns are still populated at the baseline plan.
 
     *range_start_max_swaps* is the swap budget of the FREQUENCY-FREE range
     balancer that builds the second candidate start, and applies to
-    ``mode="operator"`` ONLY. The ablations keep the frequency pin, are
-    unchanged, and must stay bit-identical to the grids they reproduce —
-    ``operator-freqpres`` (grid v4), ``operator-solo`` (grid v3), ``range``
+    ``mode="operator"`` at theta > 0 ONLY. The ablations keep the frequency
+    pin, are unchanged, and must stay bit-identical to the grids they reproduce
+    — ``operator-freqpres`` (grid v4), ``operator-solo`` (grid v3), ``range``
     (run 2, with ``--stage3 on``) — so none of them ever sees this value, and
     neither does the frequency-preserving best-of-two that ``operator`` runs
     internally to build its third start.
+
+    Every returned ``bal`` carries ``range_start_max_swaps_used``: the budget
+    of the range balancer that actually ran for this mode, or ``nan`` when no
+    range balancer ran at all (the theta=0 no-op and ``operator-solo``). That
+    is what the runner writes to the ``range_start_max_swaps`` column, so the
+    column answers "what did the range balancer actually do here" rather than
+    "what was the flag set to".
     """
     kw = dict(penalty_mx=penalty_mx)
     args_common = (plz_keys, plz_hub_arr, hub_plz_list, m, schedules)
 
     if mode == "operator" and th == 0.0:
         # max_swaps=0 IS the pure-measurement contract: the wrapper searches
-        # nothing, builds no candidate start, and reports the input plan — so
-        # the row carries the full best-of-N schema with the branch fields
-        # honestly NaN rather than fabricated.
+        # nothing, builds NO candidate start, and reports the input plan. Its
+        # opcost_from_stage1 therefore holds the MEASURED OpCost of that plan
+        # (a zero-move polish from stage 1 is exactly that value); only the
+        # range/freqpres branch fields and the two *_start references are NaN.
         bal = operator_polish_best_of_n(
             {"chosen": chosen_s1}, *args_common,
             max_swaps=0, preserve_frequency=False,
             range_budget_pct=FLEET_COST_BUDGET_PCT,
             range_max_swaps=range_start_max_swaps, **kw)
         bal["stage2_start_winner"] = STAGE2_WINNER_NOOP
+        # No range balancer ran, so the flag's value describes nothing here.
+        bal["range_start_max_swaps_used"] = np.nan
         return bal, ("theta=0: stage 2 is a NO-OP (plan pinned to stage 1, "
                      "measurement only)")
 
@@ -468,6 +521,7 @@ def stage2_plan(mode: str, th: float, chosen_s1: np.ndarray,
             preserve_frequency=False,
             range_budget_pct=FLEET_COST_BUDGET_PCT,
             range_max_swaps=range_start_max_swaps, **kw)
+        bal["range_start_max_swaps_used"] = float(range_start_max_swaps)
         note = (f"{bal['swaps_made']} moves / {bal['sweeps']} sweeps"
                 + (", BOUND BINDING" if bal["max_swaps_binding_any"] else "")
                 + f", start={bal['stage2_start_winner']} "
@@ -491,6 +545,9 @@ def stage2_plan(mode: str, th: float, chosen_s1: np.ndarray,
                 f"{bal['opcost_range_start']:,.0f})")
         bal["stage2_start_winner"] = (STAGE2_WINNER_FREQPRES
                                       + bal["stage2_start_winner"])
+        # It DOES run a range balancer — frequency-pinned, at the uncapped
+        # default, which is what keeps it bit-identical to grid v4.
+        bal["range_start_max_swaps_used"] = float(FLEET_BALANCE_MAX_SWAPS)
         return bal, note
 
     if mode == "operator-solo":
@@ -498,6 +555,7 @@ def stage2_plan(mode: str, th: float, chosen_s1: np.ndarray,
             {"chosen": chosen_s1}, *args_common,
             preserve_frequency=True, **kw)
         bal["stage2_start_winner"] = STAGE2_WINNER_SOLO
+        bal["range_start_max_swaps_used"] = np.nan   # single start, no balancer
         note = (f"{bal['swaps_made']} moves / {bal['sweeps']} sweeps"
                 + (", BOUND BINDING" if bal["max_swaps_binding"] else ""))
         return bal, note
@@ -508,6 +566,8 @@ def stage2_plan(mode: str, th: float, chosen_s1: np.ndarray,
             cost_budget_pct=FLEET_COST_BUDGET_PCT,
             preserve_frequency=True, **kw)
         bal["stage2_start_winner"] = STAGE2_WINNER_RANGE
+        # The balancer IS the whole of stage 2 here, at the uncapped default.
+        bal["range_start_max_swaps_used"] = float(FLEET_BALANCE_MAX_SWAPS)
         return bal, f"{bal['swaps_made']} swaps"
 
     raise SystemExit(f"unknown --stage2 mode {mode!r}")
@@ -599,17 +659,18 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
     # the extra `max_swaps=0` call it used to be read from).
     init_cost = float(bal["initial_total_cost"])
     chosen_s2 = bal["chosen"].astype(np.int64)
-    # G-6f-1: at theta=0 the wait penalty is identically zero for every P, so
-    # stage 2 has no priced service dimension and MUST NOT move. Every mode
-    # satisfies this — production by the explicit no-op above, the ablations
-    # because their frequency pin leaves only the daily schedule as a
-    # candidate. Assert it rather than trust it: this is the baseline the
-    # whole paper's savings are measured against.
+    # G-6f-1: the theta=0 plan IS the daily baseline the whole paper measures
+    # its savings against, and it is daily by definition of the model, so
+    # stage 2 MUST NOT move it. (The wait penalty also vanishes here — but it
+    # vanishes at P = 0 too, which is deliberately not pinned, so that is not
+    # the reason.) Every mode satisfies the rule: production by the explicit
+    # no-op above, the ablations because their frequency pin leaves only the
+    # daily schedule as a candidate. Assert it rather than trust it.
     if th == 0.0:
         assert np.array_equal(chosen_s2, chosen_s1), (
             f"G-6f-1 violated P={P} th={th} {prov}: stage 2 moved "
             f"{int((chosen_s2 != chosen_s1).sum())} cell(s) off the theta=0 "
-            "daily baseline, where the wait penalty is identically zero")
+            "daily baseline the paper's savings are measured against")
     t_s2 = time.perf_counter() - t0
     print(f"    P={P:<5g} th={th:<4g} {prov:<7s} stage2 {t_s2:7.1f}s "
           f"({s2_note})", flush=True)
@@ -701,10 +762,16 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
 
     # Gate: the last stage's incrementally-tracked routing cost must equal the
     # independent recomputation of dd + express + pool at its own choice.
+    # Tolerance is ABSOLUTE-floored: a pure `1e-6 * |ref|` leaves a 0.5 EUR
+    # blind spot at a routing total of ~5e5, which is far above the ~1e-6 EUR
+    # of float re-association these two summation orders can actually differ
+    # by. `_tol` keeps a relative term for scale-safety but never lets the
+    # window exceed a tenth of a cent.
     routing_total = dd_total + expr_total + pool_total
-    assert abs(res["cost"] - routing_total) <= 1e-6 * max(1.0, abs(routing_total)), (
+    assert abs(res["cost"] - routing_total) <= _tol(routing_total), (
         f"cost bookkeeping drift P={P} th={th} {prov}: "
-        f"tracked {res['cost']:.6f} != recomputed {routing_total:.6f}")
+        f"tracked {res['cost']:.6f} != recomputed {routing_total:.6f} "
+        f"(delta {res['cost'] - routing_total:.3e}, tol {_tol(routing_total):.3e})")
 
     # ── the operator lens (Task 6e) ─────────────────────────────────────
     # Every predicted cost carries 189.15 EUR per vehicle-DAY (VROOM's fixed
@@ -728,15 +795,22 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
     is_bon = args.stage2 == "operator"                            # best-of-N
     if is_op and args.stage3 != "on":
         obj_recomputed = operator_cost_eur + penalty_total
-        assert abs(bal["opcost_after"] - obj_recomputed) <= 1e-6 * max(
-                1.0, abs(obj_recomputed)), (
+        assert abs(bal["opcost_after"] - obj_recomputed) <= _tol(obj_recomputed), (
             f"operator bookkeeping drift P={P} th={th} {prov}: tracked "
-            f"{bal['opcost_after']:.6f} != recomputed {obj_recomputed:.6f}")
+            f"{bal['opcost_after']:.6f} != recomputed {obj_recomputed:.6f} "
+            f"(delta {bal['opcost_after'] - obj_recomputed:.3e}, "
+            f"tol {_tol(obj_recomputed):.3e})")
         # G-6e-4 / G-6f-2 at grid scale: the range heuristic's own end state —
         # and, for best-of-N, the frequency-preserving v4 plan — are candidate
         # STARTS, so neither can be cheaper than what we return. Fail loud
         # instead of shipping a beaten solution. Both are NaN on the theta=0
         # no-op, where no candidate was built.
+        #
+        # These two are EXACT by construction — a min over branch end states,
+        # each reached by a strictly-descending search from the reference state
+        # itself — so they carry the same 1e-9 relative window the in-function
+        # assert uses (`balancing.py`), not the 1e-6 that would tolerate a
+        # 0.6 EUR regression at an OpCost of 6e5.
         for gate, ref, active in (
                 ("G-6e-4", "opcost_range_start", is_multi),
                 ("G-6f-2", "opcost_freqpres_start", is_bon)):
@@ -745,10 +819,12 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
             ref_val = float(bal[ref])
             if not np.isfinite(ref_val):
                 continue
-            assert bal["opcost_after"] <= ref_val + 1e-6 * max(
-                    1.0, abs(ref_val)), (
+            slack = 1e-9 * max(1.0, abs(ref_val))
+            assert bal["opcost_after"] <= ref_val + slack, (
                 f"{gate} violated P={P} th={th} {prov}: returned "
-                f"{bal['opcost_after']:.6f} > {ref} {ref_val:.6f}")
+                f"{bal['opcost_after']:.6f} > {ref} {ref_val:.6f} "
+                f"(excess {bal['opcost_after'] - ref_val:.3e}, "
+                f"slack {slack:.3e})")
 
     # How far the final plan sits from stage 1, path-independently: the
     # per-branch swap counts below describe ONE branch's descent each, so
@@ -799,10 +875,15 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
         vehicle_days_after=_f("vehicle_days_after", is_op),
         penalty_before_eur=_f("penalty_before", is_op),   # stage-1 plan's
         sweeps_operator=_i("sweeps", is_op),
+        # `max_swaps_binding` is the RETURNED state's flag (the winning branch
+        # under a multi-start wrapper); `_any` is the OR over every branch that
+        # ran. Both wrappers set `_any` explicitly, and a single-start polish
+        # has exactly one branch, so the fallback below is an identity there
+        # rather than a silent substitution of the winner's flag.
         max_swaps_binding=bool(bal["max_swaps_binding"]) if is_op else False,
         max_swaps_binding_any=bool(
-            bal.get("max_swaps_binding_any", bal.get("max_swaps_binding",
-                                                     False))) if is_op else False,
+            bal["max_swaps_binding_any"] if is_multi
+            else bal["max_swaps_binding"]) if is_op else False,
         # best-of-N provenance. `stage2_start_winner` is namespaced per mode
         # (see STAGE2_WINNER_*), so an ablation row can never be mistaken for a
         # production one by a filter that forgets to read `stage2`.
@@ -820,13 +901,13 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
         swaps_from_freqpres=_i("swaps_from_freqpres", is_bon),
         swaps_range_balancer=_i("swaps_range_balancer", is_multi),
         swaps_freqpres_plan=_i("swaps_freqpres_plan", is_bon),
-        # Self-describing: the swap budget of the FREQUENCY-FREE range
-        # balancer that built the second start. NaN wherever it does not
-        # apply, i.e. in every ablation (their range balancers are pinned and
-        # keep the uncapped 5 000, which is what makes them bit-identical to
-        # run 2 / v3 / v4).
-        range_start_max_swaps=(float(args.range_start_max_swaps) if is_bon
-                               else np.nan),
+        # Self-describing: the swap budget of the range balancer that ACTUALLY
+        # RAN for this row — the capped free one under `operator` at theta > 0,
+        # the uncapped pinned one under `operator-freqpres` / `range`, and NaN
+        # where no balancer ran at all (the theta=0 no-op and `operator-solo`).
+        # stage2_plan decides; keying a "capped vs uncapped" split on this
+        # column must therefore give the right answer for every mode.
+        range_start_max_swaps=float(bal["range_start_max_swaps_used"]),
         cells_changed_vs_stage1=cells_changed,
         cells_freq_changed_vs_stage1=cells_freq_changed,
         imbalance_before=float(bal["imbalance_before"]),

@@ -849,16 +849,46 @@ def _runner():
     return mod
 
 
-def test_theta_zero_stage_two_is_a_no_op_on_the_daily_baseline():
-    """G-6f-1. At theta=0 nobody is willing to wait, so ``penalty_mx`` is
-    identically zero for every P and a frequency-free polish would face an
-    UNPRICED service dimension — it would batch the daily baseline away. The
-    runner therefore pins stage 2 to stage 1 there and only measures."""
-    mod = _runner()
+def _theta_zero_inputs():
+    """The theta=0 situation: fast_share 1.0, every cell on the daily
+    schedule, and a penalty matrix that is identically zero."""
     plz_keys, m, sch, hpl, pha = _fixture(fs=1.0, n_cells=10, n_hubs=2)
     daily_si = next(i for i, s in enumerate(sch) if len(s) == N_DAYS)
     chosen_s1 = np.full(10, daily_si, dtype=np.int64)
-    pen = np.zeros((10, len(sch)))          # theta=0: nobody waits
+    return plz_keys, m, sch, hpl, pha, chosen_s1, np.zeros((10, len(sch)))
+
+
+@pytest.mark.parametrize("mode", ["operator", "operator-freqpres",
+                                  "operator-solo", "range"])
+def test_theta_zero_stage_two_is_a_no_op_in_every_mode(mode):
+    """G-6f-1 for ALL FOUR ``--stage2`` modes, not just production.
+
+    Production bypasses stage 2 explicitly; the three ablations satisfy the
+    same rule structurally, because their frequency pin leaves exactly one
+    candidate of size 6 (the daily schedule) and that is where stage 1 already
+    is. The runner asserts the equality at runtime for every mode, so pin it
+    for every mode here too — otherwise a change to an ablation's wiring could
+    move the paper's baseline with nothing in the suite noticing.
+    """
+    mod = _runner()
+    plz_keys, m, sch, hpl, pha, chosen_s1, pen = _theta_zero_inputs()
+    bal, _note = mod.stage2_plan(
+        mode, 0.0, chosen_s1, plz_keys, pha, hpl, m, sch, pen)
+    assert np.array_equal(bal["chosen"], chosen_s1)          # bit-for-bit
+    assert bal["swaps_made"] == 0
+    assert np.array_equal(_sizes(sch, bal["chosen"]), _sizes(sch, chosen_s1))
+
+
+def test_theta_zero_stage_two_is_a_no_op_on_the_daily_baseline():
+    """G-6f-1, production path, with the reported measurement.
+
+    theta = 0 is pinned because that plan IS the daily baseline the paper
+    measures its savings against — daily by definition of the model. (The wait
+    penalty vanishes there too, but that alone is not the reason: it also
+    vanishes at P = 0, which is deliberately NOT pinned.)
+    """
+    mod = _runner()
+    plz_keys, m, sch, hpl, pha, chosen_s1, pen = _theta_zero_inputs()
 
     bal, note = mod.stage2_plan(
         "operator", 0.0, chosen_s1, plz_keys, pha, hpl, m, sch, pen)
@@ -873,14 +903,76 @@ def test_theta_zero_stage_two_is_a_no_op_on_the_daily_baseline():
     b0 = operator_cost_breakdown(chosen_s1, plz_keys, pha, hpl, m, sch,
                                  penalty_mx=pen)
     assert bal["opcost_after"] == pytest.approx(b0["opcost"], rel=1e-12)
-    # the row carries the full best-of-N schema, with the branches that were
-    # never built reported as absent rather than fabricated
     assert bal["stage2_start_winner"] == mod.STAGE2_WINNER_NOOP
+    # `opcost_from_stage1` is NOT NaN here: a zero-move polish from stage 1 IS
+    # the measured value, and that is what the column reports. Only the two
+    # branches that were never built, and the two reference states, are NaN.
+    assert bal["opcost_from_stage1"] == bal["opcost_after"]
     assert np.isnan(bal["opcost_from_range"])
     assert np.isnan(bal["opcost_from_freqpres"])
     assert np.isnan(bal["opcost_range_start"])
     assert np.isnan(bal["opcost_freqpres_start"])
     assert bal["swaps_range_balancer"] == 0
+    # no range balancer ran, so the budget column describes nothing
+    assert np.isnan(bal["range_start_max_swaps_used"])
+
+
+@pytest.mark.parametrize("mode,theta,expect", [
+    ("operator", 0.0, None),                       # no-op: no balancer ran
+    ("operator", 0.5, "flag"),                     # the capped free balancer
+    ("operator-freqpres", 0.5, "uncapped"),        # pinned, uncapped
+    ("operator-solo", 0.5, None),                  # single start, no balancer
+    ("range", 0.5, "uncapped"),                    # the balancer IS stage 2
+])
+def test_range_start_max_swaps_reports_the_balancer_that_actually_ran(
+        mode, theta, expect):
+    """The column must answer "what did the range balancer do here", not
+    "what was the flag set to".
+
+    Writing the flag verbatim put ``250`` on theta=0 rows where no balancer
+    ran, and ``NaN`` on the two ablation modes that DO run one (at 5 000) —
+    exactly backwards, and enough for a Task-13 grouping on this column to
+    conclude the ablations searched nothing (Task 6f review, MINOR 1).
+    """
+    mod = _runner()
+    if theta == 0.0:
+        plz_keys, m, sch, hpl, pha, chosen, pen = _theta_zero_inputs()
+    else:
+        plz_keys, m, sch, hpl, pha = _fixture(fs=0.5, n_cells=10, n_hubs=2)
+        chosen = _start(m, sch, 10, 0)
+        pen = _penalty(m, sch, 10, scale=0.25)
+
+    flag = 137          # deliberately neither 250 nor 5000
+    bal, _ = mod.stage2_plan(mode, theta, chosen, plz_keys, pha, hpl, m, sch,
+                             pen, range_start_max_swaps=flag)
+    got = bal["range_start_max_swaps_used"]
+    if expect is None:
+        assert np.isnan(got)
+    elif expect == "flag":
+        assert got == float(flag)
+    else:
+        assert got == float(FLEET_BALANCE_MAX_SWAPS)
+
+
+def test_max_swaps_binding_any_is_the_or_over_branches_in_both_wrappers():
+    """Both multi-start wrappers must set ``max_swaps_binding_any`` themselves.
+
+    ``operator_polish_best_of_two`` did not, so the runner fell back to the
+    WINNER's flag and wrote it into a column documented as "True if ANY branch
+    hit its bound" — a losing branch that bound would have read as clean
+    (Task 6f review, MINOR 3).
+    """
+    plz_keys, m, sch, hpl, pha = _fixture(fs=0.5, n_cells=10, n_hubs=2)
+    chosen = _start(m, sch, 10, 0)
+    for wrapper in (operator_polish_best_of_two, operator_polish_best_of_n):
+        res = wrapper({"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+                      max_swaps=200, seed=0)
+        assert res["max_swaps_binding_any"] is False   # every branch converged
+        assert res["max_swaps_binding"] is False
+        # a truncated run must set it — on every branch, not just the winner
+        tight = wrapper({"chosen": chosen.copy()}, plz_keys, pha, hpl, m, sch,
+                        max_swaps=1, seed=0)
+        assert tight["max_swaps_binding_any"] is True
 
 
 def test_theta_positive_stage_two_runs_the_free_best_of_three():
