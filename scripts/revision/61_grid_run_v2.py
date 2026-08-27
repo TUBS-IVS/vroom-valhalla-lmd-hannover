@@ -1,4 +1,4 @@
-"""61: full grid under the realistic-tour rule (base run: head=None).
+"""61: full grid under the realistic-tour rule, head-enabled (Task 11).
 
 Re-runs the whole (P, theta, provider) grid through stage 1 -> 2 (-> 3) with
 the rev1 realistic-tour machinery (per-cell express cost, partition-priced hub
@@ -97,8 +97,40 @@ of that column keeps working unchanged.
 The stage-1 calls, argument construction and penalty wiring are copied verbatim
 from the canonical production run (``scripts/pipeline/02_optimize_grid.py``);
 only the matrices and the stage-2 objective are new.
-``matrices["bundle_head"]`` stays absent by design in this base run, so
-``price_group`` falls back to Sigma-pricing.
+
+**THE BUNDLE HEAD (Task 11).** ``--head`` decides what prices a multi-cell
+pooled tour:
+
+* ``installed`` (default) — the certified-support head Task 10b installed at
+  ``results/revision_2026_08/bundle_head.pkl``, loaded TOGETHER with its
+  ``bundle_head_certified_bins.json``. It prices a group **only inside the
+  bins Gate U certified** (>= 6 trainable labels AND |OOF bias| <= 5 %);
+  every other group takes the Sigma over its members' single-cell prices —
+  exactly what the head-free regime pays — and that refusal is COUNTED, per
+  (P, theta, provider, kind), in ``tab_head_usage_v2.csv``. A single-cell
+  "group" is never head-priced: no certified bin has one member.
+* ``none`` — no head at all: the v5 regime, reproduced BIT FOR BIT (G-11-1).
+* ``dummy`` — the Task-6d ``DummyHead`` timing stand-in (``--only``,
+  quarantined to ``_dummyhead/``).
+
+The head is loaded ONCE and installed on each freshly built matrices dict by
+``install_head``, which asserts the dict has priced nothing yet: the L1 price
+memo keys on ``id(head)``, so ``none`` and ``installed`` can never be served
+each other's prices, and a dict that had already priced something would mean
+part of a block ran in the wrong regime. ``head_id`` — the head's stem plus
+12 hex of the sha256 of the pickle AND of the certified-bins JSON — is written
+on EVERY row of EVERY table, the full identity goes to ``head_manifest.json``
+and the log, and a second run into the same directory under a different head
+is refused.
+
+The head-priced share is MEASURED, not assumed: after the final plan is
+priced, ``head_usage`` re-derives the same partitions and re-prices every
+realised tour with ``price_group(..., with_source=True)`` (a memo hit under a
+head), asserts its per-kind totals reconstruct ``express_cost_eur`` and
+``pool_cost_eur``, and cross-checks its per-group tally against
+``price_source_counts``. Gate U certified 44 % of the deployment occurrences,
+unevenly (express 21.6 %, Amazon/DHL 0 %) — so the fallback share is a
+headline number of this run, not an edge case.
 
 ONE deliberate deviation from the canonical wiring, see ``--init-proxy``: the
 stage-1 warm-start proxy reads ``cost_3d_raw`` (the unpooled per-cell
@@ -115,26 +147,31 @@ amortized over all 8 penalties. Matrices are released between blocks.
 Resumable: completed (P, theta, provider) triples are skipped; a triple whose
 _tab_chosen_v2.csv block is short (killed mid-append) is redone, not trusted.
 Run OUTSIDE the agent harness (~59-min kill rule):
-  Start-Process .venv\\Scripts\\python.exe -ArgumentList "scripts/revision/61_grid_run_v2.py" -RedirectStandardOutput results/revision_2026_08_v5/61.log
+  Start-Process .venv\\Scripts\\python.exe -ArgumentList "scripts/revision/61_grid_run_v2.py","--head","installed" -RedirectStandardOutput results/revision_2026_08_v6/61.log -RedirectStandardError results/revision_2026_08_v6/61.err
 
-SCHEMA CHANGE (Tasks 6e/6f): ``tab_costs_v2.csv`` gained the operator-lens and
-best-of-N columns below and ``tab_wait_v2.csv`` gained the stage-1 plan's wait,
-and ``append_rows`` writes a header only when it CREATES the file — so
-appending to an older run's files would silently produce a ragged CSV (the new
-columns sit BETWEEN ``cost_stage3_eur`` and ``imbalance_before``, so every
-later column would misalign). ``append_rows`` therefore compares an existing
-file's header against the frame it is about to append and RAISES on mismatch,
-and the default output directory is ``results/revision_2026_08_v5/``. Run 2
-(``revision_2026_08``), the v3 stage-1-only ablation and the v4
-frequency-preserving grid stay where they are, read-only.
+SCHEMA CHANGE (Tasks 6e/6f/11): ``tab_costs_v2.csv`` gained the operator-lens
+and best-of-N columns below plus the Task-11 head columns, ``tab_wait_v2.csv``
+gained the stage-1 plan's wait, all four tables gained ``head_id``, and there
+is a fifth table (``tab_head_usage_v2.csv``). ``append_rows`` writes a header
+only when it CREATES the file — so appending to an older run's files would
+silently produce a ragged CSV (the 6e/6f columns sit BETWEEN
+``cost_stage3_eur`` and ``imbalance_before``, so every later column would
+misalign). ``append_rows`` therefore compares an existing file's header
+against the frame it is about to append and RAISES on mismatch, and the
+default output directory is ``results/revision_2026_08_v6/``. Run 2
+(``revision_2026_08``), the v3 stage-1-only ablation, the v4
+frequency-preserving grid and the v5 head-free grid stay where they are,
+read-only. ``head_manifest.json`` additionally pins a directory to ONE head,
+which the column check cannot do (two heads produce identical schemas).
 
 TWO PLANS, TWO LENSES. Every table now carries BOTH the stage-1 plan (the
 routing optimum) and the stage-2 plan (the operator-polished one). The
 convention is: **the plain column name is the STAGE-2 / final plan**, and the
 stage-1 value carries a ``_stage1`` suffix or lives in a ``*_before`` column.
 
-Outputs (results/revision_2026_08_v5/, or $REV2_OUT_DIR):
-  _tab_chosen_v2.csv        penalty, share_willing, provider, plz,
+Outputs (results/revision_2026_08_v6/, or $REV2_OUT_DIR); every table carries
+``head_id``:
+  _tab_chosen_v2.csv        penalty, share_willing, provider, head_id, plz,
                             schedule_idx_stage1, schedule_idx_balanced,
                             schedule_idx_system_smoothed
                             (== _balanced whenever stage 3 is off)
@@ -173,15 +210,32 @@ Outputs (results/revision_2026_08_v5/, or $REV2_OUT_DIR):
                             (``*_stage1``), and the mean delivery days per cell
                             of both plans (mean_days / mean_days_stage1). The
                             cell-level wait is sum(num)/sum(den) over providers
+  tab_head_usage_v2.csv     per (P, theta, provider, kind): what priced the
+                            realised tours of the FINAL plan —
+                            n_groups_priced (split into
+                            n_multi_cell_groups / n_single_cell_groups and
+                            n_cells_in_groups), the four disjoint source
+                            counts n_head / n_fallback_uncertified /
+                            n_fallback_unsupported / n_fallback_no_head, and
+                            the COST split pooled_cost_eur / head_cost_eur /
+                            head_cost_share. tab_costs_v2 carries the
+                            both-kinds totals of the last three plus
+                            n_groups_priced / n_head_groups
+  head_manifest.json        the head this directory was written under: mode,
+                            head_id, absolute path, full sha256 of the pickle
+                            AND of the certified-bins JSON, label,
+                            trained_at, certified/known bin counts
 
-``--dummy-head`` is a TIMING probe for the Task-6d decision: it installs a
-partition-forcing stub head, requires ``--only``, and quarantines its (
-meaningless) outputs in ``_dummyhead/``.
+``--head dummy`` (``--dummy-head``) is a TIMING probe for the Task-6d
+decision: it installs a partition-forcing stub head, requires ``--only``, and
+quarantines its (meaningless) outputs in ``_dummyhead/``.
 """
 from __future__ import annotations
 
 import argparse
 import gc
+import hashlib
+import json
 import logging
 import os
 import sys
@@ -189,6 +243,7 @@ import time
 import warnings
 from collections import Counter
 from pathlib import Path
+from typing import NamedTuple
 
 os.environ.setdefault("TQDM_DISABLE", "1")
 warnings.filterwarnings("ignore")   # LGBM feature-name notices, one per predict
@@ -217,29 +272,44 @@ from batch_delivery.config.constants import (  # noqa: E402
     FLEET_BALANCE_MAX_SWAPS,
 )
 from batch_delivery.optimization.costs import (  # noqa: E402
+    _express_members,
+    _express_partition,
     _hub_delivery_pool_vehicles,
     _hub_express_day_ml,
     _hub_express_vehicles,
     _hub_smallday_pool_ml,
     _memo_stats,
+    _smallday_members,
+    _smallday_partition,
 )
 from batch_delivery.optimization.schedules import enumerate_valid_schedules  # noqa: E402
 from batch_delivery.features import ALL_COLS  # noqa: E402
-from batch_delivery.surrogate.bundle import _daganzo_scalar  # noqa: E402
+from batch_delivery.surrogate.bundle import (  # noqa: E402
+    _MEMO,
+    BundleHead,
+    CERTIFIED_BINS_JSON,
+    PriceSource,
+    _daganzo_scalar,
+    price_group,
+    price_source_counts,
+    reset_price_source_counts,
+)
 
 logging.disable(logging.INFO)  # silence the package's INFO/DEBUG chatter
 
 # REV2_OUT_DIR redirects every output (and the resume bookkeeping with it) to
 # a scratch directory — how gate runs are done without touching the live grid.
 OUT = Path(os.environ.get("REV2_OUT_DIR")
-           or C.ROOT / "results" / "revision_2026_08_v5")
+           or C.ROOT / "results" / "revision_2026_08_v6")
 CHOSEN = OUT / "_tab_chosen_v2.csv"
 COSTS = OUT / "tab_costs_v2.csv"
 FLEET = OUT / "tab_fleet_per_hub_v2.csv"
 WAIT = OUT / "tab_wait_v2.csv"
+HEADUSE = OUT / "tab_head_usage_v2.csv"
+MANIFEST = OUT / "head_manifest.json"
 # CHOSEN is written LAST per triple and is therefore the completion marker;
-# _prune_partial() drops orphan rows from the other three on resume.
-SIDE_FILES = (COSTS, FLEET, WAIT)
+# _prune_partial() drops orphan rows from the other four on resume.
+SIDE_FILES = (COSTS, FLEET, WAIT, HEADUSE)
 
 FLEET_COST_BUDGET_PCT = 5.0   # 02_optimize_grid.py:60 (paper revision 2026-05-27)
 SMOOTH_BUDGET_PCT = 1.0       # 03_apply_smoothing.py --budget default
@@ -262,12 +332,14 @@ def _tol(ref: float) -> float:
 
 def _use_out_dir(path: Path) -> None:
     """Point every output (and the resume bookkeeping) at *path*."""
-    global OUT, CHOSEN, COSTS, FLEET, WAIT, SIDE_FILES
+    global OUT, CHOSEN, COSTS, FLEET, WAIT, HEADUSE, MANIFEST, SIDE_FILES
     OUT = path
     CHOSEN, COSTS, FLEET, WAIT = (
         OUT / "_tab_chosen_v2.csv", OUT / "tab_costs_v2.csv",
         OUT / "tab_fleet_per_hub_v2.csv", OUT / "tab_wait_v2.csv")
-    SIDE_FILES = (COSTS, FLEET, WAIT)
+    HEADUSE = OUT / "tab_head_usage_v2.csv"
+    MANIFEST = OUT / "head_manifest.json"
+    SIDE_FILES = (COSTS, FLEET, WAIT, HEADUSE)
 
 
 class DummyHead:
@@ -292,6 +364,410 @@ class DummyHead:
             area_km2=x25[_COL["area_km2"]],
             hub_dist_km=x25[_COL["hub_dist_km"]],
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Task 11 — the bundle head: identity, installation, and what it actually
+# priced
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Where Task 10b installed the certified-support head. Its
+#: ``bundle_head_certified_bins.json`` must sit BESIDE it — ``BundleHead.load``
+#: requires the pair and asserts the two describe the same head.
+HEAD_PATH_DEFAULT = C.ROOT / "results" / "revision_2026_08" / "bundle_head.pkl"
+
+#: How many hex characters of each sha256 go into the ``head_id`` written on
+#: every table row. 12 + 12 over two independent digests: a collision needs
+#: 2^48 tries per file, which is not a failure mode this pipeline can reach.
+#: The FULL digests, the absolute path, the label and the certified/known bin
+#: counts live in ``head_manifest.json`` beside the tables and in the run log.
+_SHA_TAG = 12
+
+#: ``head_id`` of a head-free run. Not the empty string: an empty CSV cell
+#: reads back as NaN, and "no head" must survive a round trip as itself.
+HEAD_ID_NONE = "none"
+
+#: ``PriceSource`` member NAME -> the ``tab_head_usage_v2.csv`` count column
+#: it feeds. Keyed by NAME, never by a hardcoded ``PriceSource.X`` reference,
+#: so the enum and the published column names can move independently. The
+#: pair reads as Gate U's own split: ``n_fallback_uncertified`` = the bin is
+#: SUPPORTED and the gate refused it as biased; ``n_fallback_unsupported`` =
+#: the bin is below the support floor (< 6 labels, including every
+#: never-scored bin, and therefore every single-cell instance — no bin has
+#: one member).
+_SOURCE_COLUMN_BY_NAME = {
+    "HEAD": "n_head",
+    "FALLBACK_UNCERTIFIED": "n_fallback_uncertified",
+    "FALLBACK_THIN": "n_fallback_unsupported",
+    # LEGACY ALIAS — no ``PriceSource`` member of this name exists any more.
+    # Task 10b renamed the below-the-floor source FALLBACK_UNSUPPORTED ->
+    # FALLBACK_THIN mid-Task-11 while the Task-11 ruling fixed the COLUMN
+    # name; the two names are the same thing, so an older bundle.py maps to
+    # the same column and the table is comparable either way. Delete once no
+    # supported build has the old member.
+    "FALLBACK_UNSUPPORTED": "n_fallback_unsupported",
+    "FALLBACK_NO_HEAD": "n_fallback_no_head",
+}
+
+#: ``PriceSource`` -> column, resolved against the enum that is actually
+#: installed. Exhaustive by construction: a source with no column would drop
+#: its groups out of the fallback accounting silently, so it fails at import.
+SOURCE_COL = {}
+for _src in PriceSource:
+    assert _src.name in _SOURCE_COLUMN_BY_NAME, (
+        f"PriceSource.{_src.name} has no column in tab_head_usage_v2.csv — "
+        "the fallback accounting would silently drop those groups")
+    SOURCE_COL[_src] = _SOURCE_COLUMN_BY_NAME[_src.name]
+assert len(set(SOURCE_COL.values())) == len(PriceSource), (
+    f"two PriceSource members share a column: {SOURCE_COL}")
+del _src
+
+#: The two ``kind`` values a realised tour can carry. Both are written for
+#: every triple (zeros included), so the table stays rectangular and a
+#: downstream groupby never has to guess whether a missing row means "none" or
+#: "not measured".
+USAGE_KINDS = ("delivery", "express")
+
+
+class HeadSpec(NamedTuple):
+    """Everything that identifies the head a run priced with.
+
+    ``head_id`` is the join key written on every row of every table; the rest
+    is written once, to ``head_manifest.json`` and the log. ``mode`` is the
+    ``--head`` value, so a row can be filtered on the REGIME without parsing
+    the id.
+    """
+
+    mode: str                     # "installed" | "none" | "dummy"
+    head_id: str
+    path: Path | None = None
+    pkl_sha256: str | None = None
+    json_sha256: str | None = None
+    n_certified: int | None = None
+    n_known: int | None = None
+    label: str | None = None
+    trained_at: str | None = None
+    #: The ``bundles_bins.json`` the certified bin NAMES were derived from,
+    #: and whether ``BundleHead.load`` actually re-checked the edges against
+    #: it (Task 10b's in-flight ``edges_path`` argument — see
+    #: :func:`_load_bundle_head`). ``False`` means the names were accepted on
+    #: the strength of the JSON's own recorded edges alone.
+    edges_path: Path | None = None
+    edges_checked: bool = False
+
+    def as_manifest(self) -> dict:
+        d = self._asdict()
+        for k in ("path", "edges_path"):
+            d[k] = None if d[k] is None else str(d[k])
+        return d
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _load_bundle_head(path: Path, jpath: Path, edges_path: Path | None):
+    """``BundleHead.load`` with its support map named EXPLICITLY.
+
+    The runner never relies on the "the JSON sits beside the pickle" default:
+    the file it hashed into ``head_id`` must be the file the head was built
+    from, and that is only guaranteed if the same path is passed.
+
+    Task 10b's ``edges_json`` argument fails loud when the tercile edges
+    recorded in the certified-bins file no longer match the ones ``64a``
+    would produce today: the bin NAMES then select a DIFFERENT population,
+    which ``load`` cannot detect from the pickle alone (10b concern 6). This
+    adapter passes it under whichever keyword the installed ``bundle.py``
+    exposes, and — if a build has neither — performs the identical check here
+    through the module's own ``load_bin_edges`` / ``assert_no_edge_drift``.
+    ``edges_checked`` records that the check ran; nothing silently skips it.
+    """
+    import inspect
+    params = inspect.signature(BundleHead.load).parameters
+    if edges_path is not None:
+        for kw in ("edges_json", "edges_path"):
+            if kw in params:
+                return BundleHead.load(path, certified=jpath,
+                                       **{kw: edges_path}), True
+    head = BundleHead.load(path, certified=jpath)
+    if edges_path is None:
+        return head, False
+    mod = sys.modules[BundleHead.__module__]
+    read_edges = getattr(mod, "load_bin_edges", None)
+    no_drift = getattr(mod, "assert_no_edge_drift", None)
+    if read_edges is None or no_drift is None:      # a build without either
+        return head, False
+    no_drift(head.edges, read_edges(edges_path), source=str(edges_path))
+    return head, True
+
+
+def load_head(mode: str, path: Path | None, model,
+              edges_path: Path | None = None,
+              ) -> tuple[object | None, HeadSpec]:
+    """Resolve ``--head`` into ``(head object, identity)``.
+
+    * ``none`` — no head at all. ``price_group`` then prices a group as the
+      Sigma over its members' single-cell prices, which is what grid v5 did:
+      this mode exists to REPRODUCE v5 bit for bit (G-11-1).
+    * ``installed`` — the pickle TOGETHER with its
+      ``bundle_head_certified_bins.json`` AND the ``bundles_bins.json`` the
+      certified bin names were derived from, all three named EXPLICITLY (no
+      auto-resolve, which would skip the edge-drift check if a file were not
+      where it looked). The load asserts the pair belongs together; a head
+      without its support map would price compositions Gate U refused to
+      certify, so there is no way to ask for one here.
+    * ``dummy`` — the Task-6d ``DummyHead`` timing stand-in. Unrestricted by
+      construction (it has no ``certified_bins``), so every group is
+      head-priced; its numbers are meaningless and ``main`` quarantines them.
+
+    The head object is loaded ONCE and shared by every triple: ``price_group``
+    keys its memo on ``id(head)``, so one object per run means the memo stays
+    warm across the (theta, provider) blocks that share a matrices dict.
+    """
+    if mode == "none":
+        return None, HeadSpec(mode="none", head_id=HEAD_ID_NONE)
+    if mode == "dummy":
+        alpha = float(model.alpha)
+        return DummyHead(alpha), HeadSpec(mode="dummy",
+                                          head_id=f"dummy-alpha{alpha:.6g}")
+    if mode != "installed":
+        raise SystemExit(f"unknown --head mode {mode!r}")
+
+    path = Path(path or HEAD_PATH_DEFAULT)
+    if not path.exists():
+        raise SystemExit(
+            f"--head installed: no bundle head at {path}. Task 10b writes it "
+            "(scripts/revision/65_train_bundle_head.py, on a Gate U PASS); "
+            "pass --head none to reproduce the v5 grid instead.")
+    jpath = path.parent / CERTIFIED_BINS_JSON
+    if not jpath.exists():
+        raise SystemExit(
+            f"--head installed: {path} has no {CERTIFIED_BINS_JSON} beside "
+            "it. An installed head must carry the support Gate U certified it "
+            "on — without it the head would price every composition, "
+            "including the ones the gate refused.")
+    doc = json.loads(jpath.read_text(encoding="utf-8"))
+    # ALWAYS name the edges file. ``BundleHead.load``'s auto-resolve silently
+    # skips the drift check when the file is not where it looks, and a bin
+    # NAME means nothing against terciles it was not derived from — so the
+    # runner resolves it here (--edges-path, else the certified-bins file's
+    # own ``edges_source``, else the conventional location) and refuses to
+    # run without it.
+    if edges_path is None:
+        edges_path = (Path(str(doc["edges_source"])) if doc.get("edges_source")
+                      else path.parent / "bundles" / "bundles_bins.json")
+    edges_path = Path(edges_path)
+    if not edges_path.exists():
+        raise SystemExit(
+            f"the bin-edges file {edges_path} does not exist. It is the "
+            "bundles_bins.json the certified bin NAMES were derived from; a "
+            "name means nothing against different terciles, and the head "
+            "must not be used without that check. Pass --edges-path.")
+    # asserts the pickle and the support map belong together
+    head, edges_checked = _load_bundle_head(path, jpath, edges_path)
+    assert head.restricted, (
+        f"{path} loaded UNRESTRICTED (certified_bins is None) — the "
+        "certified-support refusal is the whole point of --head installed")
+    pkl_sha, json_sha = _sha256(path), _sha256(jpath)
+    return head, HeadSpec(
+        mode="installed",
+        head_id=f"{path.stem}@{pkl_sha[:_SHA_TAG]}+{json_sha[:_SHA_TAG]}",
+        path=path.resolve(), pkl_sha256=pkl_sha, json_sha256=json_sha,
+        n_certified=len(head.certified_bins),
+        n_known=None if head.known_bins is None else len(head.known_bins),
+        label=str(doc.get("label")) if "label" in doc else None,
+        trained_at=str(doc.get("trained_at")) if "trained_at" in doc else None,
+        edges_path=None if edges_path is None else Path(edges_path),
+        edges_checked=bool(edges_checked),
+    )
+
+
+def check_manifest(spec: HeadSpec) -> None:
+    """Pin the output directory to ONE head, across resumes.
+
+    The schema guard catches a directory written under a different SCHEMA; it
+    cannot catch a directory written under a different HEAD, because the
+    columns are identical. Rows from two heads in one table would be silently
+    incomparable, so the first run stamps the directory and every later one
+    must match it. (``head_id`` is on every row as well, so the mixture would
+    be VISIBLE after the fact — this makes it impossible instead.)
+    """
+    doc = spec.as_manifest()
+    if MANIFEST.exists():
+        have = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        if str(have.get("head_id")) != spec.head_id:
+            raise SystemExit(
+                f"HEAD MISMATCH — refusing to write into {OUT}.\n"
+                f"  the directory was started with head_id "
+                f"{have.get('head_id')!r} ({have.get('mode')})\n"
+                f"  this run carries    head_id {spec.head_id!r} "
+                f"({spec.mode})\n"
+                "Rows priced by two different heads are not comparable. Point "
+                "REV2_OUT_DIR at a fresh directory.")
+        return
+    _retry_write(MANIFEST, lambda: MANIFEST.write_text(
+        json.dumps(doc, indent=2), encoding="utf-8"))
+
+
+def install_head(m: dict, head, spec: HeadSpec) -> None:
+    """Put *head* on a FRESHLY BUILT matrices dict, or leave it head-free.
+
+    Order matters and is asserted, not assumed. ``price_group`` memoises on
+    ``(members, day, kind, demand, freq, id(head))``, so entries made under
+    one head can never be served under another — but only entries made under
+    the head that is INSTALLED AT THE TIME are keyed on it. A matrices dict
+    that had already priced anything before the head went in would carry
+    head-free entries, and while those could not be SERVED to the head, their
+    presence would mean part of the grid was priced in the wrong regime. A
+    fresh ``build_cost_matrices_ml`` starts with empty memos and prices
+    nothing, so this is cheap to guarantee: check it.
+    """
+    assert m.get("bundle_head") is None, (
+        "build_cost_matrices_ml must hand back head-free matrices; the head "
+        "is installed here, once, by this function")
+    # Only the PRICE memo is regime-bound. The partition (L3) and hull (L2)
+    # layers are head-independent by construction — ``build_partition`` never
+    # sees a head — so a warm one is not evidence of anything.
+    assert not m.get(_MEMO), (
+        f"matrices already carry {len(m[_MEMO])} memoised group price(s) "
+        "before the head was installed — this dict has priced something in "
+        "the wrong regime")
+    st = _memo_stats(m)
+    assert not (st["price_hit"] or st["price_miss"]), (
+        f"the price memo has already been consulted on this matrices dict "
+        f"({st['price_hit']} hit / {st['price_miss']} miss) — see "
+        "install_head's docstring")
+    assert not price_source_counts(m), (
+        "price_group has already been called on this matrices dict — see "
+        "install_head's docstring")
+    if head is None:
+        return
+    m["bundle_head"] = head
+    # The memo key holds id(head), and price_group PINS the object, so the
+    # separation is by identity rather than by a name we could get wrong.
+    assert m["bundle_head"] is head, spec.head_id
+
+
+def head_usage(chosen: np.ndarray, hub_plz_list: list, schedules: list,
+               m: dict) -> dict[str, dict]:
+    """What priced the realised tours of plan *chosen*, per kind — read-only.
+
+    Re-derives the SAME partitions the cost path priced (``_express_members``
+    / ``_smallday_members`` are the shared twins, ``_express_partition`` /
+    ``_smallday_partition`` are L3-memo hits) and re-prices each group with
+    ``with_source=True``. Under a head every one of those calls is an L1-memo
+    hit, so the audit costs a hash per tour; at ``--head none`` the cost path
+    never went through ``price_group`` at all (it sums the precomputed
+    ``express_cost`` / ``small_delivery_price`` tables instead), so the calls
+    are real — and the returned totals are then an INDEPENDENT recomputation
+    of those two fast paths, which the caller asserts against.
+
+    Returns ``{kind: counters}`` with one entry per :data:`USAGE_KINDS`. The
+    per-group aggregation is exact by construction (one ``with_source``
+    return per realised tour); the module's own call counters are reset first
+    and cross-checked against it, so two independent accountings have to
+    agree before a number is written.
+    """
+    reset_price_source_counts(m)
+    head = m.get("bundle_head")
+    raw_express, expr_stops = m["raw_express"], m["expr_stops"]
+    acc = {k: {"n_groups_priced": 0, "n_multi_cell": 0, "n_single_cell": 0,
+               "n_members": 0, "cost_eur": 0.0, "cost_head_eur": 0.0,
+               **{c: 0 for c in SOURCE_COL.values()}}
+           for k in USAGE_KINDS}
+
+    def _take(kind: str, gp, n_members: int) -> None:
+        a = acc[kind]
+        a["n_groups_priced"] += 1
+        a["n_multi_cell" if n_members > 1 else "n_single_cell"] += 1
+        a["n_members"] += n_members
+        a[SOURCE_COL[gp.source]] += 1
+        a["cost_eur"] += gp.price
+        if gp.source is PriceSource.HEAD:
+            a["cost_head_eur"] += gp.price
+            # The certified support carries no 1-member bin (63_'s manifest
+            # only holds groups of >= 2), so a lone cell can never be
+            # head-priced. Task 10b's rule, checked where it is USED.
+            assert n_members > 1 or not getattr(head, "restricted", False), (
+                f"a {n_members}-member {kind} group was head-priced by a "
+                "RESTRICTED head — no certified bin has one member")
+
+    for hi in range(len(hub_plz_list)):
+        for d in range(C.N_DAYS):
+            contributing, _ = _express_members(
+                hi, d, chosen, hub_plz_list, schedules, raw_express, m)
+            if contributing:
+                for g in _express_partition(contributing, d, raw_express,
+                                            expr_stops, m):
+                    _take("express",
+                          price_group(g, d, m, kind="express", head=head,
+                                      with_source=True), len(g))
+            small, _k = _smallday_members(hi, d, chosen, hub_plz_list, m)
+            if small:
+                parts, parcels, stops = _smallday_partition(
+                    hi, d, chosen, small, m)
+                for g in parts:
+                    _take("delivery",
+                          price_group(g, d, m, kind="delivery",
+                                      parcels_by_cell=parcels,
+                                      stops_by_cell=stops, freq=1.0,
+                                      head=head, with_source=True), len(g))
+
+    # Cross-check 1: the module's call counters (reset above, so exactly one
+    # call per realised tour landed in them) against the per-group tally.
+    counts = price_source_counts(m)
+    for kind in USAGE_KINDS:
+        for src, col in SOURCE_COL.items():
+            assert counts.get((kind, src), 0) == acc[kind][col], (
+                f"price-source accounting disagrees for {kind}/{src.value}: "
+                f"price_source_counts says {counts.get((kind, src), 0)}, the "
+                f"per-group tally says {acc[kind][col]}")
+    stray = {k: v for k, v in counts.items() if k[0] not in USAGE_KINDS}
+    assert not stray, f"price_group was called with an unknown kind: {stray}"
+    # The window really is ONE call per realised tour. Without the reset the
+    # counters would hold SEARCH EFFORT — all three best-of-3 branches, every
+    # trial move, memo hits included — which is not what "the head priced x %
+    # of the pooled cost" means.
+    n_realised = sum(a["n_groups_priced"] for a in acc.values())
+    assert sum(counts.values()) == n_realised, (
+        f"{sum(counts.values())} price_group call(s) counted for "
+        f"{n_realised} realised tour(s) — the counting window is not one "
+        "call per group")
+
+    # Cross-check 2: the four source counts ARE the groups, with nothing
+    # double-counted and nothing dropped.
+    for kind, a in acc.items():
+        assert sum(a[c] for c in SOURCE_COL.values()) == a["n_groups_priced"], (
+            f"{kind}: source counts {[a[c] for c in SOURCE_COL.values()]} do "
+            f"not add up to {a['n_groups_priced']} groups")
+        assert a["n_multi_cell"] + a["n_single_cell"] == a["n_groups_priced"]
+        a["head_cost_share"] = (a["cost_head_eur"] / a["cost_eur"]
+                                if a["cost_eur"] else np.nan)
+    return acc
+
+
+def head_usage_rows(P: float, th: float, prov: str, usage: dict,
+                    spec: HeadSpec) -> list[dict]:
+    """``tab_head_usage_v2.csv`` rows: one per (P, theta, provider, kind)."""
+    return [dict(
+        penalty=P, share_willing=th, provider=prov, kind=kind,
+        head_mode=spec.mode, head_id=spec.head_id,
+        n_groups_priced=int(usage[kind]["n_groups_priced"]),
+        n_multi_cell_groups=int(usage[kind]["n_multi_cell"]),
+        n_single_cell_groups=int(usage[kind]["n_single_cell"]),
+        n_cells_in_groups=int(usage[kind]["n_members"]),
+        n_head=int(usage[kind]["n_head"]),
+        n_fallback_uncertified=int(usage[kind]["n_fallback_uncertified"]),
+        n_fallback_unsupported=int(usage[kind]["n_fallback_unsupported"]),
+        n_fallback_no_head=int(usage[kind]["n_fallback_no_head"]),
+        pooled_cost_eur=float(usage[kind]["cost_eur"]),
+        head_cost_eur=float(usage[kind]["cost_head_eur"]),
+        head_cost_share=float(usage[kind]["head_cost_share"]),
+    ) for kind in USAGE_KINDS]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -578,8 +1054,12 @@ def stage2_plan(mode: str, th: float, chosen_s1: np.ndarray,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
-               schedules: list, sched_waits: np.ndarray, args) -> tuple[dict, dict]:
+               schedules: list, sched_waits: np.ndarray, args,
+               spec: HeadSpec) -> tuple[dict, dict]:
     """Optimize one triple against the pre-built matrices *m*.
+
+    *spec* identifies the head ``m`` was built with (:func:`install_head`);
+    it is written onto every output row so no table can mix regimes.
 
     Returns ``(rows_by_table, timings)``.
     """
@@ -745,6 +1225,7 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
             ex_veh = float(_ev(hi, d, chosen_s3))     # cache hit
             fleet_rows.append(dict(
                 penalty=P, share_willing=th, provider=prov,
+                head_id=spec.head_id,
                 hub=hub_names[hi], day=d,
                 dd_single_veh=dd_single, dd_pool_veh=dd_pool,
                 express_veh=ex_veh, fleet=dd_single + dd_pool + ex_veh,
@@ -772,6 +1253,37 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
         f"cost bookkeeping drift P={P} th={th} {prov}: "
         f"tracked {res['cost']:.6f} != recomputed {routing_total:.6f} "
         f"(delta {res['cost'] - routing_total:.3e}, tol {_tol(routing_total):.3e})")
+
+    # ── what actually priced the pooled tours (Task 11) ──────────────────
+    # Read-only audit of the FINAL plan: one `with_source` price per realised
+    # tour, so the head-priced SHARE OF COST is measured rather than assumed.
+    # Its two totals must reconstruct the two pooled terms above — under a
+    # head that is a memo replay of the same calls, at --head none it is an
+    # independent recomputation of the express/small-delivery fast paths (the
+    # summation order is the only thing that differs).
+    usage = head_usage(chosen_s3, hub_plz_list, schedules, m)
+    for kind, ref, name in (("express", expr_total, "express_cost_eur"),
+                            ("delivery", pool_total, "pool_cost_eur")):
+        got = usage[kind]["cost_eur"]
+        assert abs(got - ref) <= _tol(ref), (
+            f"head-usage audit disagrees with {name} P={P} th={th} {prov}: "
+            f"Sigma group prices {got:.6f} != {ref:.6f} "
+            f"(delta {got - ref:.3e}, tol {_tol(ref):.3e})")
+    pooled_cost = expr_total + pool_total
+    head_cost = sum(usage[k]["cost_head_eur"] for k in USAGE_KINDS)
+    head_share = head_cost / pooled_cost if pooled_cost else np.nan
+    n_head_groups = sum(usage[k]["n_head"] for k in USAGE_KINDS)
+    n_groups = sum(usage[k]["n_groups_priced"] for k in USAGE_KINDS)
+    print(f"    P={P:<5g} th={th:<4g} {prov:<7s} head  "
+          f"{n_head_groups}/{n_groups} group(s) head-priced, "
+          f"{100.0 * head_share if pooled_cost else float('nan'):5.1f}% of "
+          f"{pooled_cost:,.0f} EUR pooled cost | "
+          + " ".join(
+              f"{k[:4]} {usage[k]['n_head']}h/"
+              f"{usage[k]['n_fallback_uncertified']}u/"
+              f"{usage[k]['n_fallback_unsupported']}x/"
+              f"{usage[k]['n_fallback_no_head']}n"
+              for k in USAGE_KINDS), flush=True)
 
     # ── the operator lens (Task 6e) ─────────────────────────────────────
     # Every predicted cost carries 189.15 EUR per vehicle-DAY (VROOM's fixed
@@ -918,6 +1430,19 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
         swaps_smooth=int(res["swaps_made"]),
         stage2=args.stage2,
         stage3=args.stage3,
+        # Task 11 head provenance. `head_cost_share` is the head-priced share
+        # of the POOLED cost (express + small-delivery) at the STAGE-2 plan —
+        # not of routing_total, whose dd term never goes through a group
+        # price at all. NaN when the plan pools nothing. The per-kind split
+        # and every count live in tab_head_usage_v2.csv, joined on
+        # (penalty, share_willing, provider).
+        head_mode=spec.mode,
+        head_id=spec.head_id,
+        pooled_cost_eur=pooled_cost,
+        head_cost_eur=head_cost,
+        head_cost_share=float(head_share),
+        n_groups_priced=int(n_groups),
+        n_head_groups=int(n_head_groups),
     )]
 
     # Willing-weighted wait — formula ported from 50_recompute_fleet_wait_fixed
@@ -934,7 +1459,7 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
     # parcel-weighted; the parcel weighting lives in the wait numerators).
     wk = weekly_pkts
     wait_rows = [dict(
-        penalty=P, share_willing=th, provider=prov,
+        penalty=P, share_willing=th, provider=prov, head_id=spec.head_id,
         wait_num_willing=float((sched_waits[chosen_s3] * wk * local_willing).sum()),
         wait_num_all=float((sched_waits[chosen_s3] * wk).sum()),
         total_parcels=float(wk.sum()),
@@ -947,7 +1472,8 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
     )]
 
     chosen_rows = [dict(
-        penalty=P, share_willing=th, provider=prov, plz=str(pc),
+        penalty=P, share_willing=th, provider=prov, head_id=spec.head_id,
+        plz=str(pc),
         schedule_idx_stage1=int(chosen_s1[pi]),
         schedule_idx_balanced=int(chosen_s2[pi]),
         schedule_idx_system_smoothed=int(chosen_s3[pi]),
@@ -974,7 +1500,8 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
           flush=True)
 
     rows = {"chosen": chosen_rows, "costs": cost_rows,
-            "fleet": fleet_rows, "wait": wait_rows}
+            "fleet": fleet_rows, "wait": wait_rows,
+            "headuse": head_usage_rows(P, th, prov, usage, spec)}
     return rows, {"s1": t_s1, "s2": t_s2, "s3": t_s3, "out": t_out}
 
 
@@ -1050,17 +1577,43 @@ def main() -> None:
                     help="stage-1 warm-start proxy matrix: 'raw' = cost_3d_raw "
                          "(pre-rev1 semantics, default), 'pooled' = the zeroed "
                          "cost_3d (literal canonical expression)")
+    ap.add_argument("--head", choices=("installed", "none", "dummy"),
+                    default="installed",
+                    help="which bundle head prices a multi-cell pooled tour "
+                         "(Task 11). 'installed' (default) = the "
+                         "certified-support head at --head-path, which prices "
+                         "a group ONLY inside the bins Gate U certified and "
+                         "falls back to the Sigma over single-cell prices "
+                         "everywhere else (counted per source in "
+                         "tab_head_usage_v2.csv); 'none' = no head at all, "
+                         "i.e. the Sigma fallback for every group — this "
+                         "reproduces the v5 grid bit for bit; 'dummy' = the "
+                         "Task-6d DummyHead timing stand-in (requires --only, "
+                         "quarantined to <out>/_dummyhead/)")
+    ap.add_argument("--head-path", default=None,
+                    help=f"the bundle head pickle for --head installed "
+                         f"(default {HEAD_PATH_DEFAULT}). Its "
+                         f"{CERTIFIED_BINS_JSON} must sit beside it")
+    ap.add_argument("--edges-path", default=None,
+                    help="the bundles_bins.json the certified bin NAMES were "
+                         "derived from (default: the certified-bins file's "
+                         "own 'edges_source'). Passed to BundleHead.load so "
+                         "an edge drift since training is loud instead of "
+                         "silently re-selecting a different population")
     ap.add_argument("--dummy-head", action="store_true",
-                    help="TIMING ONLY: install a DummyHead so every group is "
-                         "priced through the partition (the head regime). "
-                         "Requires --only; writes to <out>/_dummyhead/. Never "
-                         "use its numbers for results.")
+                    help="deprecated alias for --head dummy")
     args = ap.parse_args()
 
     if args.dummy_head:
+        if args.head not in ("installed", "dummy"):    # explicit conflict
+            raise SystemExit(
+                f"--dummy-head contradicts --head {args.head}; pass "
+                "--head dummy")
+        args.head = "dummy"
+    if args.head == "dummy":
         if not args.only:
             raise SystemExit(
-                "--dummy-head is a timing probe, not a results run: pass "
+                "--head dummy is a timing probe, not a results run: pass "
                 "--only P=..,th=..,prov=.. to bound it to a single triple")
         _use_out_dir(OUT / "_dummyhead")
         print("[dummy-head] TIMING RUN — the head regime is being timed, not "
@@ -1080,7 +1633,11 @@ def main() -> None:
                 ("stage2_start_winner", "6e", "run-2 or v3"),
                 ("opcost_from_freqpres_eur", "6f", "run-2, v3 or v4"),
                 ("range_start_max_swaps", "6f (capped range start)",
-                 "pre-cap v5 scratch")):
+                 "pre-cap v5 scratch"),
+                ("head_id", "11 (head-enabled grid)",
+                 "run-2, v3, v4 or v5"),
+                ("head_cost_share", "11 (head-priced cost share)",
+                 "pre-v6 scratch")):
             if marker not in have:
                 raise SystemExit(
                     f"{COSTS} predates Task {task} (no {marker!r} column) — "
@@ -1110,6 +1667,28 @@ def main() -> None:
     t_load = time.perf_counter()
     provider_data, optim_data = C.load_checkpoints()
     model = C.load_model()
+    head, head_spec = load_head(args.head, args.head_path, model,
+                                edges_path=args.edges_path)
+    check_manifest(head_spec)
+    print(f"[head] mode={head_spec.mode} head_id={head_spec.head_id}",
+          flush=True)
+    if head_spec.mode == "installed":
+        print(f"[head]   path        {head_spec.path}\n"
+              f"[head]   pkl  sha256 {head_spec.pkl_sha256}\n"
+              f"[head]   json sha256 {head_spec.json_sha256}\n"
+              f"[head]   label={head_spec.label} "
+              f"trained_at={head_spec.trained_at} "
+              f"certified={head_spec.n_certified} bins of "
+              f"{head_spec.n_known} known\n"
+              f"[head]   edges       {head.edges}\n"
+              f"[head]   edges_src   {head_spec.edges_path} "
+              f"({'RE-CHECKED at load' if head_spec.edges_checked else 'recorded only — BundleHead.load has no edges_path yet'})\n"
+              f"[head] a multi-cell tour is head-priced ONLY inside those "
+              f"certified bins; every other group takes the Sigma-single "
+              f"fallback and is counted in {HEADUSE.name}", flush=True)
+    elif head_spec.mode == "none":
+        print("[head] no head — every group is priced as the Sigma over its "
+              "members' single-cell prices (the v5 regime)", flush=True)
     ml_prep = C.build_ml_prep(provider_data)
     del provider_data
     gc.collect()
@@ -1164,31 +1743,31 @@ def main() -> None:
                 od["plz_keys"], od["plz_data"], schedules, model, prov,
                 prep["plz_day_coords"], prep["hub_coords_by_plz"],
                 fast_share_b2c=fs_b2c_v, fast_share_b2b=fs_b2b_v)
-            assert m.get("bundle_head") is None, (
-                "base run must price with the Sigma fallback (head=None)")
             # head=None + this table = the partition-free fast paths in
             # _hub_express_day_ml / _hub_smallday_pool_ml. Without the table
             # the pooled twin silently reverts to the partition path, which
-            # is the 336 h regime — fail loudly instead.
+            # is the 336 h regime — fail loudly instead. (With a head
+            # installed the partition path is taken by design; the table is
+            # still required, because --head none must be able to reproduce
+            # v5 from the same build.)
             assert m.get("small_delivery_price") is not None, (
                 "matrices lack 'small_delivery_price' — the pooled twin would "
                 "fall back to per-member partition pricing")
-            if args.dummy_head:
-                # After the asserts on purpose: the base run must still be
-                # proven head-free before the probe overrides that.
-                m["bundle_head"] = DummyHead(model.alpha)
+            # Head in, on cold memos, exactly once per matrices dict.
+            install_head(m, head, head_spec)
             t_mtx = time.perf_counter() - t0
             print(f"[mtx] th={th:<4g} {prov:<7s} built in {t_mtx:.1f}s "
                   f"({len(block)} penalty value(s) to run)", flush=True)
 
             for P in block:
                 rows, tt = run_triple(P, th, prov, od, prep, m, schedules,
-                                      sched_waits, args)
+                                      sched_waits, args, head_spec)
                 t0 = time.perf_counter()
                 # CHOSEN last: it is the completion marker prune_partial reads.
                 append_rows(COSTS, rows["costs"])
                 append_rows(FLEET, rows["fleet"])
                 append_rows(WAIT, rows["wait"])
+                append_rows(HEADUSE, rows["headuse"])
                 append_rows(CHOSEN, rows["chosen"])
                 t_w = time.perf_counter() - t0
                 done.add(_key(P, th, prov))
@@ -1207,7 +1786,7 @@ def main() -> None:
 
     print(f"\n[done] {n_done} triple(s) in {(time.perf_counter() - t_run) / 60:.1f}min",
           flush=True)
-    for p in (CHOSEN, COSTS, FLEET, WAIT):
+    for p in (CHOSEN, COSTS, FLEET, WAIT, HEADUSE):
         if p.exists():
             print(f"  {p} ({len(pd.read_csv(p))} rows)", flush=True)
 

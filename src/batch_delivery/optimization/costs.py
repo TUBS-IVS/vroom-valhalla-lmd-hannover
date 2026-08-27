@@ -42,6 +42,7 @@ from batch_delivery.surrogate.bundle import (  # memo plumbing, see bundle.py
     _MEMO_PINS,
     _MEMO_STATS,
     _PART_CAP,
+    _PRICE_SRC,
     _STAT_FIELDS,
     MEMO_KEYS,  # noqa: F401  (re-exported: callers/tests import it here)
     _bump,
@@ -1126,6 +1127,13 @@ def build_cost_matrices_ml(
         _MEMO_PART: {},
         _MEMO_HULL: {},
         _MEMO_STATS: dict.fromkeys(_STAT_FIELDS, 0),
+        # Created here for the same reason as the memos, and it matters more:
+        # the optimisers price against ``mat_pen = dict(m)`` (a SHALLOW copy
+        # with its own ``dd_cost_mx``). A lazily-created counter dict would be
+        # created ON THE COPY and thrown away with it, so every price source
+        # counted during stage 1 would be lost. Seeded here, the copy shares
+        # the same dict by reference and the counts survive.
+        _PRICE_SRC: {},
     }
 
 
@@ -1254,6 +1262,43 @@ def _express_partition_vehicles(
     ))
 
 
+def _express_members(
+    hi: int, d: int, chosen: np.ndarray,
+    hub_plz_list: list[np.ndarray],
+    schedules: list[frozenset[int]],
+    raw_express: np.ndarray,
+    matrices: dict,
+) -> tuple[list[int], tuple | None]:
+    """The hub-day's express-contributing cells and their cache key.
+
+    ``([], None)`` when the hub contributes nothing that day — every caller
+    then answers 0.0 without touching ``express_cache``.
+
+    The express twin of :func:`_smallday_members`, and shared for the same
+    reason: the cost path, the vehicle path and Task 11's head-usage audit
+    must never be able to derive DIFFERENT member sets (and therefore
+    different cache keys) for the same hub-day state. A cell contributes iff
+    its chosen schedule does not deliver on *d* and it has express demand
+    that day; unlike the delivery twin the key is the membership SET alone,
+    because a cell's express demand on *d* does not depend on its schedule.
+    """
+    h_ps = hub_plz_list[hi]
+    # Vectorised: identify contributing PLZs via boolean masking
+    sched_active = matrices.get("sched_active")
+    if sched_active is not None:
+        is_non_delivery = ~sched_active[chosen[h_ps], d]
+    else:
+        is_non_delivery = np.array(
+            [d not in schedules[int(chosen[pi])] for pi in h_ps],
+            dtype=bool,
+        )
+    mask = is_non_delivery & (raw_express[h_ps, d] > 0)
+    if not mask.any():
+        return [], None
+    contributing = h_ps[mask].tolist()
+    return contributing, (hi, d, frozenset(contributing))
+
+
 def _hub_express_day_ml(
     hi: int, d: int, chosen: np.ndarray,
     hub_plz_list: list[np.ndarray],
@@ -1272,25 +1317,11 @@ def _hub_express_day_ml(
     Results are cached by ``(hub, day, contributing_plz)`` as
     ``(cost, vehicles)``; ``_hub_express_vehicles`` reads the second slot.
     """
-    h_ps = hub_plz_list[hi]
-
-    # Vectorised: identify contributing PLZs via boolean masking
-    sched_active = matrices.get("sched_active")
-    if sched_active is not None:
-        is_non_delivery = ~sched_active[chosen[h_ps], d]
-    else:
-        is_non_delivery = np.array(
-            [d not in schedules[int(chosen[pi])] for pi in h_ps],
-            dtype=bool,
-        )
-    expr_demand = raw_express[h_ps, d]
-    mask = is_non_delivery & (expr_demand > 0)
-
-    if not mask.any():
+    contributing, cache_key = _express_members(
+        hi, d, chosen, hub_plz_list, schedules, raw_express, matrices)
+    if not contributing:
         return 0.0
 
-    contributing = h_ps[mask].tolist()
-    cache_key = (hi, d, frozenset(contributing))
     cached = express_cache.get(cache_key)
     if cached is not None:
         return cached[0] * express_scale
@@ -1343,15 +1374,10 @@ def _hub_express_vehicles(
     the grouping, so it builds the partition then — once — and upgrades the
     entry in place. The value is the one the eager path used to store.
     """
-    h_ps = hub_plz_list[hi]
-    sa = matrices.get("sched_active")
-    nd = ~sa[chosen[h_ps], d] if sa is not None else np.array(
-        [d not in schedules[int(chosen[p])] for p in h_ps], dtype=bool)
-    mask = nd & (raw_express[h_ps, d] > 0)
-    if not mask.any():
+    contributing, key = _express_members(
+        hi, d, chosen, hub_plz_list, schedules, raw_express, matrices)
+    if not contributing:
         return 0.0
-    contributing = h_ps[mask].tolist()
-    key = (hi, d, frozenset(contributing))
     cached = express_cache.get(key)
     if cached is None:
         _hub_express_day_ml(
