@@ -12,6 +12,7 @@ a synthetic frame (no pickles, no VROOM, no Docker).
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import numpy as np
@@ -316,7 +317,7 @@ def test_gate_u_needs_all_three_criteria(T):
     """The verdict runs on bin_table's own output, not a hand-made frame."""
     pool, y, pred, trainable = _binned_pool(T)
     dirty = T.bin_table(pool, y, pred, None, trainable)
-    v = T.gate_verdict({"mape": 4.0, "bias": 0.5}, dirty)
+    v = T.gate_verdict({"mape": 4.0, "bias": 0.5}, dirty, mode="pool")
     assert v["pass"] is False and v["blocking_bins"] == ["supported"]
 
     # Price the supported bin correctly and only the thin suspect is left,
@@ -325,12 +326,16 @@ def test_gate_u_needs_all_three_criteria(T):
     ok[:6] = y[:6]
     clean = T.bin_table(pool, y, ok, None, trainable)
     assert int(clean["suspect"].sum()) == 1
-    assert T.gate_verdict({"mape": 4.0, "bias": 0.5}, clean)["pass"] is True
+    assert T.gate_verdict({"mape": 4.0, "bias": 0.5}, clean,
+                          mode="pool")["pass"] is True
 
     # The two overall numbers each fail on their own.
-    assert T.gate_verdict({"mape": 5.4, "bias": 0.5}, clean)["pass"] is False
-    assert T.gate_verdict({"mape": 4.0, "bias": -2.4}, clean)["pass"] is False
-    assert T.gate_verdict({"mape": 5.0, "bias": 2.0}, clean)["pass"] is True
+    assert T.gate_verdict({"mape": 5.4, "bias": 0.5}, clean,
+                          mode="pool")["pass"] is False
+    assert T.gate_verdict({"mape": 4.0, "bias": -2.4}, clean,
+                          mode="pool")["pass"] is False
+    assert T.gate_verdict({"mape": 5.0, "bias": 2.0}, clean,
+                          mode="pool")["pass"] is True
 
 
 def test_assign_pool_bins_uses_the_current_edges(T):
@@ -359,3 +364,157 @@ def test_assign_pool_bins_uses_the_current_edges(T):
     # Without edges there is nothing to re-derive, so the stored bin stands.
     kept = T.assign_pool_bins(pool, None)
     assert (kept["bin"] == kept["bin_stored"]).all()
+
+
+# ─── Task 10b: the certified support, and the gate on the deployed population ─
+
+def _cert_fixture(T, sup_error=1.02):
+    """A pool with one certified bin, one supported-but-biased bin and a thin
+    one, plus deployment weights.
+
+    ``supported`` is the certified case (6 labels, small bias), ``thinbin`` is
+    thin (2 labels) and ``untrained`` has no trainable label at all. A fourth
+    bin, ``biased``, is supported AND mispriced — the loud part of the gate.
+    """
+    n = 6
+    pool = _pool(6 + 6 + 2 + 2)
+    pool["bin"] = (["supported"] * n + ["biased"] * n + ["thinbin"] * 2
+                   + ["untrained"] * 2)
+    y = pool["vroom_cost_eur"].to_numpy(dtype=float)
+    pred = y.copy()
+    pred[:n] = y[:n] * sup_error                # certified: small error
+    pred[n:2 * n] = y[n:2 * n] * 1.09           # supported and biased
+    pred[2 * n:2 * n + 2] = y[2 * n:2 * n + 2] * 1.20      # thin
+    trainable = np.ones(len(pool), dtype=bool)
+    trainable[-2:] = False
+    tab = T.bin_table(pool, y, pred, None, trainable)
+    tab["occurrences"] = tab["bin"].map(
+        {"supported": 400, "biased": 300, "thinbin": 200,
+         "untrained": 100}).astype(int)
+    return pool, y, pred, trainable, tab
+
+
+def test_certified_is_supported_and_unbiased(T):
+    """certified = >= THIN_FLOOR trainable labels AND |OOF bias| <= 5 %."""
+    _, _, _, _, tab = _cert_fixture(T)
+    c = tab.set_index("bin")["certified"]
+    assert bool(c["supported"])
+    assert not bool(c["biased"])        # supported, but mispriced
+    assert not bool(c["thinbin"])       # unbiased enough, but too thin
+    assert not bool(c["untrained"])     # no labels at all
+    # The three flags stay consistent: certified == supported and not suspect.
+    t = tab.set_index("bin")
+    assert (t["certified"] == (~t["thin"] & ~t["suspect"])).all()
+
+
+def test_certified_stats_weigh_labels_and_occurrences(T):
+    pool, y, pred, trainable, tab = _cert_fixture(T)
+    cert = T.certified_stats(tab, pool, y, pred, trainable)
+
+    assert cert["bins"] == ["supported"]
+    assert cert["n_bins"] == 1 and cert["n_labels"] == 6
+    # Label-weighted MAPE over the certified rows == the row-level MAPE there.
+    assert cert["mape"] == pytest.approx(2.0)
+    assert cert["occ_certified"] == 400 and cert["occ_total"] == 1000
+    assert cert["coverage_pct"] == pytest.approx(40.0)
+    # The excluded supported-but-biased bins are named, with their weight.
+    assert [b["bin"] for b in cert["excluded_biased"]] == ["biased"]
+    assert cert["excluded_biased"][0]["occurrences"] == 300
+
+
+def test_certified_stats_refuse_to_disagree_with_the_bin_table(T):
+    """The certified ROWS and the certified BINS are one population."""
+    pool, y, pred, trainable, tab = _cert_fixture(T)
+    tab.loc[tab["bin"] == "supported", "n_labelled"] = 5    # a lie
+    with pytest.raises(AssertionError, match="certified"):
+        T.certified_stats(tab, pool, y, pred, trainable)
+
+
+def test_deployed_gate_passes_where_the_pool_gate_fails(T):
+    """The 2026-08-27 ruling: certify the DEPLOYED population.
+
+    A pool-wide MAPE above 5 % and a supported-but-biased bin fail the old
+    rule; the deployed rule asks only whether the head is good INSIDE the
+    support it is allowed to price, and how much of the deployment that
+    support covers.
+    """
+    pool, y, pred, trainable, tab = _cert_fixture(T)
+    cert = T.certified_stats(tab, pool, y, pred, trainable)
+    overall = {"mape": 5.4, "bias": 0.6}
+
+    pool_v = T.gate_verdict(overall, tab, cert, mode="pool")
+    assert pool_v["pass"] is False and pool_v["blocking_bins"] == ["biased"]
+
+    dep = T.gate_verdict(overall, tab, cert, mode="deployed")
+    assert dep["pass"] is True and dep["mode"] == "deployed"
+    # Both views travel together, whatever the mode — nothing is hidden.
+    assert dep["pool_view"]["pass"] is False
+    assert pool_v["deployed_view"]["pass"] is True
+    # ... and the excluded bins are still named by the deployed verdict.
+    assert dep["blocking_bins"] == ["biased"]
+
+
+def test_deployed_gate_fails_on_a_thin_or_biased_support(T):
+    pool, y, pred, trainable, tab = _cert_fixture(T)
+    cert = T.certified_stats(tab, pool, y, pred, trainable)
+    ok = {"mape": 5.4, "bias": 0.6}
+
+    # criterion 2 is unchanged — the overall bias still gates.
+    assert T.gate_verdict(ok | {"bias": 2.4}, tab, cert,
+                          mode="deployed")["pass"] is False
+
+    # criterion 3': the certified support must carry the deployment.
+    thin = dict(cert, coverage_pct=T.COVERAGE_FLOOR - 0.1)
+    assert T.gate_verdict(ok, tab, thin, mode="deployed")["pass"] is False
+    edge = dict(cert, coverage_pct=T.COVERAGE_FLOOR)
+    assert T.gate_verdict(ok, tab, edge, mode="deployed")["pass"] is True
+
+    # ... and an empty certified set can never pass, whatever the coverage.
+    empty = dict(cert, n_bins=0, bins=[], n_labels=0, mape=float("nan"),
+                 coverage_pct=0.0)
+    assert T.gate_verdict(ok, tab, empty, mode="deployed")["pass"] is False
+
+    # criterion 1': the head must be good INSIDE its support.
+    bad = dict(cert, mape=5.01)
+    assert T.gate_verdict(ok, tab, bad, mode="deployed")["pass"] is False
+
+
+def test_certified_bins_file_is_what_production_loads(T, tmp_path):
+    """The installed pair: the pickle and the support map beside it."""
+    import pickle as _pickle
+
+    from batch_delivery.surrogate.bundle import BundleHead, PriceSource
+
+    edges = {"parcels": [274.0, 450.0], "area_km2": [67.0, 123.4]}
+    pool, y, pred, trainable, tab = _cert_fixture(T)
+    tab["bin"] = ["delivery|2|D1|A1|GLS", "express|3|D2|A0|DPD",
+                  "delivery|5+|D0|A2|UPS", "express|4|D1|A1|Hermes"][:len(tab)]
+    tab["certified"] = [True, False, False, False]
+    cert = {"n_bins": 1, "bins": [tab["bin"].iloc[0]], "n_labels": 6,
+            "mape": 2.0, "bias": 0.5, "wbias": 0.4,
+            "mean_abs_bin_bias": 0.5,
+            "occ_mape": 2.1, "occ_certified": 400, "occ_total": 1000,
+            "coverage_pct": 40.0, "excluded_biased": [], "by_kind": [],
+            "by_provider": []}
+
+    with open(tmp_path / T.HEAD_PKL, "wb") as fh:
+        _pickle.dump({"alpha": T.ALPHA, "model": _ConstModel(),
+                      "label": "final", "trained_at": "2026-08-27 12:00:00"},
+                     fh)
+    p = T.write_certified_bins(tmp_path, tab, cert, edges, "final",
+                               "2026-08-27 12:00:00", "deployed",
+                               "bundles_bins.json")
+    assert p.name == "bundle_head_certified_bins.json"
+
+    head = BundleHead.load(tmp_path / T.HEAD_PKL)
+    assert head.certified_bins == {"delivery|2|D1|A1|GLS"}
+    assert head.known_bins == set(tab["bin"])
+    assert head.edges == edges
+    assert head.classify_bin("delivery|2|D1|A1|GLS") is PriceSource.HEAD
+    assert head.classify_bin("express|3|D2|A0|DPD") \
+        is PriceSource.FALLBACK_UNCERTIFIED
+    assert head.classify_bin("express|2|D0|A0|GLS") \
+        is PriceSource.FALLBACK_UNSUPPORTED
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    assert doc["numbers"]["coverage_pct"] == 40.0
+    assert str(T.THIN_FLOOR) in doc["rule"] and "bias" in doc["rule"]

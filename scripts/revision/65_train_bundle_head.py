@@ -52,20 +52,33 @@ sit on both sides of a fold boundary. Everything is scored on the COST scale
 (``alpha * daganzo + residual`` vs ``vroom_cost_eur``), never on the residual —
 a good residual R^2 over a dominant backbone would flatter the head.
 
-Gate U passes iff
+WHICH POPULATION THE GATE JUDGES (controller ruling, 2026-08-27)
+----------------------------------------------------------------
+The head is DEPLOYED only inside its certified support: a bin is CERTIFIED iff
+it carries at least ``THIN_FLOOR`` trainable labels AND |per-bin OOF bias| <=
+``SUSPECT_BIAS``, and ``bundle.price_group`` refuses to use the head anywhere
+else (Sigma-single fallback, counted per (kind, source) for Task 11). The gate
+therefore judges that population, not the whole pool — ``--gate deployed``,
+the default:
 
-1. overall OOF MAPE <= 5 %,
-2. |overall OOF signed bias| <= 2 %,
-3. no bin with at least ``THIN_FLOOR`` TRAINABLE labels has |per-bin OOF bias|
-   > 5 % (controller ruling, 2026-08-26; the v2 brief's ``occurrences >= 1``
-   scope selected nothing, since every manifest bin satisfies it).
+1'. label-weighted OOF MAPE over the CERTIFIED bins <= ``MAPE_GATE``,
+2.  |overall OOF signed bias| <= ``BIAS_GATE`` (unchanged, pool-wide),
+3'. the certified set is non-empty and covers >= ``COVERAGE_FLOOR`` % of
+    deployment occurrences; the supported-but-biased bins it excludes are
+    named, with their occurrences.
 
-Thin bins (< 6 trainable labels) are REPORTED, not failing: their bias is
-mostly sampling noise, and Task 11 already routes their bundles to Sigma-single
-fallback. A SUPPORTED bin that is still biased does fail — the head has the
-rows there and misprices them anyway. Both lists, plus the flags Task 11 reads,
-go to ``bundle_head_bins.csv``; the gate-blocking ones are also written as data
-for 64a's Phase-B planner (``bundles_suspect_bins.json``).
+``--gate pool`` keeps the old rule (overall MAPE <= 5 %, |bias| <= 2 %, no
+supported bin above 5 % bias) for ablation. WHICHEVER mode runs, the report
+and ``gate_u.json`` carry BOTH views, so scoping the gate hides nothing: the
+pool-wide MAPE and the gate-blocking bins stay on the page.
+
+Thin bins (< 6 trainable labels) are REPORTED, never certified: their bias is
+mostly sampling noise, and their bundles fall back to Sigma-single anyway. A
+SUPPORTED bin that is still biased is excluded from the certified set — the
+head has the rows there and misprices them anyway — and it still fails the old
+pool-wide criterion 3. All three flags plus ``certified``, which Task 11 reads,
+go to ``bundle_head_bins.csv``; the biased ones are also written as data for
+64a's Phase-B planner (``bundles_suspect_bins.json``).
 
 Run (defaults are the canonical paths):
     .venv\\Scripts\\python.exe scripts/revision/65_train_bundle_head.py \\
@@ -75,8 +88,13 @@ Run (defaults are the canonical paths):
 
 Output (results/revision_2026_08/):
     bundle_head.pkl          ONLY on PASS  ({"alpha": 1.343, "model": lgb})
+    bundle_head_certified_bins.json  installed WITH the pkl — the certified
+                             bin names, the rule, the numbers and the tercile
+                             edges the names were derived from.
+                             ``BundleHead.load`` requires it.
     gate_u_report.md         always  (+ a labelled copy)
-    bundle_head_bins.csv     always  (bin -> n, MAPE, bias, thin/suspect)
+    bundle_head_bins.csv     always  (bin -> n, MAPE, bias, thin/suspect/
+                             certified)
     gate_u.json              always  (the headline numbers, machine-readable)
     bundles/bundles_suspect_bins.json   always  (64a Phase-B tier 1)
 """
@@ -108,8 +126,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from batch_delivery.features import ALL_COLS  # noqa: E402
+from batch_delivery.surrogate import bundle as bundle_mod  # noqa: E402
 from batch_delivery.surrogate.bundle import (  # noqa: E402
-    BundleHead, _daganzo_scalar,
+    BundleHead, _daganzo_scalar, _parse_bin,
 )
 
 # 64a owns the bin definition, the stable bundle ids and the coverage table.
@@ -133,11 +152,19 @@ SOLVED_DEFAULT = BUNDLES_DIR / "bundles_solved.parquet"
 ALPHA = 1.343
 
 #: Gate U thresholds (v2 brief).
-MAPE_GATE = 5.0          # % — overall OOF MAPE
+MAPE_GATE = 5.0          # % — OOF MAPE (pool-wide, or certified: see --gate)
 BIAS_GATE = 2.0          # % — |overall OOF signed bias|
 SUSPECT_BIAS = 5.0       # % — a bin above this is "suspect"
 THIN_FLOOR = cov.SPARSE_FLOOR   # 6 labelled rows — below this a bin is "thin"
 PARTIAL_BIAS_GATE = 2.0  # % — above this, PARTIAL rows stop training the head
+
+#: Criterion 3' (deployed gate): the certified support must price at least
+#: this share of the deployment's bundle OCCURRENCES. Below it the head would
+#: be installed to price almost nothing, and Task 11 would be a Sigma-single
+#: run with extra machinery.
+COVERAGE_FLOOR = 25.0    # % of manifest occurrences
+
+GATE_MODES = ("deployed", "pool")
 
 N_SPLITS = 5
 LEARNING_CURVE_FRACTIONS = (0.5, 0.75, 1.0)
@@ -173,6 +200,8 @@ BINS_CSV = "bundle_head_bins.csv"
 REPORT_MD = "gate_u_report.md"
 GATE_JSON = "gate_u.json"
 HEAD_PKL = "bundle_head.pkl"
+#: Installed NEXT TO the pickle and required by ``BundleHead.load``.
+CERT_JSON = bundle_mod.CERTIFIED_BINS_JSON
 
 _I = {c: k for k, c in enumerate(ALL_COLS)}
 
@@ -532,10 +561,93 @@ def bin_table(pool: pd.DataFrame, y: np.ndarray, pred: np.ndarray,
     tab["suspect"] = (tab["n_labelled"] >= 1) & (
         tab["oof_bias"].abs() > SUSPECT_BIAS)
     tab["gate_blocking"] = tab["suspect"] & ~tab["thin"]
+    # THE DEPLOYMENT RULE (controller, 2026-08-27): the head prices a group
+    # only in a CERTIFIED bin — supported (>= THIN_FLOOR trainable labels) and
+    # unbiased (|OOF bias| <= SUSPECT_BIAS). Everything else is Sigma-single,
+    # enforced at serve time by ``bundle.price_group``. This column is the
+    # single source of that set: Gate U's criteria 1'/3', the installed
+    # ``bundle_head_certified_bins.json`` and Task 11's fallback counters all
+    # read it.
+    tab["certified"] = ~tab["thin"] & ~tab["suspect"]
     return tab.sort_values("occurrences", ascending=False).reset_index(drop=True)
 
 
-def gate_verdict(overall: dict, bins: pd.DataFrame) -> dict:
+def _occ_split(bins: pd.DataFrame, col: str) -> list[dict]:
+    """Deployment occurrences per level of *col*, split three ways.
+
+    certified / supported-but-biased / thin — the split the report prints by
+    kind and by provider, because a headline coverage number hides which part
+    of the deployment the head is actually allowed to price.
+    """
+    out = []
+    for level, g in bins.groupby(col, dropna=False):
+        occ = float(g["occurrences"].sum())
+        cert = float(g.loc[g["certified"], "occurrences"].sum())
+        biased = float(g.loc[g["gate_blocking"], "occurrences"].sum())
+        thin = float(g.loc[g["thin"], "occurrences"].sum())
+        out.append({col: level, "bins": int(len(g)),
+                    "bins_certified": int(g["certified"].sum()),
+                    "occurrences": occ, "occ_certified": cert,
+                    "occ_biased": biased, "occ_thin": thin,
+                    "coverage_pct": (cert / occ * 100.0) if occ else float("nan")})
+    return sorted(out, key=lambda r: -r["occurrences"])
+
+
+def certified_stats(bins: pd.DataFrame, pool: pd.DataFrame, y: np.ndarray,
+                    pred: np.ndarray, trainable: np.ndarray) -> dict:
+    """The deployed population's numbers: how good the head is where it prices.
+
+    ``mape``/``bias`` are computed over the certified ROWS (label-weighted by
+    construction — the pooled mean over exactly the labels sitting in
+    certified bins), and asserted against the certified BINS' label counts so
+    the two can never describe different populations. ``occ_mape`` re-weighs
+    the same per-bin errors by deployment occurrences: the label pool is
+    stratified, the deployment is not, so a bin the grid realises 560 times
+    should not count the same as one it realises twice.
+
+    ``mean_abs_bin_bias`` is the label-weighted mean of |per-bin bias| — the
+    signed row-level bias cancels across bins and would flatter a head that is
+    +4 % here and -4 % there.
+    """
+    cert = bins[bins["certified"]]
+    names = set(cert["bin"])
+    rows = np.isin(np.asarray(pool["bin"]), list(names)) & trainable
+    m = metrics(y[rows], pred[rows]) if rows.any() else {}
+    n_bin_labels = int(cert["n_labelled"].sum())
+    assert int(rows.sum()) == n_bin_labels, (
+        f"{int(rows.sum())} certified rows but the bin table counts "
+        f"{n_bin_labels} labels in the certified bins — the certified rows "
+        "and the certified bins are one population or the gate is measuring "
+        "something else")
+    occ_total = float(bins["occurrences"].sum())
+    occ_cert = float(cert["occurrences"].sum())
+    w = cert["occurrences"].to_numpy(dtype=float)
+    nl = cert["n_labelled"].to_numpy(dtype=float)
+    nan = float("nan")
+    return {
+        "n_bins": int(len(cert)), "bins": cert["bin"].tolist(),
+        "n_labels": int(rows.sum()),
+        "mape": m.get("mape", nan), "bias": m.get("bias", nan),
+        "wbias": m.get("wbias", nan), "p90_ape": m.get("p90_ape", nan),
+        "mean_abs_bin_bias": (float(np.average(cert["oof_bias"].abs(), weights=nl))
+                              if nl.sum() else nan),
+        "occ_mape": (float(np.average(cert["oof_mape"], weights=w))
+                     if w.sum() else nan),
+        "occ_certified": occ_cert, "occ_total": occ_total,
+        "coverage_pct": (occ_cert / occ_total * 100.0) if occ_total else nan,
+        "excluded_biased": [
+            {"bin": r["bin"], "n_labelled": int(r["n_labelled"]),
+             "occurrences": int(r["occurrences"]),
+             "oof_bias": float(r["oof_bias"]), "oof_mape": float(r["oof_mape"])}
+            for _, r in bins[bins["gate_blocking"]]
+            .sort_values("occurrences", ascending=False).iterrows()],
+        "by_kind": _occ_split(bins, "kind") if "kind" in bins.columns else [],
+        "by_provider": (_occ_split(bins, "provider")
+                        if "provider" in bins.columns else []),
+    }
+
+
+def pool_verdict(overall: dict, bins: pd.DataFrame) -> dict:
     """Gate U: three criteria, each reported with its evidence.
 
     Criterion 3 ranges over bins with at least ``THIN_FLOOR`` TRAINABLE labels
@@ -567,6 +679,110 @@ def gate_verdict(overall: dict, bins: pd.DataFrame) -> dict:
     return {"pass": all(c["pass"] for c in crit), "criteria": crit,
             "n_blocking_bins": int(len(bad)),
             "blocking_bins": bad["bin"].tolist()}
+
+
+def deployed_verdict(overall: dict, cert: dict) -> dict:
+    """Gate U on the population the head is actually deployed to price.
+
+    The 2026-08-27 ruling. The head is installed with a support map and
+    ``bundle.price_group`` refuses to use it outside that map, so the question
+    the gate must answer is not "is the head good on the whole pool" (it is
+    not: 5.37 % pool-wide) but "is it good where it prices, and does that
+    cover enough of the deployment":
+
+    1'. label-weighted OOF MAPE over the CERTIFIED bins <= 5 %;
+    2.  |overall OOF signed bias| <= 2 % — unchanged, and deliberately
+        pool-wide: a head that is unbiased inside its support while drifting
+        outside it is still a head trained on a skewed target;
+    3'. the certified set is non-empty and covers at least
+        ``COVERAGE_FLOOR`` % of deployment occurrences.
+
+    The bins excluded for bias are named by the caller's report — they are the
+    loud part of this gate, not a footnote.
+    """
+    cov_ok = bool(cert["n_bins"] >= 1
+                  and cert["coverage_pct"] >= COVERAGE_FLOOR)
+    crit = [
+        {"name": f"certified-support OOF MAPE <= {MAPE_GATE:.0f} % "
+                 f"(criterion 1', {cert['n_labels']} labels in "
+                 f"{cert['n_bins']} bins)",
+         "value": cert["mape"], "shown": f"{cert['mape']:.2f} %",
+         "pass": bool(cert["mape"] <= MAPE_GATE)},
+        {"name": f"|overall OOF signed bias| <= {BIAS_GATE:.0f} %",
+         "value": overall["bias"], "shown": f"{overall['bias']:+.2f} %",
+         "pass": bool(abs(overall["bias"]) <= BIAS_GATE)},
+        {"name": f"certified set non-empty and covers >= "
+                 f"{COVERAGE_FLOOR:.0f} % of deployment occurrences "
+                 "(criterion 3')",
+         "value": cert["coverage_pct"],
+         "shown": f"{cert['n_bins']} bins, {cert['coverage_pct']:.1f} % of "
+                  f"{cert['occ_total']:.0f}",
+         "pass": cov_ok},
+    ]
+    return {"pass": all(c["pass"] for c in crit), "criteria": crit,
+            "n_certified_bins": cert["n_bins"],
+            "certified_bins": list(cert["bins"]),
+            "n_excluded_biased": len(cert["excluded_biased"])}
+
+
+def gate_verdict(overall: dict, bins: pd.DataFrame, cert: dict | None = None,
+                 *, mode: str = "deployed") -> dict:
+    """The INSTALLING verdict for *mode*, carrying both views.
+
+    Whichever gate decides the install, the report and ``gate_u.json`` show
+    the other one too: the pool-wide numbers stay visible as diagnostics
+    (nothing is hidden by scoping the gate), and the deployed numbers stay
+    visible when the old rule is run for ablation.
+    """
+    assert mode in GATE_MODES, f"unknown gate mode {mode!r}"
+    pool_v = pool_verdict(overall, bins)
+    dep_v = deployed_verdict(overall, cert) if cert is not None else None
+    if mode == "deployed":
+        assert dep_v is not None, "the deployed gate needs certified_stats"
+        sel = dep_v
+    else:
+        sel = pool_v
+    return {**sel, "mode": mode, "pool_view": pool_v, "deployed_view": dep_v,
+            # The supported-but-biased bins gate the POOL rule and are
+            # EXCLUDED from the deployed one; either way they are named.
+            "n_blocking_bins": pool_v["n_blocking_bins"],
+            "blocking_bins": pool_v["blocking_bins"]}
+
+
+def write_certified_bins(out_dir: Path, bins: pd.DataFrame, cert: dict,
+                         edges: dict | None, label: str, trained_at: str,
+                         gate_mode: str, edges_source: str) -> Path:
+    """The support map installed next to ``bundle_head.pkl``.
+
+    ``BundleHead.load`` REQUIRES this file and asserts every name in it parses
+    against the ``edges`` recorded here, so the file carries the edges rather
+    than pointing at a ``bundles_bins.json`` that 64a will recompute as the
+    grid grows. ``known_bins`` is every bin the gate scored, which is what
+    lets Task 11 tell "seen and not certified" from "never seen".
+    """
+    assert edges, ("no tercile edges — a certified bin NAME is meaningless "
+                   "without the edges it was derived from")
+    for b in cert["bins"]:
+        _parse_bin(b, edges)      # production's own validator, before install
+    p = out_dir / CERT_JSON
+    p.write_text(json.dumps({
+        "label": label, "trained_at": trained_at, "gate_mode": gate_mode,
+        "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "rule": (f"certified = n_labelled >= {THIN_FLOOR} trainable labels "
+                 f"AND |OOF bias| <= {SUSPECT_BIAS:.0f} %"),
+        "thin_floor": THIN_FLOOR, "bias_gate_pct": SUSPECT_BIAS,
+        "coverage_floor_pct": COVERAGE_FLOOR,
+        "bin_name_convention": "kind|n_members(5+)|D<dem>|A<area>|provider",
+        "edges": edges, "edges_source": edges_source,
+        "numbers": {k: cert[k] for k in (
+            "n_bins", "n_labels", "mape", "bias", "wbias",
+            "mean_abs_bin_bias", "occ_mape", "occ_certified", "occ_total",
+            "coverage_pct")},
+        "excluded_biased": cert["excluded_biased"],
+        "bins": list(cert["bins"]),
+        "known_bins": bins["bin"].tolist(),
+    }, indent=2), encoding="utf-8")
+    return p
 
 
 def partial_decision(m_partial: dict | None) -> tuple[bool, str]:
@@ -684,14 +900,36 @@ def write_report(out_dir: Path, ctx: dict) -> Path:
         ]
 
     v = ctx["verdict"]
+    cert = ctx["cert"]
+    mode = v["mode"]
     md += ["## Verdict\n",
            f"**Gate U: {'PASS' if v['pass'] else 'FAIL'}"
-           f"{' (PRELIMINARY)' if prelim else ''}**\n",
+           f"{' (PRELIMINARY)' if prelim else ''}** — installing gate: "
+           f"`--gate {mode}`"
+           + (" (the deployed population: the head is installed with a "
+              "support map and refuses to price outside it)" if mode == "deployed"
+              else " (the old pool-wide rule, ablation)") + "\n",
            "| criterion | value | verdict |", "|---|---:|---|"]
     for c in v["criteria"]:
         md.append(f"| {cov.md_cell(c['name'])} | {c.get('shown', c['value'])} "
                   f"| {'PASS' if c['pass'] else 'FAIL'} |")
     md.append("")
+
+    other = ("pool_view", "pool-wide diagnostics (the old rule — NOT the "
+             "installing gate)") if mode == "deployed" else (
+        "deployed_view", "the deployed population (certified support — NOT "
+        "the installing gate in this run)")
+    ov = v[other[0]]
+    if ov is not None:
+        md += [f"### Second view: {other[1]}\n",
+               f"Verdict under that rule: **{'PASS' if ov['pass'] else 'FAIL'}"
+               "**\n",
+               "| criterion | value | verdict |", "|---|---:|---|"]
+        for c in ov["criteria"]:
+            md.append(f"| {cov.md_cell(c['name'])} | "
+                      f"{c.get('shown', c['value'])} "
+                      f"| {'PASS' if c['pass'] else 'FAIL'} |")
+        md.append("")
 
     o = ctx["overall"]
     md += ["## Headline (grouped OOF, cost scale)\n",
@@ -709,6 +947,55 @@ def write_report(out_dir: Path, ctx: dict) -> Path:
            f"(alpha*dag alone: MAPE {ctx['backbone']['mape']:.2f} %, bias "
            f"{ctx['backbone']['bias']:+.2f} %)",
            ""]
+
+    md += ["## Certified support — the deployed population\n",
+           f"A bin is **certified** iff it carries >= {THIN_FLOOR} trainable "
+           f"labels AND |per-bin OOF bias| <= {SUSPECT_BIAS:.0f} %. "
+           "`bundle.price_group` prices a group with the head only inside "
+           "that set; every other group is priced by the Sigma-single "
+           "fallback and counted per (kind, source), so Task 11 can report "
+           "the fallback share per (P, theta, provider, kind). The head is "
+           "installed together with "
+           f"`{CERT_JSON}`, and `BundleHead.load` refuses to load one without "
+           "the other.\n",
+           f"- **certified bins: {cert['n_bins']}** of "
+           f"{int(len(ctx['bins']))} ({cert['n_labels']} labels)",
+           f"- **OOF MAPE inside the support: {cert['mape']:.2f} %** "
+           f"(label-weighted), {cert['occ_mape']:.2f} % "
+           "occurrence-weighted; signed bias "
+           f"{cert['bias']:+.2f} %, mean |per-bin bias| "
+           f"{cert['mean_abs_bin_bias']:.2f} %, p90 |APE| "
+           f"{cert['p90_ape']:.2f} %",
+           f"- **deployment coverage: {cert['coverage_pct']:.1f} %** — "
+           f"{cert['occ_certified']:.0f} of {cert['occ_total']:.0f} manifest "
+           f"occurrences (floor {COVERAGE_FLOOR:.0f} %)",
+           f"- pool-wide, for contrast: MAPE {o['mape']:.2f} % over "
+           f"{o['n']} labels in {int(len(ctx['bins']))} bins",
+           ""]
+    for title, key, col in (("by kind", "by_kind", "kind"),
+                            ("by provider", "by_provider", "provider")):
+        rows = cert.get(key) or []
+        if not rows:
+            continue
+        md += [f"### Coverage split {title} (occurrences)\n"]
+        md += _md_table(
+            pd.DataFrame(rows),
+            [col, "bins", "bins_certified", "occurrences", "occ_certified",
+             "occ_biased", "occ_thin", "coverage_pct"],
+            {"occurrences": "{:.0f}", "occ_certified": "{:.0f}",
+             "occ_biased": "{:.0f}", "occ_thin": "{:.0f}",
+             "coverage_pct": "{:.1f}"})
+        md.append("")
+    if cert["excluded_biased"]:
+        md += ["### Excluded from deployment: supported but biased\n",
+               "The head has the labels here and misprices them anyway, so "
+               "these bins are NOT certified and every group landing in them "
+               "is priced by the Sigma-single fallback. They also fail the "
+               "old pool-wide criterion 3 — see the second view above.\n"]
+        md += _md_table(pd.DataFrame(cert["excluded_biased"]),
+                        ["bin", "n_labelled", "occurrences", "oof_mape",
+                         "oof_bias"], _M_FMT)
+        md.append("")
 
     md += ["## Pool\n", "| status | rows | in training |", "|---|---:|---|"]
     for s, n in ctx["status_hist"].items():
@@ -803,8 +1090,8 @@ def write_report(out_dir: Path, ctx: dict) -> Path:
            f"**{int(b['gate_blocking'].sum())} are supported** -> Gate U "
            "criterion 3",
            "",
-           "### Why criterion 3 is scoped to supported bins\n",
-           f"Criterion 3 reads *no bin with >= {THIN_FLOOR} trainable labels "
+           "### Why the bin criteria are scoped to supported bins\n",
+           f"The pool-wide criterion 3 reads *no bin with >= {THIN_FLOOR} trainable labels "
            f"has |bias| > {SUSPECT_BIAS:.0f} %* (controller ruling, "
            "2026-08-26). `occurrences >= 1` was dropped as a filter: every "
            "manifest bin satisfies it by construction, so it selected nothing. "
@@ -883,6 +1170,13 @@ def main() -> None:
     ap.add_argument("--n-jobs", type=int, default=2,
                     help="LightGBM threads — kept low: the VROOM solver is "
                          "usually still running")
+    ap.add_argument("--gate", choices=GATE_MODES, default="deployed",
+                    help="which rule INSTALLS the head. 'deployed' (default, "
+                         "controller ruling 2026-08-27): criteria 1'/3' over "
+                         "the certified support the head is actually allowed "
+                         "to price. 'pool': the old pool-wide rule, kept for "
+                         "ablation. The report shows BOTH views whichever is "
+                         "chosen.")
     ap.add_argument("--force-install", action="store_true",
                     help="write bundle_head.pkl even on FAIL (only with "
                          "--label final; prints a loud warning)")
@@ -970,11 +1264,24 @@ def main() -> None:
     bins = bin_table(pool, y, oof,
                      pd.read_parquet(sel_p) if sel_p.exists() else None,
                      train_mask)
-    verdict = gate_verdict(overall, bins)
-    log(f"[gate] Gate U {'PASS' if verdict['pass'] else 'FAIL'}"
+    cert = certified_stats(bins, pool, y, oof, train_mask)
+    log(f"[certified] {cert['n_bins']} bin(s), {cert['n_labels']} labels, "
+        f"MAPE {cert['mape']:.2f} % (occ-weighted {cert['occ_mape']:.2f} %), "
+        f"bias {cert['bias']:+.2f} %, covering {cert['occ_certified']:.0f}/"
+        f"{cert['occ_total']:.0f} occurrences ({cert['coverage_pct']:.1f} %)")
+    for b in cert["excluded_biased"]:
+        log(f"  excluded (supported but biased): {b['bin']} "
+            f"n={b['n_labelled']} bias {b['oof_bias']:+.2f} % "
+            f"occ={b['occurrences']}")
+    verdict = gate_verdict(overall, bins, cert, mode=args.gate)
+    log(f"[gate] Gate U ({args.gate}) "
+        f"{'PASS' if verdict['pass'] else 'FAIL'}"
         + (f" - {verdict['n_blocking_bins']} supported bin(s) with "
            f"|bias| > {SUSPECT_BIAS:.0f} %"
            if verdict["n_blocking_bins"] else ""))
+    log(f"  second view ({'pool' if args.gate == 'deployed' else 'deployed'}): "
+        + ("PASS" if verdict["pool_view" if args.gate == "deployed"
+                             else "deployed_view"]["pass"] else "FAIL"))
 
     # Final model on every trainable row, then the production identity check.
     model = fit_model(X[train_mask], y_resid[train_mask], seed=args.seed,
@@ -982,12 +1289,18 @@ def main() -> None:
     payload = {"alpha": ALPHA, "model": model, "feature_cols": list(ALL_COLS),
                "label": args.label, "trained_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                "n_train": int(train_mask.sum()), "pool": str(pool_path),
-               "gate_u": {"pass": verdict["pass"], **{k: overall[k]
-                                                      for k in ("n", "mape", "bias")}}}
+               "gate_u": {"pass": verdict["pass"], "mode": args.gate,
+                          "certified_bins": cert["n_bins"],
+                          "certified_mape": cert["mape"],
+                          "certified_coverage_occ": cert["coverage_pct"],
+                          **{k: overall[k] for k in ("n", "mape", "bias")}}}
     tmp_pkl = Path(tempfile.mkdtemp(prefix="bundle_head_")) / HEAD_PKL
     with open(tmp_pkl, "wb") as fh:
         pickle.dump(payload, fh)
-    delta = check_predict_identity(BundleHead.load(tmp_pkl), X, n=5,
+    # certified=False: this round trip checks the ARITHMETIC, and the support
+    # map is written next to the pickle only at install time (below).
+    delta = check_predict_identity(BundleHead.load(tmp_pkl, certified=False),
+                                   X, n=5,
                                    seed=args.seed, alpha=ALPHA, model=model)
     log(f"[assert] predict_single identity holds on 5 rows (max |delta| "
         f"{delta:.3e}); loaded alpha and trees match the fitted ones")
@@ -1022,10 +1335,25 @@ def main() -> None:
     # decides on the finished pool. --force-install is a final-run override.
     install = final and (verdict["pass"] or args.force_install)
     if install:
+        # The pickle and its support map are ONE artefact: BundleHead.load
+        # requires the JSON next to the pkl and asserts every certified name
+        # parses against the edges recorded in it, so a head can never be
+        # served without the set Gate U certified it on. Written FIRST, so a
+        # crash between the two leaves no pickle without a map.
+        cert_p = write_certified_bins(out_dir, bins, cert, edges, args.label,
+                                      payload["trained_at"], args.gate,
+                                      str(bins_p))
         shutil.copy2(tmp_pkl, out_dir / HEAD_PKL)
         forced = not verdict["pass"]
         outputs.append(f"`{HEAD_PKL}` — installed"
                        + (" (--force-install over a FAIL)" if forced else ""))
+        outputs.append(
+            f"`{CERT_JSON}` — {cert['n_bins']} certified bin(s), "
+            f"{cert['coverage_pct']:.1f} % of deployment occurrences; "
+            "`BundleHead.load` requires it and `price_group` refuses to use "
+            "the head outside it")
+        log(f"[write] {cert_p} ({cert['n_bins']} certified bin(s))")
+        log(f"[install] {out_dir / HEAD_PKL}")
         if forced:
             bar = "!" * 78
             for line in (bar,
@@ -1037,12 +1365,14 @@ def main() -> None:
                          f"{SUSPECT_BIAS:.0f} % bias.",
                          "!! Every downstream KPI now carries this head's "
                          "known error. Task 11 must say so.",
+                         f"!! The head still refuses to price outside its "
+                         f"{cert['n_bins']} certified bin(s).",
                          bar):
                 log(line)
     else:
         why = (f'label is "{args.label}", not "final"' if not final
-               else "Gate U FAILED")
-        outputs.append(f"`{HEAD_PKL}` — NOT written ({why})")
+               else f"Gate U ({args.gate}) FAILED")
+        outputs.append(f"`{HEAD_PKL}` / `{CERT_JSON}` — NOT written ({why})")
         log(f"  bundle_head.pkl withheld: {why}")
 
     def _by(col):
@@ -1058,6 +1388,7 @@ def main() -> None:
         "partial_trains": partial_trains, "partial_note": partial_note,
         "n_train": int(train_mask.sum()), "n_groups": n_groups,
         "k_folds": k_folds, "overall": overall, "verdict": verdict,
+        "cert": cert, "gate_mode": args.gate, "installed": bool(install),
         "backbone": metrics(y[train_mask], (ALPHA * dag)[train_mask]),
         "cost_median": float(np.median(y)),
         "n_parcel_exact": int((pool["parcels_mismatch"].abs() <= 0.5).sum())
@@ -1076,6 +1407,28 @@ def main() -> None:
     rp = write_report(out_dir, ctx)
     (out_dir / GATE_JSON).write_text(json.dumps({
         "label": args.label, "final": final, "pass": verdict["pass"],
+        # THE INSTALLING RULE, and both views of it. The deployed gate scopes
+        # the verdict to the population the head is allowed to price; the
+        # pool-wide numbers below stay exactly where they were, as
+        # diagnostics, so scoping the gate hides nothing.
+        "gate_mode": args.gate,
+        "certified_bins": cert["bins"],
+        "n_certified_bins": cert["n_bins"],
+        "certified_labels": cert["n_labels"],
+        "certified_mape": cert["mape"],
+        "certified_occ_mape": cert["occ_mape"],
+        "certified_bias": cert["bias"],
+        "certified_mean_abs_bin_bias": cert["mean_abs_bin_bias"],
+        "certified_coverage_occ": cert["coverage_pct"],
+        "certified_occurrences": cert["occ_certified"],
+        "total_occurrences": cert["occ_total"],
+        "coverage_floor_pct": COVERAGE_FLOOR,
+        "excluded_biased_bins": cert["excluded_biased"],
+        "coverage_by_kind": cert["by_kind"],
+        "pool_view": {k: verdict["pool_view"][k] for k in ("pass", "criteria")},
+        "deployed_view": (None if verdict["deployed_view"] is None else
+                          {k: verdict["deployed_view"][k]
+                           for k in ("pass", "criteria")}),
         "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
         "pool": str(pool_path), "n_pool": len(pool),
         "n_train": int(train_mask.sum()), "n_scored": overall["n"],
@@ -1095,10 +1448,13 @@ def main() -> None:
     log(f"[write] {out_dir / BINS_CSV}")
     log(f"[write] {out_dir / GATE_JSON}")
     print()
-    print(f"Gate U ({args.label}): {'PASS' if verdict['pass'] else 'FAIL'}"
-          f"  n={overall['n']}  MAPE={overall['mape']:.2f}%  "
-          f"bias={overall['bias']:+.2f}%  "
-          f"blocking bins={verdict['n_blocking_bins']}")
+    print(f"Gate U ({args.label}, --gate {args.gate}): "
+          f"{'PASS' if verdict['pass'] else 'FAIL'}"
+          f"  pool: n={overall['n']} MAPE={overall['mape']:.2f}% "
+          f"bias={overall['bias']:+.2f}% blocking={verdict['n_blocking_bins']}"
+          f"  |  certified: {cert['n_bins']} bins, {cert['n_labels']} labels, "
+          f"MAPE={cert['mape']:.2f}%, coverage={cert['coverage_pct']:.1f}%"
+          f"  |  installed={bool(install)}")
 
 
 if __name__ == "__main__":

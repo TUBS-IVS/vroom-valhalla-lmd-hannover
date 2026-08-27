@@ -3,11 +3,57 @@
 The training rows for the bundle head are produced by `bundle_features`, and
 production pricing calls the same function: the featurisation-inconsistency
 failure class (Kompendium §40.2) is impossible by construction.
+
+THE PRICING-SOURCE CONTRACT (Task 10b -> Task 11)
+-------------------------------------------------
+Gate U certifies the bundle head on the DEPLOYED population, not on the whole
+label pool: a bin is CERTIFIED iff it carries at least 6 trainable labels
+(``64a.SPARSE_FLOOR``) and its out-of-fold bias is within 5 %. The head is
+allowed to price a tour ONLY inside that support; everywhere else the price is
+the Sigma over per-member single-cell prices — the same number the base
+(head-free) regime produces. ``price_group`` enforces this, so a caller cannot
+use the head outside its support by accident.
+
+Every call therefore has a SOURCE, and callers read it as data, never by
+parsing a string:
+
+``PriceSource.HEAD``
+    the group's bin is certified (or the head carries no certification at all
+    — a timing stand-in or a unit-test double), so the head priced it;
+``PriceSource.FALLBACK_UNCERTIFIED``
+    the gate SAW this bin and did not certify it (too thin, or biased);
+``PriceSource.FALLBACK_UNSUPPORTED``
+    the gate never saw this bin — no labels at all, including every
+    single-member "group", for which no bin exists by construction;
+``PriceSource.FALLBACK_NO_HEAD``
+    no head is installed: the base regime.
+
+Two ways to read it:
+
+* ``price_group(..., with_source=True)`` returns a ``GroupPrice(price, source,
+  bin)`` named tuple instead of a bare float — per call, exact, and the bin
+  name is the one the TRAINER would have assigned (same ``bundles_bins.json``
+  edges, same tercile rule, same ``kind|n_members|D?|A?|provider`` convention;
+  ``BundleHead.load`` asserts every certified name parses under those edges).
+* ``price_source_counts(matrices)`` accumulates ``{(kind, source): n}`` on the
+  matrices dict, which Task 11 aggregates per (P, theta, provider, kind) —
+  ``matrices["provider"]`` fixes the provider, the grid loop fixes P/theta.
+  It counts CALLS, not distinct groups (a memo hit still counts), so reset it
+  with ``reset_price_source_counts`` before a pass that prices each realised
+  group once.
+
+``price_group``'s default return stays a plain ``float``: every existing
+caller (``optimization/costs.py``, the samplers, the memo tests) sums prices
+and is unaffected.
 """
 from __future__ import annotations
 
+import enum
+import json
 import math
 import pickle
+from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 
@@ -43,10 +89,12 @@ _MEMO_PINS = "_group_price_memo_heads"
 _MEMO_PART = "_partition_memo"       # L3: (kind, day, cell state) -> partition
 _MEMO_HULL = "_hull_memo"            # L2: day -> {ordered members: hull km2}
 _MEMO_STATS = "_memo_stats"
+_PRICE_SRC = "_price_source_counts"  # (kind, PriceSource) -> calls
 
 #: Every key the memo layers add to a matrices dict. A caller that shallow-
 #: copies matrices and replaces an array the prices depend on must drop these.
-MEMO_KEYS = frozenset({_MEMO, _MEMO_PINS, _MEMO_PART, _MEMO_HULL, _MEMO_STATS})
+MEMO_KEYS = frozenset({_MEMO, _MEMO_PINS, _MEMO_PART, _MEMO_HULL, _MEMO_STATS,
+                       _PRICE_SRC})
 
 #: Bounded RAM. A memo may forget (clear) but must never misremember, so an
 #: overflow drops everything and refills — still an exact cache.
@@ -77,6 +125,122 @@ def _bump(matrices, field: str) -> None:
     if st is None:
         st = _memo_stats(matrices)
     st[field] += 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Task 10b — certified support: which tours the head is allowed to price
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PriceSource(enum.Enum):
+    """Why a group was priced the way it was — see the module docstring."""
+
+    HEAD = "head"
+    FALLBACK_UNCERTIFIED = "fallback_uncertified"
+    FALLBACK_UNSUPPORTED = "fallback_unsupported"
+    FALLBACK_NO_HEAD = "fallback_no_head"
+
+
+class GroupPrice(NamedTuple):
+    """``price_group(..., with_source=True)``'s return.
+
+    ``bin`` is the serve-time bin name (``None`` when none was computed: no
+    head, an unrestricted head, or the single-express shortcut).
+    """
+
+    price: float
+    source: PriceSource
+    bin: str | None
+
+
+#: The kinds ``bundle_features`` / the manifest emit.
+_KINDS = ("delivery", "express")
+
+#: Bin names carry no 1-member tour: 63_'s manifest only holds groups of >= 2
+#: members, so a lone cell can never be certified. ``_bin_name`` still NAMES
+#: one (it is what the trainer's binning would produce); ``_parse_bin`` — the
+#: validator for a certified-bins FILE — rejects it.
+_NM_BINS = ("2", "3", "4", "5+")
+
+#: The certified-bins file that must sit next to an installed ``bundle_head.pkl``.
+CERTIFIED_BINS_JSON = "bundle_head_certified_bins.json"
+
+
+def _nm_bin(n_members: int) -> str:
+    return "5+" if int(n_members) >= 5 else str(int(n_members))
+
+
+def _tercile(value: float, edges) -> int:
+    """``np.digitize``'s half-open rule, scalar — 64a's ``assign_bins``."""
+    return int(np.digitize([float(value)], np.asarray(edges, dtype=float))[0])
+
+
+def _bin_name(*, kind: str, n_members: int, parcels: float, area_km2: float,
+              provider: str, edges: dict) -> str:
+    """The trainer's bin for one tour: ``kind|n_members|D?|A?|provider``.
+
+    The serve-time twin of ``64a_bundle_coverage.assign_bins`` — same tercile
+    edges (``bundles_bins.json``), same ``np.digitize`` rule, same name
+    convention, asserted row-for-row in
+    ``tests/unit/test_bundle_certified_support.py``. ``parcels`` and
+    ``area_km2`` are the feature row's ``n_parcels`` / ``area_km2``, which is
+    exactly what the manifest stored in those columns (63_ asserts the two are
+    bit-identical at write time).
+    """
+    return (f"{kind}|{_nm_bin(n_members)}"
+            f"|D{_tercile(parcels, edges['parcels'])}"
+            f"|A{_tercile(area_km2, edges['area_km2'])}|{provider}")
+
+
+def _parse_bin(name: str, edges: dict) -> tuple:
+    """Split a bin NAME and check it is one the edges can produce.
+
+    A certified bin is a name, and a name means nothing except against the
+    edges it was derived from: the same string selects a different population
+    once the terciles move. Anything that cannot be produced by ``_bin_name``
+    under *edges* is a mismatch, and a mismatch is loud.
+    """
+    parts = str(name).split("|")
+    assert len(parts) == 5, f"certified bin {name!r}: expected 5 |-fields"
+    kind, nm, dem, area, provider = parts
+    assert kind in _KINDS, f"certified bin {name!r}: unknown kind {kind!r}"
+    assert nm in _NM_BINS, f"certified bin {name!r}: bad member bin {nm!r}"
+    assert provider, f"certified bin {name!r}: empty provider"
+    out = []
+    for tag, field, key in ((dem, "D", "parcels"), (area, "A", "area_km2")):
+        assert tag[:1] == field and tag[1:].isdigit(), (
+            f"certified bin {name!r}: {tag!r} is not the {field}<tercile> "
+            "convention")
+        idx = int(tag[1:])
+        assert 0 <= idx <= len(edges[key]), (
+            f"certified bin {name!r}: tercile {idx} is outside the "
+            f"{len(edges[key]) + 1} bands the loaded {key} edges define")
+        out.append(idx)
+    return kind, nm, out[0], out[1], provider
+
+
+def price_source_counts(matrices) -> dict:
+    """``{(kind, PriceSource): calls}`` for this matrices dict, live.
+
+    Created on first use. Counts CALLS (a memo hit counts too), so a caller
+    that wants one count per realised group resets first and prices once.
+    """
+    c = matrices.get(_PRICE_SRC)
+    if c is None:
+        c = matrices[_PRICE_SRC] = {}
+    return c
+
+
+def reset_price_source_counts(matrices) -> None:
+    """Start a fresh counting window (e.g. one grid point's final pricing)."""
+    matrices[_PRICE_SRC] = {}
+
+
+def _count_source(matrices, kind: str, source: PriceSource) -> None:
+    c = matrices.get(_PRICE_SRC)
+    if c is None:
+        c = price_source_counts(matrices)
+    key = (kind, source)
+    c[key] = c.get(key, 0) + 1
 
 
 def _members_points(members, day, matrices):
@@ -200,14 +364,86 @@ def _daganzo_scalar(n_parcels: float, n_stops: float, area_km2: float,
 
 
 class BundleHead:
-    def __init__(self, alpha: float, model):
+    """``alpha * daganzo + residual`` over the 25 ``ALL_COLS`` features.
+
+    A DEPLOYED head also carries its certified support (Task 10b):
+    ``certified_bins`` (the bins Gate U certified), ``known_bins`` (every bin
+    the gate scored, so "not certified" and "never seen" stay distinguishable)
+    and ``edges`` (the tercile boundaries those NAMES were derived from).
+    ``certified_bins is None`` means UNRESTRICTED — the head prices everything.
+    That is the timing stand-in / unit-test double regime, and reaching it from
+    a pickle takes an explicit ``load(..., certified=False)``.
+    """
+
+    def __init__(self, alpha: float, model, *, certified_bins=None,
+                 known_bins=None, edges: dict | None = None,
+                 meta: dict | None = None):
         self.alpha, self.model = alpha, model
+        self.certified_bins = (None if certified_bins is None
+                               else frozenset(certified_bins))
+        self.known_bins = None if known_bins is None else frozenset(known_bins)
+        self.edges = edges
+        self.meta = meta or {}
+        if self.certified_bins is not None:
+            assert edges, ("a certified head needs the tercile edges its bin "
+                           "names were derived from")
+
+    @property
+    def restricted(self) -> bool:
+        """Does this head refuse groups outside its certified support?"""
+        return self.certified_bins is not None
 
     @classmethod
-    def load(cls, path):
+    def load(cls, path, certified=None):
+        """Load a head plus, by default, the certified-bins file beside it.
+
+        ``certified`` is a path, or ``False`` to load an UNRESTRICTED head
+        (only for timing stand-ins and tests). The default resolves
+        ``bundle_head_certified_bins.json`` next to the pickle and REQUIRES
+        it: an installed head without its support map would price every
+        composition, including the ones Gate U refused to certify.
+        """
+        path = Path(path)
         with open(path, "rb") as fh:
             d = pickle.load(fh)
-        return cls(d["alpha"], d["model"])
+        if certified is False:
+            return cls(d["alpha"], d["model"])
+        cp = Path(certified) if certified else path.parent / CERTIFIED_BINS_JSON
+        assert cp.exists(), (
+            f"no certified-bins file at {cp} — an installed bundle head must "
+            "carry the support Gate U certified it on (Task 10b). Pass "
+            "certified=False only for a timing stand-in.")
+        doc = json.loads(cp.read_text(encoding="utf-8"))
+        edges = doc["edges"]
+        bins = [str(b) for b in doc["bins"]]
+        for b in bins:
+            _parse_bin(b, edges)              # fail loud on any name/edge drift
+        known = doc.get("known_bins")
+        for key in ("label", "trained_at"):   # a stale map next to a new pickle
+            if key in doc and key in d:
+                assert str(doc[key]) == str(d[key]), (
+                    f"{cp.name} was written for {key}={doc[key]!r} but "
+                    f"{path.name} carries {key}={d[key]!r} — the support map "
+                    "does not belong to this head")
+        return cls(d["alpha"], d["model"], certified_bins=bins,
+                   known_bins=None if known is None else [str(b) for b in known],
+                   edges=edges,
+                   meta={k: v for k, v in doc.items()
+                         if k not in ("bins", "known_bins")})
+
+    def classify_bin(self, bin_name: str | None) -> PriceSource:
+        """Head or fallback, and — when fallback — which kind of fallback."""
+        if self.certified_bins is None:
+            return PriceSource.HEAD
+        if bin_name is not None and bin_name in self.certified_bins:
+            return PriceSource.HEAD
+        if self.known_bins is None:
+            # No universe recorded: we know it is not certified, and cannot
+            # tell whether the gate ever saw it. The conservative label.
+            return PriceSource.FALLBACK_UNCERTIFIED
+        return (PriceSource.FALLBACK_UNCERTIFIED
+                if bin_name in self.known_bins
+                else PriceSource.FALLBACK_UNSUPPORTED)
 
     def predict_single(self, x25: np.ndarray) -> float:
         dag = _daganzo_scalar(
@@ -232,8 +468,26 @@ def _demand_sig(by_cell, members) -> bytes | None:
     return np.asarray([by_cell[z] for z in members], dtype=np.float64).tobytes()
 
 
+def _sigma_single(members, day, matrices, kind, parcels_by_cell, stops_by_cell,
+                  freq) -> float:
+    """The fallback price: Sigma over the members' single-cell prices.
+
+    Exactly what the base (head-free) regime pays for the same cells, so a
+    refusal costs the optimiser nothing it did not already have.
+    """
+    if kind == "express" and parcels_by_cell is None:
+        return float(sum(matrices["express_cost"][z, day] for z in members))
+    return float(sum(
+        matrices["ml_predictor"].predict_single(
+            bundle_features((z,), day, matrices, kind=kind,
+                            parcels_by_cell=parcels_by_cell,
+                            stops_by_cell=stops_by_cell, freq=freq))
+        for z in members))
+
+
 def price_group(members, day, matrices, *, kind, parcels_by_cell=None,
-                stops_by_cell=None, freq=1.0, head=None) -> float:
+                stops_by_cell=None, freq=1.0, head=None,
+                with_source=False) -> float | GroupPrice:
     """Price one tour. The ONE choke point — memoised for the head regime (L1).
 
     Deterministic in ``(members, day, kind, demand signature, freq, head)``
@@ -257,11 +511,26 @@ def price_group(members, day, matrices, *, kind, parcels_by_cell=None,
     see ``optimization/costs.py::MEMO_KEYS``. The copies made in this repo
     (``dict(m)`` + a new ``dd_cost_mx``, ``dict(m)`` + ``bundle_head``) touch
     nothing the price reads, and ``bundle_head`` is in the key.
+
+    **Certified support (Task 10b).** A restricted head (one loaded with its
+    ``bundle_head_certified_bins.json``) is consulted only for a group whose
+    serve-time bin Gate U certified; anything else is priced by
+    ``_sigma_single`` and counted. ``with_source=True`` returns a
+    ``GroupPrice(price, source, bin)`` instead of the bare float — see the
+    module docstring for the contract. The classification costs one
+    ``bundle_features`` call on the fallback path too (the bin is read off the
+    feature row), which the memo then amortises.
     """
     members = tuple(sorted(int(z) for z in members))
     if len(members) == 1 and kind == "express" and parcels_by_cell is None:
         # Already an O(1) array lookup; a memo here would only add a hash.
-        return float(matrices["express_cost"][members[0], day])
+        # A lone cell is not a bundle: no bin has one member, so a head — if
+        # one is installed at all — is never certified for it.
+        val = float(matrices["express_cost"][members[0], day])
+        src = (PriceSource.FALLBACK_NO_HEAD if head is None
+               else PriceSource.FALLBACK_UNSUPPORTED)
+        _count_source(matrices, kind, src)
+        return GroupPrice(val, src, None) if with_source else val
 
     memo = matrices.get(_MEMO)
     if memo is None:
@@ -279,26 +548,34 @@ def price_group(members, day, matrices, *, kind, parcels_by_cell=None,
     hit = memo.get(key)
     if hit is not None:
         _bump(matrices, "price_hit")
-        return hit
+        _count_source(matrices, kind, hit[1])
+        return GroupPrice(*hit) if with_source else hit[0]
 
+    bin_name = None
     if head is None:
-        if kind == "express" and parcels_by_cell is None:
-            val = float(sum(matrices["express_cost"][z, day] for z in members))
-        else:
-            val = float(sum(
-                matrices["ml_predictor"].predict_single(
-                    bundle_features((z,), day, matrices, kind=kind,
-                                    parcels_by_cell=parcels_by_cell,
-                                    stops_by_cell=stops_by_cell, freq=freq))
-                for z in members))
+        src = PriceSource.FALLBACK_NO_HEAD
+        val = _sigma_single(members, day, matrices, kind, parcels_by_cell,
+                            stops_by_cell, freq)
     else:
-        val = head.predict_single(bundle_features(
-            members, day, matrices, kind=kind, parcels_by_cell=parcels_by_cell,
-            stops_by_cell=stops_by_cell, freq=freq))
+        x = bundle_features(members, day, matrices, kind=kind,
+                            parcels_by_cell=parcels_by_cell,
+                            stops_by_cell=stops_by_cell, freq=freq)
+        if getattr(head, "certified_bins", None) is None:
+            src = PriceSource.HEAD          # unrestricted: no bin to compute
+        else:
+            bin_name = _bin_name(
+                kind=kind, n_members=len(members),
+                parcels=x[_I["n_parcels"]], area_km2=x[_I["area_km2"]],
+                provider=matrices["provider"], edges=head.edges)
+            src = head.classify_bin(bin_name)
+        val = (head.predict_single(x) if src is PriceSource.HEAD
+               else _sigma_single(members, day, matrices, kind,
+                                  parcels_by_cell, stops_by_cell, freq))
     _bump(matrices, "price_miss")
+    _count_source(matrices, kind, src)
     if len(memo) >= _MEMO_CAP:
         # Bounded RAM, still exact: a memo may forget, never misremember.
         memo.clear()
         _bump(matrices, "price_clear")
-    memo[key] = val
-    return val
+    entry = memo[key] = (val, src, bin_name)
+    return GroupPrice(*entry) if with_source else val
