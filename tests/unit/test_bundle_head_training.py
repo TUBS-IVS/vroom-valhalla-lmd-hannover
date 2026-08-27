@@ -474,9 +474,11 @@ def test_deployed_gate_fails_on_a_thin_or_biased_support(T):
                  coverage_pct=0.0)
     assert T.gate_verdict(ok, tab, empty, mode="deployed")["pass"] is False
 
-    # criterion 1': the head must be good INSIDE its support.
+    # criterion 1': the head must be good INSIDE its support, inclusive at 5.
     bad = dict(cert, mape=5.01)
     assert T.gate_verdict(ok, tab, bad, mode="deployed")["pass"] is False
+    assert T.gate_verdict(ok, tab, dict(cert, mape=T.MAPE_GATE),
+                          mode="deployed")["pass"] is True
 
 
 def test_certified_bins_file_is_what_production_loads(T, tmp_path):
@@ -490,6 +492,7 @@ def test_certified_bins_file_is_what_production_loads(T, tmp_path):
     tab["bin"] = ["delivery|2|D1|A1|GLS", "express|3|D2|A0|DPD",
                   "delivery|5+|D0|A2|UPS", "express|4|D1|A1|Hermes"][:len(tab)]
     tab["certified"] = [True, False, False, False]
+    tab["gate_blocking"] = [False, True, False, False]      # supported, biased
     cert = {"n_bins": 1, "bins": [tab["bin"].iloc[0]], "n_labels": 6,
             "mape": 2.0, "bias": 0.5, "wbias": 0.4,
             "mean_abs_bin_bias": 0.5,
@@ -511,10 +514,77 @@ def test_certified_bins_file_is_what_production_loads(T, tmp_path):
     assert head.known_bins == set(tab["bin"])
     assert head.edges == edges
     assert head.classify_bin("delivery|2|D1|A1|GLS") is PriceSource.HEAD
+    # The installed map carries the supported-but-biased list, so the serve
+    # -time sources speak Gate U's own three-way split.
+    assert head.biased_bins == {"express|3|D2|A0|DPD"}
     assert head.classify_bin("express|3|D2|A0|DPD") \
         is PriceSource.FALLBACK_UNCERTIFIED
-    assert head.classify_bin("express|2|D0|A0|GLS") \
-        is PriceSource.FALLBACK_UNSUPPORTED
+    assert head.classify_bin("delivery|5+|D0|A2|UPS") is PriceSource.FALLBACK_THIN
+    assert head.classify_bin("express|2|D0|A0|GLS") is PriceSource.FALLBACK_THIN
     doc = json.loads(p.read_text(encoding="utf-8"))
     assert doc["numbers"]["coverage_pct"] == 40.0
     assert str(T.THIN_FLOOR) in doc["rule"] and "bias" in doc["rule"]
+
+
+def test_bin_flag_boundaries_are_inclusive_and_fail_closed(T):
+    """THIN_FLOOR and SUSPECT_BIAS are both inclusive, and an undefined bias
+    is never certified.
+
+    The shipped table has 4 bins at exactly 6 labels (all certified) and 11 at
+    5 (none), and its tightest bias case is +5.44 % — pinned here so the
+    boundary cannot drift with a refactor. A NaN bias means every row of the
+    bin was dropped by the metric guard: unknowable, therefore not certified.
+    """
+    tab = pd.DataFrame({
+        "bin": ["at_floor", "below_floor", "at_bias", "over_bias",
+                "nan_bias", "no_labels"],
+        "n_labelled": [T.THIN_FLOOR, T.THIN_FLOOR - 1, T.THIN_FLOOR,
+                       T.THIN_FLOOR, T.THIN_FLOOR, 0],
+        "oof_bias": [1.0, 1.0, -T.SUSPECT_BIAS, T.SUSPECT_BIAS + 1e-9,
+                     float("nan"), float("nan")],
+    })
+    out = T.apply_bin_flags(tab).set_index("bin")
+
+    assert bool(out.loc["at_floor", "certified"])         # >= 6 is inclusive
+    assert bool(out.loc["below_floor", "thin"])
+    assert not bool(out.loc["below_floor", "certified"])
+    assert bool(out.loc["at_bias", "certified"])          # <= 5 % is inclusive
+    assert not bool(out.loc["over_bias", "certified"])
+    assert bool(out.loc["over_bias", "gate_blocking"])
+
+    # Fail CLOSED: a supported bin with no computable bias is suspect, so it
+    # is neither certified nor silently deployed.
+    assert not bool(out.loc["nan_bias", "certified"])
+    assert bool(out.loc["nan_bias", "suspect"])
+    # ... but an empty bin is thin, not suspect — there is nothing to blame.
+    assert bool(out.loc["no_labels", "thin"])
+    assert not bool(out.loc["no_labels", "suspect"])
+    assert not bool(out.loc["no_labels", "certified"])
+
+
+def test_an_empty_certified_set_is_never_installed(T, tmp_path):
+    """A head that refuses every group is a no-op with the full head-regime
+    cost — and criterion 3' only blocks it in deployed mode."""
+    edges = {"parcels": [274.0, 450.0], "area_km2": [67.0, 123.4]}
+    _, _, _, _, tab = _cert_fixture(T)
+    tab["bin"] = ["delivery|2|D1|A1|GLS", "express|3|D2|A0|DPD",
+                  "delivery|5+|D0|A2|UPS", "express|4|D1|A1|Hermes"][:len(tab)]
+    empty = {"n_bins": 0, "bins": [], "n_labels": 0, "mape": float("nan"),
+             "bias": float("nan"), "wbias": float("nan"),
+             "mean_abs_bin_bias": float("nan"), "occ_mape": float("nan"),
+             "occ_certified": 0.0, "occ_total": 1000.0, "coverage_pct": 0.0,
+             "excluded_biased": [], "by_kind": [], "by_provider": []}
+    with pytest.raises(AssertionError, match="certified"):
+        T.write_certified_bins(tmp_path, tab, empty, edges, "final",
+                               "2026-08-27 12:00:00", "pool",
+                               "bundles_bins.json")
+
+
+def test_certified_stats_pins_the_mape_denominator(T):
+    """The label count the gate line advertises must be the count the MAPE
+    was computed on — not merely the bin table's."""
+    pool, y, pred, trainable, tab = _cert_fixture(T)
+    y2 = y.copy()
+    y2[0] = 0.0                      # dropped by metrics' y > 0 guard
+    with pytest.raises(AssertionError, match="MAPE"):
+        T.certified_stats(tab, pool, y2, pred, trainable)

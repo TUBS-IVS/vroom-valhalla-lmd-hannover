@@ -21,12 +21,21 @@ parsing a string:
     the group's bin is certified (or the head carries no certification at all
     — a timing stand-in or a unit-test double), so the head priced it;
 ``PriceSource.FALLBACK_UNCERTIFIED``
-    the gate SAW this bin and did not certify it (too thin, or biased);
-``PriceSource.FALLBACK_UNSUPPORTED``
-    the gate never saw this bin — no labels at all, including every
-    single-member "group", for which no bin exists by construction;
+    the bin is SUPPORTED (>= 6 labels) and the gate refused to certify it
+    because it is biased — the head has the rows and misprices them anyway;
+``PriceSource.FALLBACK_THIN``
+    the bin is below the support floor: the gate scored fewer than 6 labels
+    there, or never scored it at all (0 labels), which is where every
+    single-member "group" lands — no bin has one member by construction;
 ``PriceSource.FALLBACK_NO_HEAD``
     no head is installed: the base regime.
+
+The three fallback-relevant states are exactly Gate U's own three-way split
+(certified / supported-but-biased / thin), so a Task 11 table built from these
+names lines up with the coverage split in ``gate_u_report.md`` term by term.
+Classification is CHEAP: the bin needs only ``n_parcels`` and ``area_km2``,
+both plain sums (``_bin_scalars``), so a refused group never pays for the full
+``bundle_features`` row it would have thrown away.
 
 Two ways to read it:
 
@@ -135,8 +144,8 @@ class PriceSource(enum.Enum):
     """Why a group was priced the way it was — see the module docstring."""
 
     HEAD = "head"
-    FALLBACK_UNCERTIFIED = "fallback_uncertified"
-    FALLBACK_UNSUPPORTED = "fallback_unsupported"
+    FALLBACK_UNCERTIFIED = "fallback_uncertified"   # supported, but biased
+    FALLBACK_THIN = "fallback_thin"                 # below the support floor
     FALLBACK_NO_HEAD = "fallback_no_head"
 
 
@@ -191,6 +200,56 @@ def _bin_name(*, kind: str, n_members: int, parcels: float, area_km2: float,
             f"|A{_tercile(area_km2, edges['area_km2'])}|{provider}")
 
 
+def _bin_scalars(members, day, matrices, *, parcels_by_cell=None
+                 ) -> tuple[float, float]:
+    """``(n_parcels, area_km2)`` for a group — the only two numbers a bin needs.
+
+    Bit-identical to the corresponding entries of ``bundle_features``'s row
+    (pinned by a test), and ~500x cheaper than building one: no convex hull,
+    no tier-2 geometry, no per-stop statistics. That gap is the whole point —
+    under a restricted head the majority of groups are refused, and a refused
+    group must not pay for a feature row nobody reads.
+    """
+    if parcels_by_cell is None:
+        parcels_by_cell = matrices["raw_express"][:, day]
+    npx = float(sum(np.trunc(parcels_by_cell[z]) for z in members))
+    area = max(0.01, float(sum(matrices["area_arr"][z] for z in members)))
+    return float(np.trunc(npx)), area
+
+
+#: 64a's tercile-edges file — the manifest's current binning.
+BUNDLES_BINS_JSON = "bundles_bins.json"
+
+
+def load_bin_edges(path) -> dict:
+    """The ``edges`` block of a ``bundles_bins.json``."""
+    path = Path(path)
+    assert path.exists(), f"no bin-edges file at {path}"
+    edges = json.loads(path.read_text(encoding="utf-8")).get("edges")
+    assert edges, f"{path} carries no 'edges' block"
+    return edges
+
+
+def assert_no_edge_drift(pinned: dict, current: dict, *, source: str) -> None:
+    """The head's pinned terciles must still be the manifest's terciles.
+
+    A head keeps the edges its certified bin NAMES were derived from, so it
+    never misprices after 64a recomputes them — serve time and the names stay
+    mutually consistent. What DOES break is the claim attached to them: the
+    certified coverage ("44.0 % of 8 828 occurrences") was measured against
+    the old binning and no longer describes the current manifest. Loud, not
+    recorded: re-run 65_ against the new selection.
+    """
+    for key in ("parcels", "area_km2"):
+        a = [round(float(x), 6) for x in pinned.get(key, [])]
+        b = [round(float(x), 6) for x in current.get(key, [])]
+        assert a == b, (
+            f"bin-edge drift on {key!r}: this head was certified against "
+            f"{a}, but {source} now defines {b}. The certified bin names and "
+            "the coverage they were measured on no longer describe the "
+            "current manifest — re-run 65_train_bundle_head.py.")
+
+
 def _parse_bin(name: str, edges: dict) -> tuple:
     """Split a bin NAME and check it is one the edges can produce.
 
@@ -231,8 +290,12 @@ def price_source_counts(matrices) -> dict:
 
 
 def reset_price_source_counts(matrices) -> None:
-    """Start a fresh counting window (e.g. one grid point's final pricing)."""
-    matrices[_PRICE_SRC] = {}
+    """Start a fresh counting window (e.g. one grid point's final pricing).
+
+    Clears in place, so a caller holding the dict from an earlier
+    ``price_source_counts`` keeps reading the live counts.
+    """
+    price_source_counts(matrices).clear()
 
 
 def _count_source(matrices, kind: str, source: PriceSource) -> None:
@@ -367,21 +430,25 @@ class BundleHead:
     """``alpha * daganzo + residual`` over the 25 ``ALL_COLS`` features.
 
     A DEPLOYED head also carries its certified support (Task 10b):
-    ``certified_bins`` (the bins Gate U certified), ``known_bins`` (every bin
-    the gate scored, so "not certified" and "never seen" stay distinguishable)
-    and ``edges`` (the tercile boundaries those NAMES were derived from).
+    ``certified_bins`` (the bins Gate U certified), ``biased_bins`` (supported
+    but refused for bias) and ``known_bins`` (every bin the gate scored), plus
+    ``edges`` (the tercile boundaries those NAMES were derived from). The
+    first two are what make the serve-time source names line up with Gate U's
+    own certified / supported-but-biased / thin split.
     ``certified_bins is None`` means UNRESTRICTED — the head prices everything.
     That is the timing stand-in / unit-test double regime, and reaching it from
     a pickle takes an explicit ``load(..., certified=False)``.
     """
 
     def __init__(self, alpha: float, model, *, certified_bins=None,
-                 known_bins=None, edges: dict | None = None,
+                 known_bins=None, biased_bins=None, edges: dict | None = None,
                  meta: dict | None = None):
         self.alpha, self.model = alpha, model
         self.certified_bins = (None if certified_bins is None
                                else frozenset(certified_bins))
         self.known_bins = None if known_bins is None else frozenset(known_bins)
+        self.biased_bins = (None if biased_bins is None
+                            else frozenset(biased_bins))
         self.edges = edges
         self.meta = meta or {}
         if self.certified_bins is not None:
@@ -394,7 +461,7 @@ class BundleHead:
         return self.certified_bins is not None
 
     @classmethod
-    def load(cls, path, certified=None):
+    def load(cls, path, certified=None, edges_json=None):
         """Load a head plus, by default, the certified-bins file beside it.
 
         ``certified`` is a path, or ``False`` to load an UNRESTRICTED head
@@ -402,6 +469,13 @@ class BundleHead:
         ``bundle_head_certified_bins.json`` next to the pickle and REQUIRES
         it: an installed head without its support map would price every
         composition, including the ones Gate U refused to certify.
+
+        ``edges_json`` says which ``bundles_bins.json`` the head's pinned
+        terciles are checked against: a path (asserted to exist — a named file
+        that is missing is a typo, not "no check"), ``False`` to skip the
+        check explicitly, or ``None`` to auto-resolve
+        ``<pkl dir>/bundles/bundles_bins.json`` and check only if it is there.
+        A runner that knows which selection it is running on should pass it.
         """
         path = Path(path)
         with open(path, "rb") as fh:
@@ -417,7 +491,12 @@ class BundleHead:
         edges = doc["edges"]
         bins = [str(b) for b in doc["bins"]]
         for b in bins:
-            _parse_bin(b, edges)              # fail loud on any name/edge drift
+            _parse_bin(b, edges)              # every name valid under the edges
+        if edges_json is not False:           # ... and the edges still current
+            ep = (Path(edges_json) if edges_json
+                  else path.parent / "bundles" / BUNDLES_BINS_JSON)
+            if edges_json or ep.exists():
+                assert_no_edge_drift(edges, load_bin_edges(ep), source=str(ep))
         known = doc.get("known_bins")
         for key in ("label", "trained_at"):   # a stale map next to a new pickle
             if key in doc and key in d:
@@ -425,25 +504,36 @@ class BundleHead:
                     f"{cp.name} was written for {key}={doc[key]!r} but "
                     f"{path.name} carries {key}={d[key]!r} — the support map "
                     "does not belong to this head")
+        biased = doc.get("biased_bins")
         return cls(d["alpha"], d["model"], certified_bins=bins,
                    known_bins=None if known is None else [str(b) for b in known],
+                   biased_bins=(None if biased is None
+                                else [str(b) for b in biased]),
                    edges=edges,
                    meta={k: v for k, v in doc.items()
-                         if k not in ("bins", "known_bins")})
+                         if k not in ("bins", "known_bins", "biased_bins")})
 
     def classify_bin(self, bin_name: str | None) -> PriceSource:
-        """Head or fallback, and — when fallback — which kind of fallback."""
+        """Head or fallback, and — when fallback — Gate U's reason.
+
+        ``FALLBACK_UNCERTIFIED`` is reserved for the SUPPORTED-but-biased bins
+        the gate names; everything else below the floor is ``FALLBACK_THIN``,
+        including a bin the gate never scored (0 labels). An older support map
+        without ``biased_bins`` cannot tell the two apart, so a known bin
+        reads as ``FALLBACK_UNCERTIFIED`` there rather than claiming a floor
+        it cannot see.
+        """
         if self.certified_bins is None:
             return PriceSource.HEAD
         if bin_name is not None and bin_name in self.certified_bins:
             return PriceSource.HEAD
-        if self.known_bins is None:
-            # No universe recorded: we know it is not certified, and cannot
-            # tell whether the gate ever saw it. The conservative label.
+        if self.biased_bins is not None:
+            return (PriceSource.FALLBACK_UNCERTIFIED
+                    if bin_name in self.biased_bins
+                    else PriceSource.FALLBACK_THIN)
+        if self.known_bins is None or bin_name in self.known_bins:
             return PriceSource.FALLBACK_UNCERTIFIED
-        return (PriceSource.FALLBACK_UNCERTIFIED
-                if bin_name in self.known_bins
-                else PriceSource.FALLBACK_UNSUPPORTED)
+        return PriceSource.FALLBACK_THIN
 
     def predict_single(self, x25: np.ndarray) -> float:
         dag = _daganzo_scalar(
@@ -466,6 +556,17 @@ def _demand_sig(by_cell, members) -> bytes | None:
     if by_cell is None:
         return None
     return np.asarray([by_cell[z] for z in members], dtype=np.float64).tobytes()
+
+
+def _classify(head, bin_name):
+    """``head.classify_bin`` when the head has one; unrestricted otherwise.
+
+    Test doubles and 61_'s timing stand-in are duck-typed heads with nothing
+    but ``predict_single``, and they price everything — the restricted regime
+    is exactly the heads that carry a support map.
+    """
+    fn = getattr(head, "classify_bin", None)
+    return fn(bin_name) if fn is not None else PriceSource.HEAD
 
 
 def _sigma_single(members, day, matrices, kind, parcels_by_cell, stops_by_cell,
@@ -517,9 +618,9 @@ def price_group(members, day, matrices, *, kind, parcels_by_cell=None,
     serve-time bin Gate U certified; anything else is priced by
     ``_sigma_single`` and counted. ``with_source=True`` returns a
     ``GroupPrice(price, source, bin)`` instead of the bare float — see the
-    module docstring for the contract. The classification costs one
-    ``bundle_features`` call on the fallback path too (the bin is read off the
-    feature row), which the memo then amortises.
+    module docstring for the contract. The bin is read off ``_bin_scalars``,
+    two sums, and the full ``bundle_features`` row is built ONLY on the head
+    branch: a refused group pays for nothing it does not use.
     """
     members = tuple(sorted(int(z) for z in members))
     if len(members) == 1 and kind == "express" and parcels_by_cell is None:
@@ -527,8 +628,11 @@ def price_group(members, day, matrices, *, kind, parcels_by_cell=None,
         # A lone cell is not a bundle: no bin has one member, so a head — if
         # one is installed at all — is never certified for it.
         val = float(matrices["express_cost"][members[0], day])
+        # No bin has one member, so a RESTRICTED head is never certified here
+        # (classify_bin(None) -> FALLBACK_THIN); an unrestricted head prices
+        # everything by definition and must not be reported as falling back.
         src = (PriceSource.FALLBACK_NO_HEAD if head is None
-               else PriceSource.FALLBACK_UNSUPPORTED)
+               else _classify(head, None))
         _count_source(matrices, kind, src)
         return GroupPrice(val, src, None) if with_source else val
 
@@ -557,18 +661,24 @@ def price_group(members, day, matrices, *, kind, parcels_by_cell=None,
         val = _sigma_single(members, day, matrices, kind, parcels_by_cell,
                             stops_by_cell, freq)
     else:
-        x = bundle_features(members, day, matrices, kind=kind,
-                            parcels_by_cell=parcels_by_cell,
-                            stops_by_cell=stops_by_cell, freq=freq)
         if getattr(head, "certified_bins", None) is None:
             src = PriceSource.HEAD          # unrestricted: no bin to compute
         else:
+            # DECIDE FIRST, FEATURISE SECOND. The bin needs two sums; a full
+            # feature row costs ~500x that and is useless unless the head is
+            # allowed to price this group.
+            npx, area = _bin_scalars(members, day, matrices,
+                                     parcels_by_cell=parcels_by_cell)
             bin_name = _bin_name(
-                kind=kind, n_members=len(members),
-                parcels=x[_I["n_parcels"]], area_km2=x[_I["area_km2"]],
-                provider=matrices["provider"], edges=head.edges)
+                kind=kind, n_members=len(members), parcels=npx,
+                area_km2=area, provider=matrices["provider"],
+                edges=head.edges)
             src = head.classify_bin(bin_name)
-        val = (head.predict_single(x) if src is PriceSource.HEAD
+        val = (head.predict_single(bundle_features(
+                   members, day, matrices, kind=kind,
+                   parcels_by_cell=parcels_by_cell,
+                   stops_by_cell=stops_by_cell, freq=freq))
+               if src is PriceSource.HEAD
                else _sigma_single(members, day, matrices, kind,
                                   parcels_by_cell, stops_by_cell, freq))
     _bump(matrices, "price_miss")

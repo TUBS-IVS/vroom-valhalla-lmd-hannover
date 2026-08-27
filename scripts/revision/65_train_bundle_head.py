@@ -557,19 +557,34 @@ def bin_table(pool: pd.DataFrame, y: np.ndarray, pred: np.ndarray,
         tab["provider"] = tab["provider"].fillna(tab["_prov"])
         tab = tab.drop(columns=["_kind", "_prov"])
 
+    tab = apply_bin_flags(tab)
+    return tab.sort_values("occurrences", ascending=False).reset_index(drop=True)
+
+
+def apply_bin_flags(tab: pd.DataFrame) -> pd.DataFrame:
+    """thin / suspect / gate_blocking / certified from n_labelled and bias.
+
+    THE DEPLOYMENT RULE (controller, 2026-08-27): the head prices a group only
+    in a CERTIFIED bin — supported (>= ``THIN_FLOOR`` trainable labels) AND
+    unbiased (|OOF bias| <= ``SUSPECT_BIAS``, both bounds inclusive).
+    Everything else is Sigma-single, enforced at serve time by
+    ``bundle.price_group``. ``certified`` is the single source of that set:
+    Gate U's criteria 1'/3', the installed ``bundle_head_certified_bins.json``
+    and Task 11's fallback counters all read it.
+
+    Fails CLOSED on an unknowable bias: a bin with labels whose OOF bias is
+    NaN (every row dropped by ``metrics``'s ``y > 0 & isfinite`` guard) is
+    SUSPECT, not certified. ``NaN > SUSPECT_BIAS`` is ``False``, so without
+    this the bin would deploy on evidence nobody has. A bin with no labels at
+    all is thin and NOT suspect — there is nothing there to blame.
+    """
+    tab = tab.copy()
     tab["thin"] = tab["n_labelled"] < THIN_FLOOR
     tab["suspect"] = (tab["n_labelled"] >= 1) & (
-        tab["oof_bias"].abs() > SUSPECT_BIAS)
+        (tab["oof_bias"].abs() > SUSPECT_BIAS) | tab["oof_bias"].isna())
     tab["gate_blocking"] = tab["suspect"] & ~tab["thin"]
-    # THE DEPLOYMENT RULE (controller, 2026-08-27): the head prices a group
-    # only in a CERTIFIED bin — supported (>= THIN_FLOOR trainable labels) and
-    # unbiased (|OOF bias| <= SUSPECT_BIAS). Everything else is Sigma-single,
-    # enforced at serve time by ``bundle.price_group``. This column is the
-    # single source of that set: Gate U's criteria 1'/3', the installed
-    # ``bundle_head_certified_bins.json`` and Task 11's fallback counters all
-    # read it.
     tab["certified"] = ~tab["thin"] & ~tab["suspect"]
-    return tab.sort_values("occurrences", ascending=False).reset_index(drop=True)
+    return tab
 
 
 def _occ_split(bins: pd.DataFrame, col: str) -> list[dict]:
@@ -614,6 +629,13 @@ def certified_stats(bins: pd.DataFrame, pool: pd.DataFrame, y: np.ndarray,
     rows = np.isin(np.asarray(pool["bin"]), list(names)) & trainable
     m = metrics(y[rows], pred[rows]) if rows.any() else {}
     n_bin_labels = int(cert["n_labelled"].sum())
+    # The number the gate LINE advertises must be the number the MAPE was
+    # computed on: if a certified row were ever dropped by the metric guard,
+    # "177 labels, 2.85 %" would be two different populations in one sentence.
+    assert int(m.get("n", 0)) == int(rows.sum()), (
+        f"{int(rows.sum())} certified rows but the certified MAPE was "
+        f"computed on {int(m.get('n', 0))} of them "
+        f"({int(m.get('n_dropped', 0))} dropped by the metric guard)")
     assert int(rows.sum()) == n_bin_labels, (
         f"{int(rows.sum())} certified rows but the bin table counts "
         f"{n_bin_labels} labels in the certified bins — the certified rows "
@@ -762,6 +784,14 @@ def write_certified_bins(out_dir: Path, bins: pd.DataFrame, cert: dict,
     """
     assert edges, ("no tercile edges — a certified bin NAME is meaningless "
                    "without the edges it was derived from")
+    # An empty support map installs a head that refuses every group: the full
+    # head-regime cost for Sigma-single prices. Criterion 3' blocks it in
+    # deployed mode; this blocks it in --gate pool and under --force-install
+    # too, where nothing else would.
+    assert cert["bins"], (
+        "no certified bins — installing this head would price nothing with "
+        "it (every group would fall back to Sigma-single). Fix the support, "
+        "or do not install.")
     for b in cert["bins"]:
         _parse_bin(b, edges)      # production's own validator, before install
     p = out_dir / CERT_JSON
@@ -780,6 +810,9 @@ def write_certified_bins(out_dir: Path, bins: pd.DataFrame, cert: dict,
             "coverage_pct")},
         "excluded_biased": cert["excluded_biased"],
         "bins": list(cert["bins"]),
+        # The three-way split the serve-time PriceSource names mirror:
+        # certified / supported-but-biased / everything below the floor.
+        "biased_bins": bins.loc[bins["gate_blocking"], "bin"].tolist(),
         "known_bins": bins["bin"].tolist(),
     }, indent=2), encoding="utf-8")
     return p

@@ -25,9 +25,10 @@ import pandas as pd
 import pytest
 
 from batch_delivery.features import ALL_COLS
+from batch_delivery.surrogate import bundle as bundle_mod
 from batch_delivery.surrogate.bundle import (
-    BundleHead, PriceSource, _bin_name, bundle_features, price_group,
-    price_source_counts, reset_price_source_counts,
+    BundleHead, PriceSource, _bin_name, _bin_scalars, bundle_features,
+    price_group, price_source_counts, reset_price_source_counts,
 )
 from _stubs import tiny_matrices
 
@@ -56,9 +57,9 @@ class _ConstModel:
         return np.full(len(np.atleast_2d(X)), self.value, dtype=np.float64)
 
 
-def _head(certified, known=None, edges=EDGES, value=25.0):
+def _head(certified, known=None, biased=None, edges=EDGES, value=25.0):
     return BundleHead(1.343, _ConstModel(value), certified_bins=certified,
-                      known_bins=known, edges=edges)
+                      known_bins=known, biased_bins=biased, edges=edges)
 
 
 # ─── bin identity: serve time == train time ──────────────────────────────────
@@ -109,8 +110,9 @@ def test_bin_name_uses_the_5plus_convention():
 
 # ─── load: the certified file must parse against its own edges ───────────────
 
-def _write_head(tmp_path, bins, *, known=None, edges=EDGES, label="final",
-                write_certified=True) -> Path:
+def _write_head(tmp_path, bins, *, known=None, biased=None, edges=EDGES,
+                label="final", write_certified=True,
+                current_edges=None) -> Path:
     pkl = tmp_path / "bundle_head.pkl"
     with open(pkl, "wb") as fh:
         pickle.dump({"alpha": 1.343, "model": _ConstModel(), "label": label},
@@ -120,7 +122,13 @@ def _write_head(tmp_path, bins, *, known=None, edges=EDGES, label="final",
             "label": label, "gate_mode": "deployed", "rule": "test",
             "edges": edges, "bins": list(bins),
             "known_bins": list(known if known is not None else bins),
+            "biased_bins": list(biased or []),
         }), encoding="utf-8")
+    if current_edges is not None:
+        d = tmp_path / "bundles"
+        d.mkdir(exist_ok=True)
+        (d / "bundles_bins.json").write_text(
+            json.dumps({"edges": current_edges}), encoding="utf-8")
     return pkl
 
 
@@ -196,10 +204,13 @@ def test_a_certified_group_is_head_priced():
     assert price_source_counts(m)[("express", PriceSource.HEAD)] == 1
 
 
-def test_an_uncertified_bin_is_refused_and_priced_sigma_single():
+def test_a_supported_but_biased_bin_is_refused_and_priced_sigma_single():
+    """The serve-time sources speak Gate U's vocabulary: a bin the gate has
+    labels for and misprices anyway is UNCERTIFIED (supported, not certified).
+    """
     m = tiny_matrices(theta_one=False)
     b = _pair_bin(m)
-    head = _head([], known=[b])          # the gate saw the bin, did not certify
+    head = _head([], known=[b], biased=[b])
     sigma = float(m["express_cost"][0, 0] + m["express_cost"][1, 0])
     got = price_group((0, 1), 0, m, kind="express", head=head,
                       with_source=True)
@@ -213,13 +224,37 @@ def test_an_uncertified_bin_is_refused_and_priced_sigma_single():
         bundle_features((0, 1), 0, m, kind="express")) != sigma
 
 
-def test_a_bin_the_gate_never_saw_is_unsupported():
+def test_a_thin_bin_and_an_unseen_bin_are_both_thin():
+    """Below the support floor — whether the gate scored 1..5 labels there or
+    none at all. "Unsupported" would have meant the opposite of Gate U's
+    "supported" (n >= THIN_FLOOR), so the source is named for the floor.
+    """
     m = tiny_matrices(theta_one=False)
-    head = _head(["delivery|2|D1|A1|UPS"], known=["delivery|2|D1|A1|UPS"])
-    got = price_group((0, 1), 0, m, kind="express", head=head,
+    b = _pair_bin(m)
+    sigma = float(m["express_cost"][0, 0] + m["express_cost"][1, 0])
+
+    known_but_thin = _head([], known=[b], biased=[])
+    got = price_group((0, 1), 0, m, kind="express", head=known_but_thin,
                       with_source=True)
-    assert got.source is PriceSource.FALLBACK_UNSUPPORTED
-    assert got.price == float(m["express_cost"][0, 0] + m["express_cost"][1, 0])
+    assert got.source is PriceSource.FALLBACK_THIN and got.price == sigma
+
+    m2 = tiny_matrices(theta_one=False)
+    never_seen = _head(["delivery|2|D1|A1|UPS"],
+                       known=["delivery|2|D1|A1|UPS"], biased=[])
+    got2 = price_group((0, 1), 0, m2, kind="express", head=never_seen,
+                       with_source=True)
+    assert got2.source is PriceSource.FALLBACK_THIN and got2.price == sigma
+
+
+def test_an_older_file_without_the_biased_list_stays_conservative():
+    """No ``biased_bins`` recorded: a KNOWN bin cannot be told apart from a
+    thin one, so it reads as UNCERTIFIED rather than claiming a floor it
+    cannot see."""
+    m = tiny_matrices(theta_one=False)
+    b = _pair_bin(m)
+    head = _head([], known=[b])            # biased_bins absent
+    assert price_group((0, 1), 0, m, kind="express", head=head,
+                       with_source=True).source         is PriceSource.FALLBACK_UNCERTIFIED
 
 
 def test_a_head_without_certification_prices_everything():
@@ -233,6 +268,17 @@ def test_a_head_without_certification_prices_everything():
         bundle_features((0, 1), 0, m, kind="express"))
 
 
+def test_an_unrestricted_head_is_not_reported_as_a_fallback_on_singletons():
+    """The express-singleton shortcut must classify like ``classify_bin``:
+    an unrestricted head takes no fallback anywhere, so 61_'s timing stand-in
+    cannot report express fallbacks it never took."""
+    m = tiny_matrices(theta_one=False)
+    head = BundleHead(1.343, _ConstModel())
+    got = price_group((1,), 2, m, kind="express", head=head, with_source=True)
+    assert got.source is PriceSource.HEAD
+    assert got.price == float(m["express_cost"][1, 2])
+
+
 def test_no_head_is_its_own_source():
     m = tiny_matrices(theta_one=False)
     got = price_group((0, 1), 0, m, kind="express", head=None,
@@ -244,9 +290,11 @@ def test_no_head_is_its_own_source():
 def test_a_singleton_is_never_head_priced():
     """No bin has one member, so a lone cell can never be certified."""
     m = tiny_matrices(theta_one=False)
-    head = _head(["express|1|D0|A0|DHL"])   # would not even parse as certified
+    # A real support map always records the biased list; this one names a bin
+    # that could not even parse as certified.
+    head = _head(["express|1|D0|A0|DHL"], biased=[])
     got = price_group((1,), 2, m, kind="express", head=head, with_source=True)
-    assert got.source is PriceSource.FALLBACK_UNSUPPORTED
+    assert got.source is PriceSource.FALLBACK_THIN
     assert got.price == float(m["express_cost"][1, 2])
 
 
@@ -268,7 +316,7 @@ def test_delivery_singleton_falls_back_to_the_per_cell_surrogate():
 
 def test_counts_every_call_and_can_be_reset():
     m = tiny_matrices(theta_one=False)
-    head = _head([], known=[_pair_bin(m)])
+    head = _head([], known=[_pair_bin(m)], biased=[_pair_bin(m)])
     for _ in range(3):
         price_group((0, 1), 0, m, kind="express", head=head)
     c = price_source_counts(m)
@@ -289,3 +337,121 @@ def test_the_plain_call_returns_exactly_the_priced_float():
                         with_source=True)
     assert plain == first.price == again.price
     assert again.source is first.source and again.bin == first.bin
+
+
+# ─── the bin is read off two scalars, not off a full feature row ─────────────
+
+def test_bin_scalars_are_the_feature_rows_own_numbers():
+    """``_bin_scalars`` must return exactly ``x[n_parcels]`` and
+    ``x[area_km2]`` — the classification is only cheap if it is also the same
+    number the trainer binned on.
+    """
+    m = tiny_matrices(theta_one=False)
+    cases = [
+        ((0, 1), 0, "express", None, None),
+        ((0,), 0, "express", None, None),
+        ((0, 1), 3, "delivery", m["daily_demand"][:, 3].copy(),
+         m["expr_stops"][:, 3].copy() + 1.0),
+        ((1,), 2, "delivery", m["daily_demand"][:, 2].copy(),
+         m["expr_stops"][:, 2].copy() + 2.0),
+    ]
+    for members, day, kind, pc, sc in cases:
+        x = bundle_features(members, day, m, kind=kind, parcels_by_cell=pc,
+                            stops_by_cell=sc)
+        got = _bin_scalars(members, day, m, parcels_by_cell=pc)
+        assert got == (x[_I["n_parcels"]], x[_I["area_km2"]]), (members, kind)
+
+
+def test_a_refused_express_group_never_builds_a_feature_row(monkeypatch):
+    """The fallback path must not pay for a featurisation it discards."""
+    m = tiny_matrices(theta_one=False)
+    b = _pair_bin(m)
+    head = _head([], known=[b], biased=[b])
+
+    def _boom(*a, **k):                      # any full featurisation is a bug
+        raise AssertionError("bundle_features called on the fallback path")
+
+    monkeypatch.setattr(bundle_mod, "bundle_features", _boom)
+    got = price_group((0, 1), 0, m, kind="express", head=head,
+                      with_source=True)
+    assert got.source is PriceSource.FALLBACK_UNCERTIFIED
+    assert got.price == float(m["express_cost"][0, 0] + m["express_cost"][1, 0])
+    assert got.bin == b                      # still binned, still exact
+
+
+def test_prices_are_byte_identical_to_the_explicit_expressions():
+    """Deciding before featurising changes NOTHING about either price."""
+    m = tiny_matrices(theta_one=False)
+    parcels = m["daily_demand"][:, 0].copy()
+    stops = m["expr_stops"][:, 0].copy() + 1.0
+    d_bin = _bin_name(kind="delivery", n_members=2,
+                      parcels=bundle_features((0, 1), 0, m, kind="delivery",
+                                              parcels_by_cell=parcels,
+                                              stops_by_cell=stops)[_I["n_parcels"]],
+                      area_km2=m["area_arr"][0] + m["area_arr"][1],
+                      provider=m["provider"], edges=EDGES)
+    head = _head([d_bin, _pair_bin(m)], biased=[])
+
+    want_d = head.predict_single(bundle_features(
+        (0, 1), 0, m, kind="delivery", parcels_by_cell=parcels,
+        stops_by_cell=stops))
+    got_d = price_group((0, 1), 0, m, kind="delivery",
+                        parcels_by_cell=parcels, stops_by_cell=stops,
+                        head=head, with_source=True)
+    assert got_d.source is PriceSource.HEAD and got_d.price == want_d
+
+    want_x = head.predict_single(bundle_features((0, 1), 0, m, kind="express"))
+    got_x = price_group((0, 1), 0, m, kind="express", head=head,
+                        with_source=True)
+    assert got_x.source is PriceSource.HEAD and got_x.price == want_x
+
+
+# ─── edge drift: the pinned edges must still be the manifest's edges ─────────
+
+DRIFTED = {"parcels": [280.0, 470.0], "area_km2": [67.0, 123.4]}
+
+
+def test_load_fails_loud_when_the_manifest_edges_have_moved(tmp_path):
+    """64a recomputes terciles as the grid grows. A head pinned to the old
+    ones still prices consistently, but the coverage it was certified on no
+    longer describes the manifest — that must be loud, not recorded."""
+    pkl = _write_head(tmp_path, ["delivery|2|D1|A1|UPS"],
+                      current_edges=DRIFTED)
+    with pytest.raises(AssertionError, match="edge"):
+        BundleHead.load(pkl)
+
+
+def test_load_accepts_matching_manifest_edges(tmp_path):
+    pkl = _write_head(tmp_path, ["delivery|2|D1|A1|UPS"], current_edges=EDGES)
+    head = BundleHead.load(pkl)
+    assert head.edges == EDGES
+
+
+def test_the_drift_check_can_be_pointed_at_an_explicit_edges_file(tmp_path):
+    """Task 11's runner passes the edges file it is actually running on."""
+    pkl = _write_head(tmp_path, ["delivery|2|D1|A1|UPS"])
+    other = tmp_path / "elsewhere.json"
+    other.write_text(json.dumps({"edges": DRIFTED}), encoding="utf-8")
+    with pytest.raises(AssertionError, match="edge"):
+        BundleHead.load(pkl, edges_json=other)
+
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"edges": EDGES}), encoding="utf-8")
+    assert BundleHead.load(pkl, edges_json=good).edges == EDGES
+
+    # A named file that does not exist is a typo, not "no check".
+    with pytest.raises(AssertionError, match="no bin-edges file"):
+        BundleHead.load(pkl, edges_json=tmp_path / "nope.json")
+
+    # ... and the check is skippable only EXPLICITLY.
+    assert BundleHead.load(pkl, edges_json=False).edges == EDGES
+
+
+def test_the_drift_check_is_callable_on_its_own(tmp_path):
+    """Exposed so a runner can check before it starts pricing."""
+    p = tmp_path / "bundles_bins.json"
+    p.write_text(json.dumps({"edges": DRIFTED}), encoding="utf-8")
+    assert bundle_mod.load_bin_edges(p) == DRIFTED
+    bundle_mod.assert_no_edge_drift(EDGES, EDGES, source="unit test")
+    with pytest.raises(AssertionError, match="edge"):
+        bundle_mod.assert_no_edge_drift(EDGES, DRIFTED, source=str(p))
