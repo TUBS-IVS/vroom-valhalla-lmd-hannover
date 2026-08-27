@@ -13,7 +13,11 @@ schema and, more importantly, a different *object*: it carries TWO plans per
 (P, theta) instead of one.  Every panel therefore has to declare which plan
 and which lens it shows, which is a change of content, not of path.  The
 four builders keep their ``REV_DIR`` override so they still reproduce the
-submitted revision figures byte-for-byte from the 2026-07 directory.
+submitted revision figures from the 2026-07 directory (content-identical:
+matplotlib stamps a ``/CreationDate`` into every PDF, so an md5 of a
+re-render differs even when the drawing does not.  Figures produced by THIS
+module suppress that stamp and are byte-identical across re-renders, which
+is what the provenance manifest and gate G7 rely on).
 
 The two plans
 -------------
@@ -35,6 +39,11 @@ The two lenses
 Outputs (all under ``<rev>/``)
 ------------------------------
 ``figures/``
+  ``manifest.json``                       provenance: rev dir, git HEAD,
+                                          timestamp, md5 of every figure and
+                                          of the four grid CSVs.  ``71_``
+                                          takes its source from this file and
+                                          refuses to sync without it.
   ``fig4_freq_mix_two_plans.{png,pdf}``   frequency mix, both plans
   ``fig4b_mean_days.{png,pdf}``           mean delivery days, both plans
   ``fig5_grid_heatmap_v2.{png,pdf}``      headline 2x3 (see below)
@@ -76,6 +85,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from matplotlib import rcParams  # noqa: E402
 from matplotlib.colors import TwoSlopeNorm  # noqa: E402
+from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -100,12 +110,25 @@ RC = {
 }
 
 
-def save(fig, out_dir: Path, name: str) -> None:
+# Matplotlib stamps a /CreationDate into every PDF and a timestamp into
+# every PNG, so two renders of identical content get different md5s. The
+# manifest and gate G7 are md5-based, so both are suppressed here: a
+# re-render of unchanged inputs must be byte-identical, not merely
+# content-identical.
+_PDF_META = {"CreationDate": None}
+_PNG_META = {"Software": None}
+
+
+def save(fig, out_dir: Path, name: str) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{name}.{ext}", bbox_inches="tight")
-        print(f"  saved {(out_dir / f'{name}.{ext}').relative_to(ROOT)}")
+    written = []
+    for ext, meta in (("png", _PNG_META), ("pdf", _PDF_META)):
+        path = out_dir / f"{name}.{ext}"
+        fig.savefig(path, bbox_inches="tight", metadata=meta)
+        print(f"  saved {path.relative_to(ROOT)}")
+        written.append(path)
     plt.close(fig)
+    return written
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -162,108 +185,157 @@ def _signed_cmap(higher_is_better: bool) -> str:
     for a saving, where high is good, the map is flipped so a NEGATIVE
     saving reads red.  Without this rule the same colour would mean
     "operator wins" in one panel and "operator loses" in the next.
+
+    The flip is an explicit toggle on the base name, not a string slice:
+    slicing ``"RdBu_r"[:-2]`` happens to work today and would silently
+    return ``"Rd"`` if the style module ever named the map ``"RdBu"``.
     """
-    return S.CMAP_CHANGE[:-2] if higher_is_better else S.CMAP_CHANGE
+    base = S.CMAP_CHANGE
+    reversed_ = base.endswith("_r")
+    stem = base[:-2] if reversed_ else base
+    want_reversed = reversed_ if not higher_is_better else not reversed_
+    return stem + ("_r" if want_reversed else "")
 
 
-def _sym_norm(mat) -> TwoSlopeNorm:
-    a = float(np.ceil(max(abs(np.nanmin(mat.values)),
-                          abs(np.nanmax(mat.values)))))
-    a = max(a, 1.0)
+def _sym_norm(*mats) -> TwoSlopeNorm:
+    """Symmetric diverging norm shared by every matrix passed in.
+
+    Fig. 5 and fig. 5b show the SAME quantity for the two plans; passing
+    both matrices here gives them one scale, so the comparison the companion
+    figure exists for is visual and not arithmetic.
+    """
+    a = max(max(abs(np.nanmin(m.values)), abs(np.nanmax(m.values)))
+            for m in mats)
+    a = max(float(np.ceil(a)), 1.0)
     return TwoSlopeNorm(vmin=-a, vcenter=0.0, vmax=a)
+
+
+def panel(ax, full: pd.DataFrame, col: str, letter: str, what: str,
+          cmap, **kw):
+    """Draw one heat-map panel and DERIVE its plan/lens label from ``col``.
+
+    The amendment's rule -- never mix a plan or a lens in one panel, always
+    label it -- is enforced structurally here: the title's second line comes
+    from ``H.declare(col)``, so changing the plotted column changes the
+    label, and a column the mapping does not know about raises rather than
+    rendering an unlabelled panel.  No panel title in this module hard-codes
+    a plan or a lens.
+    """
+    title = f"({letter}) {what}\n" + H.declare(col).replace(
+        "·", r"$\cdot$")
+    return heat(ax, piv(full, col), cmap, title, **kw)
 
 
 # ─────────────────────────────────────────────────────────────────────────
 # Fig. 5 -- headline 2x3, and the off-diagonal companion
 # ─────────────────────────────────────────────────────────────────────────
-def fig5(full: pd.DataFrame, base: dict, base_cv: float, out: Path) -> None:
-    rcParams.update(RC)
-    fig, ax = plt.subplots(2, 3, figsize=(19.0, 10.2))
+def _shared_norms(full: pd.DataFrame) -> dict:
+    """One scale per quantity across fig. 5 and its companion fig. 5b.
 
-    heat(ax[0, 0], piv(full, "routing_saving_plan1_pct"), S.CMAP_SAVING,
-         "(a) Routing-cost saving\n"
-         r"routing lens $\cdot$ routing-optimal plan (stage 1)",
-         vmin=0, cbar_label="Routing saving [%]")
-    heat(ax[0, 1], piv(full, "operator_saving_plan2_pct"), S.CMAP_SAVING,
-         "(b) Operator-cost saving\n"
-         r"operator lens $\cdot$ operator-polished plan (stage 2)",
-         vmin=0, cbar_label="Operator saving [%]")
-    heat(ax[0, 2], piv(full, "wait_d_plan2"), S.CMAP_WAIT,
-         "(c) Mean additional wait per parcel\n"
-         r"operator-polished plan (stage 2)",
-         vmin=0, fmt="{:.2f}", cbar_label="Wait [d]", invert_thr=True)
+    Both figures draw the wait and the hub-peak change, for the two plans.
+    Auto-scaling each panel separately made 0.77 d and 0.97 d render as the
+    same deep red; a shared norm makes the two plans comparable by eye.
+    """
+    return {
+        "wait_max": float(np.ceil(max(full.wait_d_plan1.max(),
+                                      full.wait_d_plan2.max()) * 10) / 10),
+        "peak_norm": _sym_norm(piv(full, "hub_peak_plan1_vs_base_pct"),
+                               piv(full, "hub_peak_plan2_vs_base_pct")),
+    }
 
-    m = piv(full, "hub_peak_plan2_vs_base_pct")
-    heat(ax[1, 0], m, _signed_cmap(higher_is_better=False),
-         r"(d) $\sum_h$ hub peak vehicles vs baseline"
-         "\n" r"operator-polished plan (stage 2)",
-         norm=_sym_norm(m), cbar_label="Change [%]")
-    # reversed fleet ramp: light = flat week = the operator's goal, matching
-    # panel (c) where light = little wait
-    heat(ax[1, 1], piv(full, "sys_cv"), S.fleet_cmap(reverse=True),
-         "(e) Mon--Sat CV of the system fleet\n"
-         rf"operator-polished plan (stage 2); baseline CV = {base_cv:.3f}",
-         vmin=0, fmt="{:.3f}", cbar_label="CV [--]", invert_thr=True)
-    m = piv(full, "vehicle_days_plan2_vs_base_pct")
-    heat(ax[1, 2], m, _signed_cmap(higher_is_better=False),
-         "(f) Weekly vehicle-days vs baseline\n"
-         r"operator-polished plan (stage 2)",
-         norm=_sym_norm(m), cbar_label="Change [%]")
 
+def _grid_axes(fig, ax) -> None:
     for a in ax[-1, :]:
         a.set_xlabel(r"Willingness-to-wait share $\theta$ [%]", fontsize=12)
     for a in ax[:, 0]:
         a.set_ylabel(r"Service penalty $P$ [€/p/d]", fontsize=12)
+
+
+def _baseline_sentence(base: dict) -> str:
+    return (r"All quantities are relative to the daily-delivery baseline at "
+            r"$\theta = 0$ "
+            f"(routing {base['routing_eur']:,.0f} €/wk, operator "
+            f"{base['operator_eur']:,.0f} €/wk, "
+            r"$\sum_h$ peak " f"{base['sum_hub_peak']:.0f} vehicles). ")
+
+
+def fig5(full: pd.DataFrame, base: dict, base_cv: float, out: Path,
+         norms: dict) -> list[Path]:
+    rcParams.update(RC)
+    fig, ax = plt.subplots(2, 3, figsize=(19.0, 10.2))
+
+    panel(ax[0, 0], full, "routing_saving_plan1_pct", "a",
+          "Routing-cost saving", S.CMAP_SAVING,
+          vmin=0, cbar_label="Routing saving [%]")
+    panel(ax[0, 1], full, "operator_saving_plan2_pct", "b",
+          "Operator-cost saving", S.CMAP_SAVING,
+          vmin=0, cbar_label="Operator saving [%]")
+    panel(ax[0, 2], full, "wait_d_plan2", "c",
+          "Mean additional wait per parcel", S.CMAP_WAIT,
+          vmin=0, vmax=norms["wait_max"], fmt="{:.2f}",
+          cbar_label="Wait [d]", invert_thr=True)
+
+    panel(ax[1, 0], full, "hub_peak_plan2_vs_base_pct", "d",
+          r"$\sum_h$ hub peak vehicles vs baseline",
+          _signed_cmap(higher_is_better=False),
+          norm=norms["peak_norm"], cbar_label="Change [%]")
+    # reversed fleet ramp: light = flat week = the operator's goal, matching
+    # panel (c) where light = little wait
+    panel(ax[1, 1], full, "sys_cv", "e",
+          f"Mon-Sat CV of the system fleet (baseline {base_cv:.3f})",
+          S.fleet_cmap(reverse=True),
+          vmin=0, fmt="{:.3f}", cbar_label="CV [-]", invert_thr=True)
+    panel(ax[1, 2], full, "vehicle_days_plan2_vs_base_pct", "f",
+          "Weekly vehicle-days vs baseline",
+          _signed_cmap(higher_is_better=False),
+          norm=_sym_norm(piv(full, "vehicle_days_plan2_vs_base_pct")),
+          cbar_label="Change [%]")
+
+    _grid_axes(fig, ax)
     fig.tight_layout(pad=0.6, w_pad=1.4, h_pad=1.9, rect=[0, 0.045, 1, 1])
     fig.text(0.5, 0.006,
              "Panels (a) and (b) are different cost lenses AND different "
-             "plans and must not be read as one series. All quantities are "
-             r"relative to the daily-delivery baseline at $\theta = 0$ "
-             f"(routing {base['routing_eur']:,.0f} €/wk, operator "
-             f"{base['operator_eur']:,.0f} €/wk, "
-             r"$\sum_h$ peak " f"{base['sum_hub_peak']:.0f} vehicles). "
-             + H.COST_MODEL_TEXT,
+             "plans and must not be read as one series. "
+             + _baseline_sentence(base) + H.COST_MODEL_TEXT,
              ha="center", va="bottom", fontsize=10)
-    save(fig, out, "fig5_grid_heatmap_v2")
+    return save(fig, out, "fig5_grid_heatmap_v2")
 
 
-def fig5b(full: pd.DataFrame, base: dict, out: Path) -> None:
+def fig5b(full: pd.DataFrame, base: dict, out: Path,
+          norms: dict) -> list[Path]:
     """The off-diagonal cells of the 2 plans x 2 lenses matrix."""
     rcParams.update(RC)
     fig, ax = plt.subplots(2, 2, figsize=(13.0, 10.2))
 
-    m = piv(full, "operator_saving_plan1_pct")
-    heat(ax[0, 0], m, _signed_cmap(higher_is_better=True),
-         "(a) Operator-cost saving\n"
-         r"operator lens $\cdot$ routing-optimal plan (stage 1)",
-         norm=_sym_norm(m), cbar_label="Operator saving [%]")
-    heat(ax[0, 1], piv(full, "routing_saving_plan2_pct"), S.CMAP_SAVING,
-         "(b) Routing-cost saving\n"
-         r"routing lens $\cdot$ operator-polished plan (stage 2)",
-         vmin=0, cbar_label="Routing saving [%]")
-    heat(ax[1, 0], piv(full, "wait_d_plan1"), S.CMAP_WAIT,
-         "(c) Mean additional wait per parcel\n"
-         r"routing-optimal plan (stage 1)",
-         vmin=0, fmt="{:.2f}", cbar_label="Wait [d]", invert_thr=True)
-    m = piv(full, "hub_peak_plan1_vs_base_pct")
-    heat(ax[1, 1], m, _signed_cmap(higher_is_better=False),
-         r"(d) $\sum_h$ hub peak vehicles vs baseline"
-         "\n" r"routing-optimal plan (stage 1)",
-         norm=_sym_norm(m), cbar_label="Change [%]")
+    panel(ax[0, 0], full, "operator_saving_plan1_pct", "a",
+          "Operator-cost saving", _signed_cmap(higher_is_better=True),
+          norm=_sym_norm(piv(full, "operator_saving_plan1_pct")),
+          cbar_label="Operator saving [%]")
+    panel(ax[0, 1], full, "routing_saving_plan2_pct", "b",
+          "Routing-cost saving", S.CMAP_SAVING,
+          vmin=0, cbar_label="Routing saving [%]")
+    panel(ax[1, 0], full, "wait_d_plan1", "c",
+          "Mean additional wait per parcel", S.CMAP_WAIT,
+          vmin=0, vmax=norms["wait_max"], fmt="{:.2f}",
+          cbar_label="Wait [d]", invert_thr=True)
+    panel(ax[1, 1], full, "hub_peak_plan1_vs_base_pct", "d",
+          r"$\sum_h$ hub peak vehicles vs baseline",
+          _signed_cmap(higher_is_better=False),
+          norm=norms["peak_norm"], cbar_label="Change [%]")
 
-    for a in ax[-1, :]:
-        a.set_xlabel(r"Willingness-to-wait share $\theta$ [%]", fontsize=12)
-    for a in ax[:, 0]:
-        a.set_ylabel(r"Service penalty $P$ [€/p/d]", fontsize=12)
+    _grid_axes(fig, ax)
     fig.tight_layout(pad=0.6, w_pad=1.4, h_pad=1.9, rect=[0, 0.05, 1, 1])
     fig.text(0.5, 0.008,
              "Companion to Fig. 5: the two off-diagonal cells of the "
-             "2 plans x 2 lenses matrix, plus the routing-optimal plan's "
-             "wait and hub peaks. Panel (a) is negative where the "
+             f"2 plans x 2 lenses matrix, plus the {H.PLAN_WORD[1]} "
+             "plan's wait and hub peaks. Panels (c) and (d) share their "
+             "colour "
+             "scale with Fig. 5 (c) and (d), so the two plans are "
+             "comparable by eye. Panel (a) is negative where the "
              "routing-optimal two-day patterns multiply the hub peaks. "
              + H.COST_MODEL_TEXT,
              ha="center", va="bottom", fontsize=10)
-    save(fig, out, "fig5b_offdiagonal_v2")
+    return save(fig, out, "fig5b_offdiagonal_v2")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -286,7 +358,8 @@ def _stack(ax, mix: pd.DataFrame, P: float) -> None:
     ax.grid(alpha=0.2)
 
 
-def fig4(mix1: pd.DataFrame, mix2: pd.DataFrame, out: Path) -> None:
+def fig4(mix1: pd.DataFrame, mix2: pd.DataFrame,
+         out: Path) -> list[Path]:
     rcParams.update(RC)
     rcParams.update({"font.size": 11, "axes.titlesize": 11})
     P_values = sorted(mix1.penalty.unique())
@@ -297,10 +370,10 @@ def fig4(mix1: pd.DataFrame, mix2: pd.DataFrame, out: Path) -> None:
         _stack(axes[0, j], mix1, P)
         _stack(axes[1, j], mix2, P)
         axes[0, j].set_title(rf"$P = {P:g}$", fontsize=9.5)
-    axes[0, 0].set_ylabel("Routing-optimal\n(stage 1)\n"
-                          "Share of areas [%]", fontsize=9)
-    axes[1, 0].set_ylabel("Operator-polished\n(stage 2)\n"
-                          "Share of areas [%]", fontsize=9)
+    axes[0, 0].set_ylabel(H.PLAN_ROW[1] + "\nShare of areas [%]",
+                          fontsize=9)
+    axes[1, 0].set_ylabel(H.PLAN_ROW[2] + "\nShare of areas [%]",
+                          fontsize=9)
     for a in axes[1, :]:
         a.set_xlabel(r"$\theta$ [%]", fontsize=9.5)
 
@@ -315,25 +388,25 @@ def fig4(mix1: pd.DataFrame, mix2: pd.DataFrame, out: Path) -> None:
                  r"$(P, \theta)$ grid, both plans "
                  r"(service penalty $P$ in €/parcel/day)", fontsize=11.5)
     fig.tight_layout(rect=[0, 0.045, 1, 0.95])
-    save(fig, out, "fig4_freq_mix_two_plans")
+    return save(fig, out, "fig4_freq_mix_two_plans")
 
 
-def fig4b(full: pd.DataFrame, out: Path) -> None:
+def fig4b(full: pd.DataFrame, out: Path) -> list[Path]:
     """Mean delivery days per week, both plans -- the (0,1) 2.03 vs 2.37."""
     rcParams.update(RC)
     P_values = sorted(full.penalty.unique())
     fig, ax = plt.subplots(1, 2, figsize=(12.5, 4.6), sharey=True)
     cmap = plt.get_cmap(S.CMAP_PENALTY)(np.linspace(0.05, 0.92,
                                                     len(P_values)))
-    for k, (a, col, ttl) in enumerate([
-            (ax[0], "mean_days_plan1", "(a) Routing-optimal plan (stage 1)"),
-            (ax[1], "mean_days_plan2",
-             "(b) Operator-polished plan (stage 2)")]):
+    for letter, a, col in [("a", ax[0], "mean_days_plan1"),
+                           ("b", ax[1], "mean_days_plan2")]:
         for i, P in enumerate(P_values):
             g = full[np.isclose(full.penalty, P)].sort_values("share_willing")
             a.plot(g.share_willing * 100, g[col], "o-", color=cmap[i],
                    markersize=4, linewidth=1.8, label=rf"$P = {P:g}$")
-        a.set_title(ttl, fontsize=12)
+        # label derived from the plotted column, never hand-written
+        a.set_title(f"({letter}) " + H.declare(col).capitalize(),
+                    fontsize=12)
         a.set_xlabel(r"Willingness-to-wait share $\theta$ [%]")
         a.grid(alpha=0.3)
         a.set_ylim(1.8, 6.15)
@@ -345,7 +418,7 @@ def fig4b(full: pd.DataFrame, out: Path) -> None:
                  r"(6 = daily; 1 day/week is infeasible at "
                  r"$\mathrm{MAX\_HOLDING\_DAYS}=3$)", fontsize=11.5)
     fig.tight_layout(rect=[0, 0, 1, 0.94])
-    save(fig, out, "fig4b_mean_days")
+    return save(fig, out, "fig4b_mean_days")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -388,44 +461,66 @@ def _structural_facts() -> pd.DataFrame:
 
 
 def _quartile_lines(ax, df, feat, label, unit, cmap,
-                    edges=None, labs=None):
-    """Median weekly delivery days vs theta, bucketed by a structural feature.
+                    edges=None, labs=None) -> pd.DataFrame:
+    """Median weekly delivery days vs theta, bucketed by a feature.
 
     With ``edges``/``labs`` omitted the buckets are the feature's own
     quartiles.  Discrete features (hub size) pass explicit class edges,
     because their quartiles collapse onto repeated values.
+
+    Every legend entry carries the bucket's **n and its carrier**
+    composition, and the composition is returned so the caption can
+    state it.  Region Hannover has exactly one multi-depot network
+    (DHL, 16 hubs); every other LSP runs a single depot.  A structural
+    bucket can therefore be one carrier's depot network in disguise,
+    and a panel that hides that invites a causal reading it cannot
+    support.
     """
     d = df[df[feat].notna()].copy()
     if edges is None:
         edges = d[feat].quantile([0, .25, .5, .75, 1.]).values
         labs = [f"Q1 ($\\leq${edges[1]:.1f})",
-                f"Q2 ({edges[1]:.1f}--{edges[2]:.1f})",
-                f"Q3 ({edges[2]:.1f}--{edges[3]:.1f})",
+                f"Q2 ({edges[1]:.1f}-{edges[2]:.1f})",
+                f"Q3 ({edges[2]:.1f}-{edges[3]:.1f})",
                 f"Q4 (>{edges[3]:.1f})"]
         assert len(set(np.round(edges, 9))) == len(edges), (
             f"{feat}: quartile edges are not unique ({edges}) -- pass "
             "explicit class edges for this discrete feature")
     d["q"] = pd.cut(d[feat], bins=edges, labels=labs, include_lowest=True)
+    comp = []
     for i, ql in enumerate(labs):
         g = d[d.q == ql]
         if g.empty:
             continue
+        provs = sorted(g.provider.unique())
+        one = provs[0] if len(provs) == 1 else f"{len(provs)} LSPs"
+        # a PLZ code is served by several LSPs, so the unit is the
+        # (provider, plz) CELL -- plz.nunique() would undercount by ~6x
+        n_cells = int(g.groupby(["provider", "plz"]).ngroups
+                      if {"provider", "plz"} <= set(g.columns) else len(g))
+        comp.append(dict(feature=feat, bucket=ql, n=n_cells,
+                         providers=", ".join(provs),
+                         single_carrier=len(provs) == 1))
         agg = (g.groupby("share_willing")["size"]
                .agg(med="median", lo=lambda s: s.quantile(.25),
                     hi=lambda s: s.quantile(.75)).reset_index())
         ax.fill_between(agg.share_willing * 100, agg.lo, agg.hi,
                         color=cmap[i], alpha=0.18, linewidth=0)
         ax.plot(agg.share_willing * 100, agg.med, "o-", color=cmap[i],
-                linewidth=2.0, markersize=5, label=ql)
+                linewidth=2.0, markersize=5,
+                markeredgecolor="black", markeredgewidth=0.5,
+                label=f"{ql}  n={n_cells}, {one}")
     ax.set_xlabel(r"Willingness-to-wait share $\theta$ [%]")
     ax.set_ylabel("Delivery days per week\n(median, band = IQR)")
     ax.grid(alpha=0.3)
-    ax.legend(loc="lower left", fontsize=9, title=f"{label} [{unit}]",
-              title_fontsize=9)
+    ax.legend(loc="lower left", fontsize=8, title=f"{label} [{unit}]",
+              title_fontsize=8.5)
+    return pd.DataFrame(comp)
 
 
 def fig6(full: pd.DataFrame, knees_r: pd.DataFrame, knees_o: pd.DataFrame,
-         cell_freq2: pd.DataFrame, out: Path) -> None:
+         cell_freq2: pd.DataFrame,
+         out: Path) -> tuple[list[Path], pd.DataFrame]:
     rcParams.update(RC)
     fig, ax = plt.subplots(2, 3, figsize=(18.0, 10.4))
 
@@ -437,29 +532,33 @@ def fig6(full: pd.DataFrame, knees_r: pd.DataFrame, knees_o: pd.DataFrame,
                                                       len(P_unique)))
     P_idx = {P: i for i, P in enumerate(P_unique)}
 
-    def pareto(a, sav_col, wait_col, title):
+    def pareto(a, letter, sav_col, wait_col):
+        # a front built from two columns of DIFFERENT plans is a mixture,
+        # not a front -- refuse before drawing it
+        assert H.plan_of(sav_col) == H.plan_of(wait_col), (
+            f"Pareto panel ({letter}) mixes plans: {sav_col} is plan "
+            f"{H.plan_of(sav_col)}, {wait_col} is plan "
+            f"{H.plan_of(wait_col)}")
         for it, th in enumerate(theta_levels):
-            s = full[np.isclose(full.share_willing, th)].sort_values("penalty")
-            a.plot(s[wait_col], s[sav_col], "-", color=cmap_th[it],
+            g = full[np.isclose(full.share_willing, th)].sort_values("penalty")
+            a.plot(g[wait_col], g[sav_col], "-", color=cmap_th[it],
                    linewidth=2.0, label=rf"$\theta = {th:g}$", zorder=2)
-            for _, row in s.iterrows():
+            for _, row in g.iterrows():
                 a.scatter(row[wait_col], row[sav_col], s=38,
                           color=cmap_P[P_idx[row.penalty]],
                           edgecolor="black", linewidth=0.4, zorder=3)
         a.axhline(0, color="black", ls="--", lw=0.7, alpha=0.5)
         a.set_xlabel("Mean additional customer wait [d]")
         a.set_ylabel("Weekly cost saving vs baseline [%]")
-        a.set_title(title, fontsize=11.5)
+        a.set_title(f"({letter}) System Pareto front\n"
+                    + H.declare(sav_col).replace("·", r"$\cdot$"),
+                    fontsize=11.5)
         a.grid(alpha=0.3)
         a.legend(loc="upper left", fontsize=9, ncol=2,
                  title="Willingness-to-wait share", title_fontsize=9)
 
-    pareto(ax[0, 0], "routing_saving_plan1_pct", "wait_d_plan1",
-           "(a) System Pareto front\n"
-           r"routing lens $\cdot$ routing-optimal plan (stage 1)")
-    pareto(ax[0, 1], "operator_saving_plan2_pct", "wait_d_plan2",
-           "(b) System Pareto front\n"
-           r"operator lens $\cdot$ operator-polished plan (stage 2)")
+    pareto(ax[0, 0], "a", "routing_saving_plan1_pct", "wait_d_plan1")
+    pareto(ax[0, 1], "b", "operator_saving_plan2_pct", "wait_d_plan2")
     sm = plt.cm.ScalarMappable(
         cmap=matplotlib.colors.ListedColormap(cmap_P),
         norm=matplotlib.colors.BoundaryNorm(
@@ -470,11 +569,13 @@ def fig6(full: pd.DataFrame, knees_r: pd.DataFrame, knees_o: pd.DataFrame,
     cb.ax.set_yticklabels([f"{p:g}" for p in P_unique], fontsize=9)
     cb.set_label(r"Service penalty $P$ [€/p/d]", fontsize=10)
 
-    # (c) per-LSP knee fronts, both lenses
+    # (c) per-LSP knee fronts, both lenses. Marker carries the lens/plan,
+    # fill carries the carrier class, provider identity is text -- never a
+    # hue. Both legend entries are derived from their own cost column.
     a = ax[0, 2]
-    for kn, ls, mk, lab in [(knees_r, "-", "o", "routing lens / stage-1 plan"),
-                            (knees_o, "--", "s",
-                             "operator lens / stage-2 plan")]:
+    marker_handles = []
+    for kn, mk, cost_col in [(knees_r, "o", "routing_saving_plan1_pct"),
+                             (knees_o, "s", "operator_saving_plan2_pct")]:
         for _, r in kn.iterrows():
             a.scatter(r.wait_d, r.saving_pct, s=70, marker=mk,
                       facecolor=S.CARRIER[r.carrier_class],
@@ -482,47 +583,79 @@ def fig6(full: pd.DataFrame, knees_r: pd.DataFrame, knees_o: pd.DataFrame,
             a.annotate(r.provider, (r.wait_d, r.saving_pct),
                        textcoords="offset points", xytext=(6, 4),
                        fontsize=8)
+        marker_handles.append(Line2D(
+            [], [], linestyle="none", marker=mk, markersize=8,
+            markerfacecolor="white", markeredgecolor="black",
+            label=H.declare(cost_col).replace("·", "/")))
     a.set_xlabel(r"Mean additional customer wait at $P^\star$ [d]")
     a.set_ylabel(r"Cost saving at $P^\star$ [%]")
-    a.set_title(r"(c) Per-LSP knee $P^\star$, both lenses"
-                "\ncircle = routing lens/stage 1, square = operator "
-                "lens/stage 2", fontsize=11.5)
+    a.set_title(r"(c) Per-LSP knee $P^\star$, both lenses", fontsize=11.5)
     a.grid(alpha=0.3)
+    leg1 = a.legend(handles=marker_handles, loc="lower right", fontsize=8,
+                    title="Lens / plan", title_fontsize=8.5)
+    a.add_artist(leg1)
     a.legend(handles=[Patch(facecolor=S.CARRIER[c], edgecolor="black",
                             label=c) for c in S.CARRIER_ORDER],
              loc="upper left", fontsize=9, title="Carrier type",
              title_fontsize=9)
 
-    # (d)-(f) structural: delivery frequency of the operator plan
-    cmap_q = plt.get_cmap(S.CMAP_QUARTILE)(np.linspace(0.30, 0.85, 4))
-    _quartile_lines(ax[1, 0], cell_freq2, "hub_dist_km", "Hub distance",
-                    "km", cmap_q)
-    ax[1, 0].set_title("(d) Delivery frequency by hub distance\n"
-                       r"operator-polished plan (stage 2), $P = 0$",
-                       fontsize=11.5)
-    _quartile_lines(ax[1, 1], cell_freq2, "parcels_per_stop",
-                    "Parcels per drop-site", "pkts/site/wk", cmap_q)
-    ax[1, 1].set_title("(e) Delivery frequency by parcels per drop-site\n"
-                       r"operator-polished plan (stage 2), $P = 0$",
-                       fontsize=11.5)
-    _quartile_lines(ax[1, 2], cell_freq2, "hub_n_cells",
-                    "Cells served by the hub", "areas", cmap_q,
-                    edges=[0.5, 1.5, 4.5, 12.5, 1e9],
-                    labs=["1 (single-cell hub)", "2--4", "5--12",
-                          r"$\geq$13"])
-    ax[1, 2].set_title("(f) Delivery frequency by hub size\n"
-                       r"operator-polished plan (stage 2), $P = 0$",
-                       fontsize=11.5)
+    # (d)-(f) structural: delivery frequency of the operator plan.
+    # Ramp starts at 0.45: YlOrBr below that is about 1.4:1 against white,
+    # and the palest series in (f) is the single-cell-hub curve -- the one
+    # line the panel exists to show.
+    cmap_q = plt.get_cmap(S.CMAP_QUARTILE)(np.linspace(0.45, 0.92, 4))
+    plan_note = H.declare("mean_days_plan2")
+    comps = [
+        _quartile_lines(ax[1, 0], cell_freq2, "hub_dist_km", "Hub distance",
+                        "km", cmap_q),
+        _quartile_lines(ax[1, 1], cell_freq2, "parcels_per_stop",
+                        "Parcels per drop-site visit", "pkts/visit", cmap_q),
+        _quartile_lines(ax[1, 2], cell_freq2, "hub_n_cells",
+                        "Cells served by the hub", "areas", cmap_q,
+                        edges=[0.5, 1.5, 4.5, 12.5, 1e9],
+                        labs=["1 (single-cell hub)", "2-4", "5-12",
+                              r"$\geq$13"]),
+    ]
+    comp = pd.concat(comps, ignore_index=True)
 
+    # I-1: name the confound instead of letting the reader infer a law.
+    # Region Hannover has exactly one multi-depot network, so a hub-size
+    # bucket below the top class is that carrier's depots relabelled.
+    single = comp[comp.single_carrier & (comp.feature == "hub_n_cells")]
+    carriers = sorted({c for cs in single.providers for c in cs.split(", ")})
+    single_carrier_note = (f" ({carriers[0]} only below the top class)"
+                           if len(single) and len(carriers) == 1 else "")
+    for a_, letter, what, note in [
+            (ax[1, 0], "d", "hub distance", ""),
+            (ax[1, 1], "e", "parcels per drop-site visit", ""),
+            (ax[1, 2], "f", "hub size", single_carrier_note)]:
+        a_.set_title(f"({letter}) Delivery frequency by {what}{note}\n"
+                     + plan_note + r", $P = 0$", fontsize=11.5)
+
+    if len(single) and len(carriers) == 1:
+        who = carriers[0]
+        confound = (
+            "Panel (f) caveat: the "
+            + " / ".join(f"'{b}'" for b in single.bucket)
+            + f" bucket(s) hold {who} cells only, because {who} runs the "
+              "only multi-depot network in the case study (16 hubs; every "
+              "other LSP has a single depot). Hub size and carrier identity "
+              f"are confounded here, so this panel is a within-{who} "
+              "statement, not a general law. ")
+        mech = (f"Within {who}'s network a hub serving a single area cannot "
+                "rotate delivery days across cells, so the operator polish "
+                "drives it back to (near-)daily service. ")
+    else:
+        confound = ""
+        mech = ("A hub serving a single area cannot rotate delivery days "
+                "across cells, so the operator polish drives it back to "
+                "(near-)daily service. ")
     fig.tight_layout(pad=0.8, w_pad=1.6, h_pad=1.8, rect=[0, 0.035, 1, 1])
-    fig.text(0.5, 0.005,
+    fig.text(0.5, 0.004,
              "Panels (a) and (b) are different lenses AND different plans. "
-             "Panel (f) is the mechanism behind the operator lens: a hub "
-             "that serves a single area cannot rotate delivery days, so the "
-             "operator polish drives it back to (near-)daily service. "
-             + H.COST_MODEL_TEXT,
-             ha="center", va="bottom", fontsize=10)
-    save(fig, out, "fig6_structural_v2")
+             + confound + mech + H.COST_MODEL_TEXT,
+             ha="center", va="bottom", fontsize=9, wrap=True)
+    return save(fig, out, "fig6_structural_v2"), comp
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -542,7 +675,7 @@ HEADLINE_COLS = [
 
 
 def write_tables(full: pd.DataFrame, base: dict, knees_r, knees_o,
-                 tables: Path, rev: Path) -> dict:
+                 tables: Path) -> dict:
     tables.mkdir(parents=True, exist_ok=True)
     written = {}
 
@@ -613,8 +746,8 @@ def write_tables(full: pd.DataFrame, base: dict, knees_r, knees_o,
     H.to_latex(kn_tex, tables / "tab_pstar_knees_v2.tex",
                caption=(r"Per-LSP knee $P^\star$ on the (saving, wait) front "
                         r"at $\theta = 1$, recomputed in both lenses: "
-                        r"routing lens on the routing-optimal plan, operator "
-                        r"lens on the operator-polished plan. "
+                        f"{H.LENS_ROUTING} on the {H.PLAN_WORD[1]} plan, "
+                        f"{H.LENS_OPERATOR} on the {H.PLAN_WORD[2]} plan. "
                         + H.COST_MODEL_CAPTION),
                label="tab:pstar_knees")
 
@@ -639,7 +772,8 @@ def write_tables(full: pd.DataFrame, base: dict, knees_r, knees_o,
         "sys_peak": "system peak", "sys_cv": "Mo--Sa CV",
         "vehicle_days_plan2": "vehicle-days"})
     H.to_latex(pts, tables / "tab_fleet_diagnostics_v2.tex",
-               caption=(r"Fleet diagnostics of the operator-polished plan: "
+               caption=(f"Fleet diagnostics of the {H.PLAN_WORD[2]} "
+                        r"plan: "
                         r"achieved $\sum_h$ hub peak against the "
                         r"flat-profile bound $\sum_h \lceil "
                         r"\mathrm{vehicle\ days}_h / 6 \rceil$; the gap is "
@@ -654,13 +788,21 @@ ABLATION_POINTS = [(0.0, 1.0), (0.25, 1.0), (0.5, 1.0), (0.0, 0.6)]
 
 def _ablation_row(variant: str, rev_dir: Path, base: dict, *,
                   routing_col: str, reconstruct: bool) -> pd.DataFrame:
-    """One stage-2 variant at the four ablation points, or a reason why not."""
-    costs_p = rev_dir / "tab_costs_v2.csv"
-    if not costs_p.exists():
+    """One stage-2 variant at the four ablation points, or a reason why not.
+
+    Every table this row needs is existence-checked up front, so a missing
+    or half-written ablation directory reports ``DIR_MISSING`` next to the
+    other variants instead of aborting the whole table with a traceback.
+    """
+    needed = ["tab_costs_v2.csv", "tab_fleet_per_hub_v2.csv",
+              "tab_wait_v2.csv"]
+    absent = [n for n in needed if not (rev_dir / n).exists()]
+    if absent:
         return pd.DataFrame([dict(variant=variant, penalty=P,
-                                  share_willing=th, status="DIR_MISSING")
+                                  share_willing=th,
+                                  status=f"DIR_MISSING ({', '.join(absent)})")
                              for P, th in ABLATION_POINTS])
-    costs = pd.read_csv(costs_p)
+    costs = pd.read_csv(rev_dir / "tab_costs_v2.csv")
     fleet = pd.read_csv(rev_dir / "tab_fleet_per_hub_v2.csv")
     wait = pd.read_csv(rev_dir / "tab_wait_v2.csv")
     cover = costs.groupby(["penalty", "share_willing"]).provider.nunique()
@@ -682,6 +824,15 @@ def _ablation_row(variant: str, rev_dir: Path, base: dict, *,
         rout = float(c[routing_col].sum())
         hp = float(f.groupby(["provider", "hub"]).fleet.max().sum())
         vd = float(f.fleet.sum())
+        # Same cross-check the v5 path runs: the fleet CSV must describe the
+        # plan whose cost we are reading. A pre-6e run (run 2) carries no
+        # sum_hub_peak column, so there the pairing rests on the run's own
+        # stage ordering -- see reconstruct_operator_cost's docstring.
+        if "sum_hub_peak" in c.columns:
+            assert abs(hp - float(c.sum_hub_peak.sum())) < 1e-6, (
+                f"{variant} (P={P}, theta={th}): fleet-derived hub peak "
+                f"{hp:.0f} != sum_hub_peak {c.sum_hub_peak.sum():.0f} -- "
+                "the fleet CSV is not at the plan this row reports")
         if reconstruct:
             op = rout - H.FIXED_COST_EUR * vd + H.WEEK_FIXED_COST_EUR * hp
         else:
@@ -822,7 +973,11 @@ def main(argv=None) -> int:
     rev = Path(args.rev_dir)
     if not rev.is_absolute():
         rev = (ROOT / rev).resolve()
-    os.environ["REV_DIR"] = str(rev)      # the four builders honour this too
+    # Exported so that anything this process spawns (and any later
+    # in-process import of _stage3_common) sees the same grid.  It does NOT
+    # reach 30_/31_/32_/40_: they are separate processes and this module
+    # never invokes them -- run them with REV_DIR set in the shell instead.
+    os.environ["REV_DIR"] = str(rev)
     figures, tables = rev / "figures", rev / "tables"
 
     print("=" * 74)
@@ -879,10 +1034,12 @@ def main(argv=None) -> int:
         sizes = H.schedule_sizes()
         mix1 = H.freq_mix(G.chosen, "schedule_idx_stage1", sizes)
         mix2 = H.freq_mix(G.chosen, "schedule_idx_balanced", sizes)
-        fig5(full, base, base_cv, figures)
-        fig5b(full, base, figures)
-        fig4(mix1, mix2, figures)
-        fig4b(full, figures)
+        norms = _shared_norms(full)
+        produced: list[Path] = []
+        produced += fig5(full, base, base_cv, figures, norms)
+        produced += fig5b(full, base, figures, norms)
+        produced += fig4(mix1, mix2, figures)
+        produced += fig4b(full, figures)
 
         struct = _structural_facts()
         cf = G.chosen[np.isclose(G.chosen.penalty, 0.0)].copy()
@@ -892,11 +1049,29 @@ def main(argv=None) -> int:
         assert cf.hub_dist_km.notna().all(), (
             "structural join left unmatched cells -- checkpoint and grid "
             "disagree on the (provider, plz) universe")
-        fig6(full, knees_r, knees_o, cf, figures)
+        paths, comp = fig6(full, knees_r, knees_o, cf, figures)
+        produced += paths
+
+        print("\nfig 6 (d)-(f) bucket composition "
+              "(a single-carrier bucket cannot separate structure from "
+              "carrier identity):")
+        print(comp.to_string(index=False))
+        comp.to_csv(figures / "fig6_bucket_composition.csv", index=False)
+
+        mpath = H.write_manifest(figures, rev, ROOT, produced)
+        doc = H.read_manifest(mpath)
+        print(f"\nwrote {mpath.relative_to(ROOT)}  "
+              f"(rev_dir={Path(doc['rev_dir']).name}, "
+              f"git={doc['git_head'][:12]}, {doc['rendered_utc']}, "
+              f"{len(doc['figures'])} figure files)")
+        stale = H.check_manifest_fresh(doc, figures)
+        assert not stale, (
+            "the render is already stale against its own inputs: "
+            + "; ".join(stale))
 
     if not args.no_tables:
         print("\n--- tables ---")
-        write_tables(full, base, knees_r, knees_o, tables, rev)
+        write_tables(full, base, knees_r, knees_o, tables)
         write_ablation(rev, base, G.costs, tables)
         print("\nwritten to " + str(tables.relative_to(ROOT)) + ":")
         for f in sorted(tables.iterdir()):

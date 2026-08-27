@@ -36,7 +36,10 @@ Nothing in here reads ``tab_sensitivity_master_plz.csv`` (Kompendium §38.3).
 from __future__ import annotations
 
 import hashlib
+import json
 import math
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -59,8 +62,58 @@ COST_MODEL_TEXT = ("Cost model: 189.15 EUR/vehicle-day + 0.3864 EUR/km "
 
 PLAN1 = "routing-optimal plan (stage 1)"
 PLAN2 = "operator-polished plan (stage 2)"
+PLAN_ROW = {1: "Routing-optimal\n(stage 1)", 2: "Operator-polished\n(stage 2)"}
+PLAN_WORD = {1: "routing-optimal", 2: "operator-polished"}
 LENS_ROUTING = "routing lens"
 LENS_OPERATOR = "operator lens"
+
+
+# ── plan / lens declaration, derived from the plotted column ─────────────
+# The amendment's central constraint is "never mix a plan or a lens in one
+# panel, and label every panel".  A hand-written panel title cannot enforce
+# that: swapping the plotted column leaves the title untouched.  So every
+# declaration is DERIVED from the column name, and a column this table does
+# not know about raises instead of rendering an unlabelled panel.
+_PLAN_SUFFIX = (("_plan1", 1), ("_plan2", 2), ("_stage1", 1), ("_before", 1))
+
+# Columns whose plan is not in their name.  The fleet CSV is written at the
+# FINAL plan (Task 6f column list), so every aggregate derived from it is
+# plan 2.
+PLAN_BY_COLUMN = {
+    "sys_cv": 2, "sys_peak": 2, "sys_total": 2,
+    "flat_bound": 2, "peak_gap": 2, "peak_gap_eur": 2,
+    "sum_hub_peak_fleet": 2,
+}
+_LENS_PREFIX = (("routing_", LENS_ROUTING), ("operator_", LENS_OPERATOR),
+                ("variable_", LENS_OPERATOR))
+
+
+def plan_of(col: str) -> int:
+    """1 = routing-optimal (stage 1), 2 = operator-polished (stage 2)."""
+    if col in PLAN_BY_COLUMN:
+        return PLAN_BY_COLUMN[col]
+    for suffix, plan in _PLAN_SUFFIX:
+        if suffix in col:
+            return plan
+    raise KeyError(
+        f"cannot tell which plan {col!r} belongs to -- add it to "
+        "PLAN_BY_COLUMN or give it a _plan1/_plan2/_stage1/_before suffix "
+        "before plotting it, so its panel cannot be mislabelled")
+
+
+def lens_of(col: str) -> str | None:
+    """The cost lens of a monetary column, or None for a non-cost quantity."""
+    for prefix, lens in _LENS_PREFIX:
+        if col.startswith(prefix):
+            return lens
+    return None
+
+
+def declare(col: str) -> str:
+    """The panel's plan (and lens, if it is a cost) as one label line."""
+    plan = PLAN1 if plan_of(col) == 1 else PLAN2
+    lens = lens_of(col)
+    return f"{lens} · {plan}" if lens else plan
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -82,7 +135,8 @@ class RevGrid:
     )
     REQUIRED_WAIT_COLS = (
         "wait_num_willing", "wait_num_all", "total_parcels",
-        "wait_num_willing_stage1", "mean_days", "mean_days_stage1",
+        "willing_parcels", "wait_num_willing_stage1", "wait_num_all_stage1",
+        "mean_days", "mean_days_stage1",
     )
 
     def __init__(self, rev_dir: Path, require_chosen: bool = True):
@@ -127,17 +181,21 @@ def check_grid_integrity(costs: pd.DataFrame, wait: pd.DataFrame,
         f"{label}: {len(bad)} (P, theta) cell(s) do not carry "
         f"{N_PROVIDERS} providers -- e.g. {bad.head().to_dict()}")
 
-    # 2. the theta=0 baseline is identical for every P
-    b = (costs[np.isclose(costs.share_willing, 0.0)]
-         .groupby("penalty")[["cost_stage1_eur", "cost_stage2_eur",
-                              "operator_cost_eur", "sum_hub_peak",
-                              "vehicle_days", "variable_cost_eur"]].sum())
-    assert len(b) >= 1, f"{label}: no theta=0 rows -- no baseline"
-    spread = (b.max() - b.min()).abs()
-    assert (spread < 1e-6).all(), (
+    # 2. the theta=0 baseline is identical for every P, PER PROVIDER.
+    #    Summing over providers first would let two providers drift in
+    #    opposite directions and still pass -- and lsp_knees() takes a
+    #    per-provider baseline, so that drift would silently move a knee.
+    cols = ["cost_stage1_eur", "cost_stage2_eur", "operator_cost_eur",
+            "sum_hub_peak", "vehicle_days", "variable_cost_eur"]
+    b0 = costs[np.isclose(costs.share_willing, 0.0)]
+    assert len(b0) > 0, f"{label}: no theta=0 rows -- no baseline"
+    b = b0.groupby(["provider", "penalty"])[cols].sum()
+    spread = (b.groupby("provider").max() - b.groupby("provider").min()).abs()
+    assert (spread.to_numpy() < 1e-6).all(), (
         f"{label}: the theta=0 baseline is NOT identical across P "
-        f"(max spread per column: {spread.to_dict()}) -- "
-        "the two-plan tables would be measured against a moving baseline")
+        f"(max per-provider spread per column: "
+        f"{spread.max().to_dict()}) -- the two-plan tables would be "
+        "measured against a moving baseline")
 
     # 3. both plans share the wait denominator
     dn = wait.groupby(["penalty", "share_willing"]).total_parcels.sum()
@@ -298,6 +356,16 @@ def reconstruct_operator_cost(costs: pd.DataFrame, fleet: pd.DataFrame,
     vehicle, so the per-day charge is removed and the weekly one added back.
     Returns per (penalty, share_willing): ``routing_eur``,
     ``vehicle_days``, ``sum_hub_peak``, ``variable_eur``, ``operator_eur``.
+
+    **Assumption, unverifiable inside a pre-6e run.** ``routing_col`` and the
+    fleet CSV must describe the SAME plan.  For run 2 that means
+    ``cost_stage3_eur`` against a fleet table written after stage 3 -- run 2's
+    schema carries no ``vehicle_days`` / ``sum_hub_peak`` column, so there is
+    nothing to cross-check it against in-file.  It is corroborated
+    externally: the reconstruction reproduces the controller's independently
+    computed ``run2_op`` column to 1e-6 at all four ablation points.  On a
+    v5-schema run the caller CAN and does check the fleet-derived hub peak
+    against ``sum_hub_peak``.
     """
     assert routing_col in costs.columns, f"missing {routing_col}"
     rout = (costs.groupby(["penalty", "share_willing"], as_index=False)[
@@ -313,15 +381,6 @@ def reconstruct_operator_cost(costs: pd.DataFrame, fleet: pd.DataFrame,
     out["operator_eur"] = (out.variable_eur
                            + WEEK_FIXED_COST_EUR * out.sum_hub_peak)
     return out
-
-
-def wait_metric(wait: pd.DataFrame, num_col: str = "wait_num_willing"
-                ) -> pd.DataFrame:
-    """Parcel-weighted additional wait per (P, theta) for one plan."""
-    g = (wait.groupby(["penalty", "share_willing"], as_index=False)
-         .agg(_num=(num_col, "sum"), _den=("total_parcels", "sum")))
-    g["wait_d"] = g._num / g._den
-    return g.drop(columns=["_num", "_den"])
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -453,6 +512,124 @@ def verify_copy(src: Path, dst: Path) -> dict:
     return dict(src=str(src), dst=str(dst), src_md5=src_md5,
                 dst_md5=dst_md5,
                 status="PASS" if dst_md5 == src_md5 else "FAIL")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Provenance manifest (G7): what was rendered, from which grid, when
+# ─────────────────────────────────────────────────────────────────────────
+GRID_CSVS = ("tab_costs_v2.csv", "tab_wait_v2.csv",
+             "tab_fleet_per_hub_v2.csv", "_tab_chosen_v2.csv")
+MANIFEST_NAME = "manifest.json"
+
+
+def git_head(root: Path) -> str:
+    """The current commit, or a marker -- never an exception."""
+    try:
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=15)
+        if out.returncode != 0:
+            return "unknown"
+        head = out.stdout.strip()
+        dirty = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain"],
+            capture_output=True, text=True, timeout=30)
+        return head + ("-dirty" if dirty.stdout.strip() else "")
+    except Exception:                                   # noqa: BLE001
+        return "unknown"
+
+
+def write_manifest(fig_dir: Path, rev_dir: Path, root: Path,
+                   figures: list[Path]) -> Path:
+    """Record what this render is, so ``71_`` cannot sync the wrong grid.
+
+    Holds the rev dir, the git HEAD, an ISO timestamp, the md5 + mtime of
+    every produced PNG/PDF, and the md5 + mtime of the grid CSVs the render
+    claims to summarise.  ``71_`` refuses to copy anything that does not
+    match, and refuses a render older than the grid it came from.
+    """
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    grid = {}
+    for name in GRID_CSVS:
+        f = Path(rev_dir) / name
+        if f.exists():
+            grid[name] = dict(md5=md5_of(f), mtime=f.stat().st_mtime)
+    figs = {}
+    for f in sorted(set(Path(x) for x in figures)):
+        if f.exists():
+            figs[f.name] = dict(md5=md5_of(f), mtime=f.stat().st_mtime,
+                                bytes=f.stat().st_size)
+    doc = {
+        "schema": 1,
+        "generator": "scripts/revision/70_figs_tables_v2.py",
+        "rev_dir": str(Path(rev_dir).resolve()),
+        "git_head": git_head(root),
+        "rendered_utc": datetime.now(timezone.utc).isoformat(
+            timespec="seconds"),
+        "grid_csvs": grid,
+        "figures": figs,
+    }
+    path = fig_dir / MANIFEST_NAME
+    path.write_text(json.dumps(doc, indent=2, sort_keys=True) + chr(10),
+                    encoding="utf-8")
+    return path
+
+
+def read_manifest(path: Path) -> dict:
+    doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    assert doc.get("schema") == 1, (
+        f"{path}: unknown manifest schema {doc.get('schema')!r}")
+    for key in ("rev_dir", "git_head", "rendered_utc", "figures",
+                "grid_csvs"):
+        assert key in doc, f"{path}: manifest lacks {key!r}"
+    return doc
+
+
+def check_manifest_fresh(doc: dict, fig_dir: Path) -> list[str]:
+    """Reasons this render must NOT be synced. Empty list = clean.
+
+    Three ways a render goes stale, all of which G7 has to catch BEFORE a
+    single byte is copied (Kompendium §38.8):
+
+    1. a grid CSV changed after the render -- the figures no longer show
+       what the tables say;
+    2. a figure file on disk no longer matches the md5 the manifest
+       recorded -- someone edited or replaced it;
+    3. a figure is older than the newest grid CSV -- it was carried over
+       from an earlier render rather than produced by this one.
+    """
+    reasons = []
+    rev = Path(doc["rev_dir"])
+    newest_csv = 0.0
+    for name, rec in sorted(doc["grid_csvs"].items()):
+        f = rev / name
+        if not f.exists():
+            reasons.append(f"grid table {name} is gone from {rev}")
+            continue
+        newest_csv = max(newest_csv, f.stat().st_mtime)
+        if md5_of(f) != rec["md5"]:
+            reasons.append(
+                f"grid table {name} changed since the render "
+                "-- re-run 70_ before syncing")
+    for name, rec in sorted(doc["figures"].items()):
+        f = Path(fig_dir) / name
+        if not f.exists():
+            reasons.append(f"figure {name} is missing from {fig_dir}")
+            continue
+        if md5_of(f) != rec["md5"]:
+            reasons.append(f"figure {name} changed since the render "
+                           "(md5 differs from the manifest)")
+        elif newest_csv and f.stat().st_mtime < newest_csv:
+            reasons.append(
+                f"figure {name} is OLDER than the grid tables it claims to "
+                "render -- re-run 70_ before syncing")
+    return reasons
+
+
+def find_manifests(results_root: Path) -> list[Path]:
+    """Every render manifest under ``results/*/figures/``, newest first."""
+    found = sorted(Path(results_root).glob(f"*/figures/{MANIFEST_NAME}"))
+    return sorted(found, key=lambda f: f.stat().st_mtime, reverse=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────

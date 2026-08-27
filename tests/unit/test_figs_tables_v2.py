@@ -21,6 +21,7 @@ What is gated here:
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import sys
 from pathlib import Path
 
@@ -384,3 +385,366 @@ def test_weekly_fixed_cost_is_six_vehicle_days():
     assert H.FIXED_COST_EUR == pytest.approx(FIXED_COST_EUR)
     assert H.WEEK_FIXED_COST_EUR == pytest.approx(1134.90)
     assert H.WEEK_FIXED_COST_EUR == pytest.approx(6 * H.FIXED_COST_EUR)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# I-4: the plan/lens declaration is DERIVED, never hand-written
+# ─────────────────────────────────────────────────────────────────────────
+PLOTTED_COLUMNS = [
+    ("routing_saving_plan1_pct", 1, "routing lens"),
+    ("routing_saving_plan2_pct", 2, "routing lens"),
+    ("operator_saving_plan1_pct", 1, "operator lens"),
+    ("operator_saving_plan2_pct", 2, "operator lens"),
+    ("wait_d_plan1", 1, None),
+    ("wait_d_plan2", 2, None),
+    ("mean_days_plan1", 1, None),
+    ("mean_days_plan2", 2, None),
+    ("hub_peak_plan1_vs_base_pct", 1, None),
+    ("hub_peak_plan2_vs_base_pct", 2, None),
+    ("vehicle_days_plan2_vs_base_pct", 2, None),
+    ("sys_cv", 2, None),
+    ("variable_plan1_eur", 1, "operator lens"),
+    ("cost_stage1_eur", 1, None),
+    ("operator_cost_before_eur", 1, "operator lens"),
+]
+
+
+@pytest.mark.parametrize("col,plan,lens", PLOTTED_COLUMNS)
+def test_plan_and_lens_are_read_off_the_column(col, plan, lens):
+    assert H.plan_of(col) == plan
+    assert H.lens_of(col) == lens
+
+
+@pytest.mark.parametrize("col,plan,lens", PLOTTED_COLUMNS)
+def test_declare_names_the_right_plan_and_lens(col, plan, lens):
+    label = H.declare(col)
+    assert H.PLAN_WORD[plan] in label
+    assert H.PLAN_WORD[2 if plan == 1 else 1] not in label
+    if lens is None:
+        assert "lens" not in label
+    else:
+        assert label.startswith(lens)
+        other = (H.LENS_OPERATOR if lens == H.LENS_ROUTING
+                 else H.LENS_ROUTING)
+        assert other not in label
+
+
+def test_an_unknown_column_refuses_to_be_labelled():
+    """Better a traceback than a panel whose title is a guess."""
+    with pytest.raises(KeyError, match="cannot tell which plan"):
+        H.plan_of("some_new_metric_pct")
+
+
+def test_swapping_the_column_swaps_the_label():
+    """The regression the derivation exists to prevent."""
+    a = H.declare("operator_saving_plan2_pct")
+    b = H.declare("operator_saving_plan1_pct")
+    assert a != b
+    assert H.PLAN_WORD[2] in a and H.PLAN_WORD[1] in b
+
+
+def test_no_panel_title_in_the_driver_hardcodes_a_plan():
+    """Every declaration in 70_ must come through H.declare / H.PLAN_*.
+
+    A hand-written "(stage 2)" in a title is invisible to every gate, so it
+    is banned outright outside the module docstring.
+    """
+    src = (REV / "70_figs_tables_v2.py").read_text(encoding="utf-8")
+    body = src.split('"""', 2)[2]          # drop the module docstring
+    for literal in ("(stage 1)", "(stage 2)", "routing-optimal plan",
+                    "operator-polished plan"):
+        assert literal not in body, (
+            f"70_figs_tables_v2.py hand-writes {literal!r} outside its "
+            "docstring -- derive it from H.declare()/H.PLAN_* instead")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# I-2: the provenance manifest
+# ─────────────────────────────────────────────────────────────────────────
+def _render(tmp_path, name, fig_bytes=b"%PDF-1.4 figure\n"):
+    """A fake grid directory plus a fake render of it."""
+    rev = tmp_path / name
+    figs = rev / "figures"
+    figs.mkdir(parents=True)
+    for csv in H.GRID_CSVS:
+        (rev / csv).write_text(f"col\n{name}\n", encoding="utf-8")
+    produced = []
+    for stem in ("fig4_freq_mix_two_plans", "fig5_grid_heatmap_v2",
+                 "fig6_structural_v2"):
+        f = figs / f"{stem}.pdf"
+        f.write_bytes(fig_bytes + name.encode())
+        produced.append(f)
+    H.write_manifest(figs, rev, tmp_path, produced)
+    return rev, figs
+
+
+def test_manifest_records_the_grid_it_was_rendered_from(tmp_path):
+    rev, figs = _render(tmp_path, "gridA")
+    doc = H.read_manifest(figs / H.MANIFEST_NAME)
+    assert Path(doc["rev_dir"]) == rev.resolve()
+    assert set(doc["grid_csvs"]) == set(H.GRID_CSVS)
+    assert len(doc["figures"]) == 3
+    for name, rec in doc["figures"].items():
+        assert rec["md5"] == H.md5_of(figs / name)
+    assert doc["rendered_utc"].endswith("+00:00")
+    assert H.check_manifest_fresh(doc, figs) == []
+
+
+def test_manifest_rejects_an_unknown_schema(tmp_path):
+    rev, figs = _render(tmp_path, "gridA")
+    p = figs / H.MANIFEST_NAME
+    import json
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    doc["schema"] = 99
+    p.write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(AssertionError, match="unknown manifest schema"):
+        H.read_manifest(p)
+
+
+def test_find_manifests_sees_every_render(tmp_path):
+    _render(tmp_path, "gridA")
+    assert len(H.find_manifests(tmp_path)) == 1
+    _render(tmp_path, "gridB")
+    found = H.find_manifests(tmp_path)
+    assert len(found) == 2
+    assert {f.parent.parent.name for f in found} == {"gridA", "gridB"}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# I-3: staleness must FAIL, not warn
+# ─────────────────────────────────────────────────────────────────────────
+def test_a_changed_grid_table_makes_the_render_stale(tmp_path):
+    rev, figs = _render(tmp_path, "gridA")
+    doc = H.read_manifest(figs / H.MANIFEST_NAME)
+    (rev / "tab_costs_v2.csv").write_text("col\nrerun\n", encoding="utf-8")
+    reasons = H.check_manifest_fresh(doc, figs)
+    assert any("tab_costs_v2.csv changed since the render" in r
+               for r in reasons)
+
+
+def test_a_figure_older_than_the_grid_is_stale(tmp_path):
+    """The exact §38.8 shape: the tables moved on, the figure did not."""
+    import os
+    rev, figs = _render(tmp_path, "gridA")
+    doc = H.read_manifest(figs / H.MANIFEST_NAME)
+    fig = figs / "fig5_grid_heatmap_v2.pdf"
+    old = fig.stat().st_mtime - 10_000
+    os.utime(fig, (old, old))
+    reasons = H.check_manifest_fresh(doc, figs)
+    assert any("OLDER than the grid tables" in r for r in reasons)
+    # ... and its md5 is untouched, so md5 equality alone would have passed
+    assert H.md5_of(fig) == doc["figures"][fig.name]["md5"]
+
+
+def test_an_edited_figure_is_stale(tmp_path):
+    rev, figs = _render(tmp_path, "gridA")
+    doc = H.read_manifest(figs / H.MANIFEST_NAME)
+    (figs / "fig6_structural_v2.pdf").write_bytes(b"STALE FIGURE")
+    reasons = H.check_manifest_fresh(doc, figs)
+    assert any("fig6_structural_v2.pdf changed since the render" in r
+               for r in reasons)
+
+
+def test_a_deleted_figure_is_stale(tmp_path):
+    rev, figs = _render(tmp_path, "gridA")
+    doc = H.read_manifest(figs / H.MANIFEST_NAME)
+    (figs / "fig4_freq_mix_two_plans.pdf").unlink()
+    assert any("is missing from" in r
+               for r in H.check_manifest_fresh(doc, figs))
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 71_ -- provenance and the §38.8 tripwire, end to end
+# ─────────────────────────────────────────────────────────────────────────
+@pytest.fixture
+def sync(tmp_path, monkeypatch):
+    """``71_sync_paper_figs`` wired to a throwaway results/ + paper/ tree.
+
+    The real ``paper/`` folders are never touched by this test module.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "_sync71", REV / "71_sync_paper_figs.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    results = tmp_path / "results"
+    paper = tmp_path / "paper" / "EWGT_2026_rev1"
+    sub = tmp_path / "paper" / "EWGT_2026"
+    (sub / "figures").mkdir(parents=True)
+    monkeypatch.setattr(mod, "RESULTS", results)
+    monkeypatch.setattr(mod, "PAPER_REV", paper)
+    monkeypatch.setattr(mod, "PAPER_SUB", sub)
+    monkeypatch.setattr(mod, "ROOT", tmp_path)
+    return mod, results, paper, sub
+
+
+def _grid(results: Path, name: str, payload: bytes = b"%PDF-1.4 v5\n"):
+    rev = results / name
+    figs = rev / "figures"
+    figs.mkdir(parents=True)
+    for csv in H.GRID_CSVS:
+        (rev / csv).write_text(f"col\n{name}\n", encoding="utf-8")
+    produced = []
+    for stem in ("fig4_freq_mix_two_plans", "fig5_grid_heatmap_v2",
+                 "fig6_structural_v2", "fig5b_offdiagonal_v2",
+                 "fig4b_mean_days"):
+        f = figs / f"{stem}.pdf"
+        f.write_bytes(payload + stem.encode() + name.encode())
+        produced.append(f)
+    H.write_manifest(figs, rev, results.parent, produced)
+    return rev, figs
+
+
+def test_71_refuses_when_nothing_was_rendered(sync, capsys):
+    mod, results, _, _ = sync
+    results.mkdir(parents=True)
+    assert mod.main([]) == 1
+    assert "no render manifest" in capsys.readouterr().out
+
+
+def test_71_bare_call_refuses_to_choose_between_two_renders(sync, capsys):
+    """The failure this gate exists for: 70_ ran on the head grid, someone
+    runs 71_ with no flag, and the OLD grid quietly reaches the paper."""
+    mod, results, paper, _ = sync
+    _grid(results, "gridB_old")
+    _grid(results, "gridA_head")
+    assert mod.main([]) == 1
+    out = capsys.readouterr().out
+    assert "2 render manifests exist" in out
+    assert "gridA_head" in out and "gridB_old" in out
+    assert not (paper / "figures").exists(), "refusal must not copy anything"
+
+
+def test_71_bare_call_uses_the_only_render(sync):
+    mod, results, paper, _ = sync
+    _grid(results, "gridA_head")
+    assert mod.main([]) == 0
+    assert (paper / "figures" / "fig5_cost_wait_fleet_heatmaps.pdf").exists()
+
+
+def test_71_refuses_a_rev_dir_whose_manifest_is_for_another_grid(sync,
+                                                                capsys):
+    mod, results, paper, _ = sync
+    _grid(results, "gridA")
+    other = results / "gridB"
+    (other / "figures").mkdir(parents=True)
+    # gridB carries gridA's manifest -- a copy-paste, or a stale checkout
+    shutil.copy2(results / "gridA" / "figures" / H.MANIFEST_NAME,
+                 other / "figures" / H.MANIFEST_NAME)
+    assert mod.main(["--rev-dir", str(other)]) == 1
+    assert "was written for" in capsys.readouterr().out
+    assert not (paper / "figures").exists()
+
+
+def test_71_refuses_a_rev_dir_that_was_never_rendered(sync, capsys):
+    mod, results, paper, _ = sync
+    rev = results / "gridA"
+    rev.mkdir(parents=True)
+    assert mod.main(["--rev-dir", str(rev)]) == 1
+    assert "does not exist" in capsys.readouterr().out
+
+
+def test_71_refuses_and_copies_nothing_when_the_grid_moved_on(sync, capsys):
+    """I-3: a figure older than the tables it claims to render FAILS."""
+    import os
+    mod, results, paper, _ = sync
+    rev, figs = _grid(results, "gridA")
+    # the grid was re-run after the figures were drawn
+    later = figs.joinpath("fig5_grid_heatmap_v2.pdf").stat().st_mtime + 10_000
+    for csv in H.GRID_CSVS:
+        os.utime(rev / csv, (later, later))
+    assert mod.main([]) == 1
+    out = capsys.readouterr().out
+    assert "REFUSED -- the render is stale" in out
+    assert "OLDER than the grid tables" in out
+    assert not (paper / "figures").exists(), "a stale render must not copy"
+
+
+def test_71_refuses_when_a_source_figure_was_edited(sync, capsys):
+    mod, results, paper, _ = sync
+    rev, figs = _grid(results, "gridA")
+    (figs / "fig6_structural_v2.pdf").write_bytes(b"HAND-EDITED")
+    assert mod.main([]) == 1
+    assert "changed since the render" in capsys.readouterr().out
+    assert not (paper / "figures").exists()
+
+
+def test_71_fails_when_a_destination_equals_the_submission(sync, capsys):
+    """The §38.8 trap itself: a warning that exits 0 is not a gate."""
+    mod, results, paper, sub = sync
+    rev, figs = _grid(results, "gridA")
+    # the frozen submission happens to be byte-identical to what we sync
+    (sub / "figures" / "fig5_cost_wait_fleet_heatmaps.pdf").write_bytes(
+        (figs / "fig5_grid_heatmap_v2.pdf").read_bytes())
+    assert mod.main([]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL" in out
+    assert "byte-identical to the frozen submission" in out
+    # the copy still happened -- it is the VERDICT that fails, not the write
+    assert (paper / "figures" / "fig5_cost_wait_fleet_heatmaps.pdf").exists()
+
+
+def test_71_identical_to_submission_can_be_overridden_explicitly(sync):
+    mod, results, paper, sub = sync
+    rev, figs = _grid(results, "gridA")
+    (sub / "figures" / "fig5_cost_wait_fleet_heatmaps.pdf").write_bytes(
+        (figs / "fig5_grid_heatmap_v2.pdf").read_bytes())
+    assert mod.main(["--allow-identical-to-submission"]) == 0
+
+
+def test_71_dry_run_writes_nothing_and_reports_the_gap(sync, capsys):
+    mod, results, paper, _ = sync
+    _grid(results, "gridA")
+    assert mod.main(["--dry-run"]) == 1
+    assert "DRY RUN" in capsys.readouterr().out
+    assert not (paper / "figures").exists()
+
+
+def test_71_real_sync_verifies_every_destination_by_md5(sync, capsys):
+    mod, results, paper, _ = sync
+    rev, figs = _grid(results, "gridA")
+    assert mod.main([]) == 0
+    out = capsys.readouterr().out
+    assert out.count("PASS") >= 6
+    for stem, (pre, els) in mod.FIGURE_MAP.items():
+        src = figs / f"{stem}.pdf"
+        assert H.md5_of(paper / "figures" / pre) == H.md5_of(src)
+        assert H.md5_of(paper / "elsevier_source" / els) == H.md5_of(src)
+    assert mod.main([]) == 0          # idempotent
+
+
+def test_71_repairs_a_corrupted_destination(sync):
+    mod, results, paper, _ = sync
+    rev, figs = _grid(results, "gridA")
+    assert mod.main([]) == 0
+    dst = paper / "figures" / "fig5_cost_wait_fleet_heatmaps.pdf"
+    dst.write_bytes(b"STALE FIGURE FROM THE SUBMISSION")
+    assert mod.main(["--dry-run"]) == 1          # detected
+    assert mod.main([]) == 0                     # repaired
+    assert H.md5_of(dst) == H.md5_of(figs / "fig5_grid_heatmap_v2.pdf")
+
+
+def test_71_companions_are_opt_in(sync):
+    mod, results, paper, _ = sync
+    _grid(results, "gridA")
+    assert mod.main([]) == 0
+    assert not (paper / "figures" / "fig5b_offdiagonal_lens_plan.pdf").exists()
+    assert mod.main(["--include-companions"]) == 0
+    assert (paper / "figures" / "fig5b_offdiagonal_lens_plan.pdf").exists()
+
+
+def test_71_never_shells_out_to_git():
+    """elsevier_source/ is gitignored on purpose; this script must not stage
+    it, so it may not run git at all."""
+    src = (REV / "71_sync_paper_figs.py").read_text(encoding="utf-8")
+    body = src.split(chr(34) * 3, 2)[2]
+    for banned in ("import subprocess", "os.system", "check_output",
+                   "Popen"):
+        assert banned not in body, f"71_ references {banned!r}"
+    # every remaining mention of git is text: the gitignore reminder, the
+    # gitignored-destination label, or the manifest's recorded HEAD
+    import re
+    allowed = ("gitignored", "git_head", "git HEAD", "`git add`")
+    for hit in re.finditer("git", body):
+        ctx = body[max(0, hit.start() - 12):hit.start() + 12]
+        assert any(a in ctx for a in allowed), (
+            f"71_ mentions git outside its warning text: {ctx!r}")
