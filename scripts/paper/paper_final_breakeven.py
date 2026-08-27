@@ -18,12 +18,33 @@ Outputs (in 09_region_analysis):
   fig_BE2_breakeven_share_by_raumtyp.{png,pdf}
   fig_BE3_spatial_breakeven.{png,pdf}
   fig_BE4_hubdist_area_heatmap.{png,pdf}
+
+DEPRECATED (2026-08 revision). Stale entry point: it recomputes totals
+WITHOUT the pool term and predates the universal tour rule, the two cost
+lenses and the operator polish, so its numbers are not comparable with the
+current results. Use scripts/revision/61_grid_run_v2.py for the grid and
+scripts/revision/70_figs_tables_v2.py for figures and tables.
 """
 from __future__ import annotations
 import importlib.util, pickle, sys, warnings
 from pathlib import Path
 
 warnings.filterwarnings("ignore")
+
+# --- DEPRECATED ENTRY POINT (2026-08 revision) -----------------------------
+import warnings as _deprecation_warnings
+
+_deprecation_warnings.warn(
+    "paper_final_breakeven.py is a STALE entry point: it recomputes totals WITHOUT the pool "
+    "term and predates the universal tour rule, the two cost lenses and the "
+    "operator polish. Its numbers are NOT comparable with the 2026-08 "
+    "revision. Use scripts/revision/61_grid_run_v2.py for the grid and "
+    "scripts/revision/70_figs_tables_v2.py for figures and tables.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+# ---------------------------------------------------------------------------
+
 try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:

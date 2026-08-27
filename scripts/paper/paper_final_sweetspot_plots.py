@@ -9,12 +9,33 @@ No in-figure explanations (captions carry those). Four standalone figures:
   fig_PF5_shadow_price    Implied marginal €/parcel-day (central diff) vs nominal P,
                           with y=x reference — confirms P is the shadow price.
   fig_PF6_provider_pareto Per-LSP Pareto frontiers at share=100% — heterogeneity.
+
+DEPRECATED (2026-08 revision). Stale entry point: it recomputes totals
+WITHOUT the pool term and predates the universal tour rule, the two cost
+lenses and the operator polish, so its numbers are not comparable with the
+current results. Use scripts/revision/61_grid_run_v2.py for the grid and
+scripts/revision/70_figs_tables_v2.py for figures and tables.
 """
 from __future__ import annotations
 import sys, warnings
 from pathlib import Path
 
 warnings.filterwarnings("ignore")
+
+# --- DEPRECATED ENTRY POINT (2026-08 revision) -----------------------------
+import warnings as _deprecation_warnings
+
+_deprecation_warnings.warn(
+    "paper_final_sweetspot_plots.py is a STALE entry point: it recomputes totals WITHOUT the pool "
+    "term and predates the universal tour rule, the two cost lenses and the "
+    "operator polish. Its numbers are NOT comparable with the 2026-08 "
+    "revision. Use scripts/revision/61_grid_run_v2.py for the grid and "
+    "scripts/revision/70_figs_tables_v2.py for figures and tables.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+# ---------------------------------------------------------------------------
+
 try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:

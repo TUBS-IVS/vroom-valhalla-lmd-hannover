@@ -1,5 +1,11 @@
 # EWGT 2026 — Revision rev1: Änderungsprotokoll
 
+> **Fortsetzung:** Die Änderungen der Modell-Revision 2026-08 (universelle
+> Tour-Regel, zwei Kostenlinsen, Operator-Polish, BundleHead) stehen in
+> [`docs/CHANGES_rev1.md`](../../docs/CHANGES_rev1.md) — eine Zeile je
+> geänderter Aussage (alt → neu → Beleg). Dieses Dokument bleibt das Protokoll
+> der Reviewer-Runde und wird nicht zurückgezogen.
+
 Basis: eingereichte Version (`TRPRO_EWGT2026.tex` aus der Submission-Zip).
 Bearbeitet: Elsevier-Master unter `elsevier_source/` (gitignored, leak-sicher).
 Kompiliert: 9 S. (tectonic-Proxy) = unverändert zur Baseline → in MiKTeX/Elsevier voraussichtlich weiter 8 S. (**finale Abnahme durch Lasse**).
