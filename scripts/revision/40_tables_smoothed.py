@@ -30,6 +30,14 @@ Writes to results/revision_2026_07/tables/:
       "validation incomplete -- skipped" for these two tables and exits 0
       (the other two validation-independent tables are still written).
       Re-run this script after Task 7 finishes to backfill them.
+
+Input/output root: ``C.OUT_DIR``, overridable with the ``REV_DIR``
+environment variable (default ``results/revision_2026_07`` -- this script
+reproduces the submitted revision figure when run with no environment set).
+``scripts/revision/70_figs_tables_v2.py`` sets ``REV_DIR`` to the v5-schema
+grid.  NOTE: this builder reads the 2026-07 STAGE-3 schema
+(``tab_costs_smoothed.csv`` etc.); pointing ``REV_DIR`` at a v5-schema grid
+gives it no inputs -- ``70_`` renders the v5 figures itself.
 """
 from __future__ import annotations
 import sys

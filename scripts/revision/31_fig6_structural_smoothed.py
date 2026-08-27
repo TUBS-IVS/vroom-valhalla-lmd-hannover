@@ -23,6 +23,14 @@ Data-source substitutions relative to the frozen submission figure:
     no PLZ-level join logic. Flagging per CLAUDE.md's discrepancy rule).
 
 Output: results/revision_2026_07/figures/fig6_structural_grid_6_smoothed.{png,pdf}
+
+Input/output root: ``C.OUT_DIR``, overridable with the ``REV_DIR``
+environment variable (default ``results/revision_2026_07`` -- this script
+reproduces the submitted revision figure when run with no environment set).
+``scripts/revision/70_figs_tables_v2.py`` sets ``REV_DIR`` to the v5-schema
+grid.  NOTE: this builder reads the 2026-07 STAGE-3 schema
+(``tab_costs_smoothed.csv`` etc.); pointing ``REV_DIR`` at a v5-schema grid
+gives it no inputs -- ``70_`` renders the v5 figures itself.
 """
 from __future__ import annotations
 import sys

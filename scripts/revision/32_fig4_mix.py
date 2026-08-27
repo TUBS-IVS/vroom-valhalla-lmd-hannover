@@ -10,6 +10,14 @@ longer just asserted narratively: it is checked in code against Stage 3
 before any plotting happens.
 
 Output: results/revision_2026_07/figures/fig4_SM_mix_pct_8P.{png,pdf}
+
+Input/output root: ``C.OUT_DIR``, overridable with the ``REV_DIR``
+environment variable (default ``results/revision_2026_07`` -- this script
+reproduces the submitted revision figure when run with no environment set).
+``scripts/revision/70_figs_tables_v2.py`` sets ``REV_DIR`` to the v5-schema
+grid.  NOTE: this builder reads the 2026-07 STAGE-3 schema
+(``tab_costs_smoothed.csv`` etc.); pointing ``REV_DIR`` at a v5-schema grid
+gives it no inputs -- ``70_`` renders the v5 figures itself.
 """
 from __future__ import annotations
 import sys

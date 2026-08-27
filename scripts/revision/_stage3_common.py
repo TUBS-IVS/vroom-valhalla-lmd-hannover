@@ -8,6 +8,7 @@ and schedule_idx_* columns in the run outputs are only valid under this
 exact enumerate_schedules() ordering.
 """
 from __future__ import annotations
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -29,7 +30,19 @@ MAX_HOLD = 3
 BASE_TOTAL = 1909747.75
 
 RUN_DIR = ROOT / "results" / "runs" / "path2_2026_05_29"
-OUT_DIR = ROOT / "results" / "revision_2026_07"
+
+# Output/input root of the revision tables and figures.  The four builders
+# (30_/31_/32_/40_) read their inputs from here and write figures/ + tables/
+# here, so a single env var re-points the whole set at another grid without
+# copying the scripts.  The DEFAULT is deliberately the 2026-07 Stage-3
+# directory: those four builders reproduce the submitted revision figures
+# byte-for-byte when run with no environment set.  `70_figs_tables_v2.py`
+# sets REV_DIR to the v5-schema grid (results/revision_2026_08_v5 by
+# default, or Task 11's head grid via --rev-dir).
+OUT_DIR = Path(os.environ.get("REV_DIR",
+                              ROOT / "results" / "revision_2026_07"))
+if not OUT_DIR.is_absolute():
+    OUT_DIR = (ROOT / OUT_DIR).resolve()
 MODEL_PKL = ROOT / "results" / "supplementary" / "sweep_v3_mergefix" / "daganzo_hybrid_v3aug_median.pkl"
 POOL_CSV = ROOT / "results" / "supplementary" / "sweep_v3_mergefix" / "training_matrix.csv"
 CKPT = ROOT / "results" / "checkpoints"

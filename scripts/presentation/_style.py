@@ -72,6 +72,13 @@ RAUMTYP = {"urban": "#1d3557", "suburban": "#2a9d8f", "rural": "#e76f51"}
 # Weekly delivery frequency — paper fig 4 FREQ_COLOR.
 FREQ = {2: "#1d3557", 3: "#2a9d8f", 4: "#e9c46a", 5: "#f4a261", 6: "#e76f51"}
 
+# Carrier type — paper fig 6 panel (b) CLASS_PAL
+# (scripts/revision/31_fig6_structural_smoothed.py). Three service/cost
+# postures derived from the per-LSP knee P*, NOT provider identity.
+CARRIER = {"Cost-aggressive": "#2a9d8f", "Hybrid": "#e9c46a",
+           "Service-bound": "#d62828"}
+CARRIER_ORDER = ["Cost-aggressive", "Hybrid", "Service-bound"]
+
 # Providers — paper PROV_COLOR (scripts/paper/paper_final_v2.py), the palette
 # behind fig 1 and the LSP colouring of fig 3.
 PROVIDER = {"Amazon": "#003049", "DHL": "#d62828", "DPD": "#f77f00",
