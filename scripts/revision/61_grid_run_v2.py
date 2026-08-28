@@ -132,6 +132,28 @@ head), asserts its per-kind totals reconstruct ``express_cost_eur`` and
 unevenly (express 21.6 %, Amazon/DHL 0 %) — so the fallback share is a
 headline number of this run, not an edge case.
 
+**PER-CELL PLAN COSTS (Task 11c).** ``_tab_chosen_v2.csv`` now carries what
+EACH cell pays, at both plans, so Fig. 6 (b)-(f)'s per-PLZ EUR saving never
+needs a post-hoc reconstruction again. ``cell_plan_costs`` decomposes the
+same three disjoint terms ``run_triple`` sums into totals — own tours read
+straight off ``dd_cost_mx`` (0 for a cell that is pooled or express-only on
+every one of its instances) and every pooled small-delivery / express-
+partition group price the cell belongs to, attributed PARCEL-PROPORTIONALLY
+across the group's members (``_parcel_shares``) — using the SAME
+``_express_members`` / ``_express_partition`` / ``_smallday_members`` /
+``_smallday_partition`` / ``price_group`` calls the cost path and
+``head_usage`` already make, so this is bookkeeping on prices already
+computed, never a second opinion reached some other way. Written for BOTH
+the stage-1 (routing-optimal) and stage-2 (operator-polished) plans as
+``*_stage1`` / ``*_stage2`` columns, and asserted per triple: Sigma_cells
+``cell_cost_eur_stage{1,2}`` == ``cost_stage{1,2}_eur``, to the same
+``_tol`` window the dd+express+pool-vs-tracked-cost gate below already uses.
+Task 13B's independent post-hoc ``72_per_cell_costs_v2.py`` writes the
+identical column names under the identical parcel-proportional rule
+(implemented independently, not by importing one from the other), so a
+pre-11c grid it reconstructs and a v7+ grid carrying these columns natively
+are comparable by definition, not by coincidence.
+
 ONE deliberate deviation from the canonical wiring, see ``--init-proxy``: the
 stage-1 warm-start proxy reads ``cost_3d_raw`` (the unpooled per-cell
 prediction, i.e. exactly what ``cost_3d`` meant before the rev1 small-delivery
@@ -149,17 +171,19 @@ _tab_chosen_v2.csv block is short (killed mid-append) is redone, not trusted.
 Run OUTSIDE the agent harness (~59-min kill rule):
   Start-Process .venv\\Scripts\\python.exe -ArgumentList "scripts/revision/61_grid_run_v2.py","--head","installed" -RedirectStandardOutput results/revision_2026_08_v6/61.log -RedirectStandardError results/revision_2026_08_v6/61.err
 
-SCHEMA CHANGE (Tasks 6e/6f/11): ``tab_costs_v2.csv`` gained the operator-lens
-and best-of-N columns below plus the Task-11 head columns, ``tab_wait_v2.csv``
-gained the stage-1 plan's wait, all four tables gained ``head_id``, and there
-is a fifth table (``tab_head_usage_v2.csv``). ``append_rows`` writes a header
-only when it CREATES the file — so appending to an older run's files would
-silently produce a ragged CSV (the 6e/6f columns sit BETWEEN
-``cost_stage3_eur`` and ``imbalance_before``, so every later column would
-misalign). ``append_rows`` therefore compares an existing file's header
-against the frame it is about to append and RAISES on mismatch, and the
-default output directory is ``results/revision_2026_08_v6/``. Run 2
-(``revision_2026_08``), the v3 stage-1-only ablation, the v4
+SCHEMA CHANGE (Tasks 6e/6f/11/11c): ``tab_costs_v2.csv`` gained the
+operator-lens and best-of-N columns below plus the Task-11 head columns,
+``tab_wait_v2.csv`` gained the stage-1 plan's wait, all four tables gained
+``head_id``, there is a fifth table (``tab_head_usage_v2.csv``), and
+``_tab_chosen_v2.csv`` gained Task 11c's native per-cell plan-cost columns.
+``append_rows`` writes a header only when it CREATES the file — so appending
+to an older run's files would silently produce a ragged CSV (the 6e/6f
+columns sit BETWEEN ``cost_stage3_eur`` and ``imbalance_before``, and the
+11c columns are appended after ``schedule_idx_system_smoothed``, so every
+later column would misalign). ``append_rows`` therefore compares an existing
+file's header against the frame it is about to append and RAISES on
+mismatch, and the default output directory is ``results/revision_2026_08_v6/``.
+Run 2 (``revision_2026_08``), the v3 stage-1-only ablation, the v4
 frequency-preserving grid and the v5 head-free grid stay where they are,
 read-only. ``head_manifest.json`` additionally pins a directory to ONE head,
 which the column check cannot do (two heads produce identical schemas).
@@ -168,13 +192,31 @@ TWO PLANS, TWO LENSES. Every table now carries BOTH the stage-1 plan (the
 routing optimum) and the stage-2 plan (the operator-polished one). The
 convention is: **the plain column name is the STAGE-2 / final plan**, and the
 stage-1 value carries a ``_stage1`` suffix or lives in a ``*_before`` column.
+Task 11c's per-cell cost columns are the one exception: BOTH plans carry an
+explicit suffix (``_stage1`` / ``_stage2``), because there is no bare/plain
+per-cell name that would unambiguously mean "final" once ``--stage3 on``
+lets stage 3 diverge from stage 2 — the identity assert is against
+``cost_stage1_eur`` / ``cost_stage2_eur`` specifically, never
+``cost_stage3_eur``.
 
 Outputs (results/revision_2026_08_v6/, or $REV2_OUT_DIR); every table carries
 ``head_id``:
   _tab_chosen_v2.csv        penalty, share_willing, provider, head_id, plz,
                             schedule_idx_stage1, schedule_idx_balanced,
                             schedule_idx_system_smoothed
-                            (== _balanced whenever stage 3 is off)
+                            (== _balanced whenever stage 3 is off), plus
+                            Task 11c's native per-cell plan costs at the
+                            stage-1 and stage-2 (operator) plans:
+                            own_cost_eur_{stage1,stage2} (dd_cost_mx at the
+                            cell's own tour; 0 for a pooled/express-only
+                            cell), pool_share_eur_{stage1,stage2} and
+                            express_share_eur_{stage1,stage2}
+                            (parcel-proportional shares of every pooled
+                            small-delivery / express-partition group price
+                            the cell belongs to), cell_cost_eur_{stage1,stage2}
+                            (the sum — asserted == cost_stage{1,2}_eur per
+                            triple, fail loud) and cell_parcels_week (a cell
+                            property, identical under both plans)
   tab_costs_v2.csv          per (P, theta, provider): dd / express / pool split
                             at the final choice (+ stage totals), plus the
                             operator lens — vehicle_days, fixed_cost_eur,
@@ -781,6 +823,119 @@ def head_usage_rows(P: float, th: float, prov: str, usage: dict,
         head_cost_eur=float(usage[kind]["cost_head_eur"]),
         head_cost_share=float(usage[kind]["head_cost_share"]),
     ) for kind in USAGE_KINDS]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Task 11c — native per-cell plan costs: own tours, pooled and express shares
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _parcel_shares(members: tuple[int, ...], weights: np.ndarray) -> np.ndarray:
+    """Parcel-proportional weights of a tour's members, summing to 1.
+
+    This is the SAME allocation rule Task 13B's post-hoc
+    ``72_per_cell_costs_v2.py`` uses (its ``_shares`` is the identical
+    expression, written independently so the runner's native columns and
+    72_'s reconstruction of an older grid agree by definition, not by
+    importing one from the other). Fails loud on a zero-parcel group: both
+    partitions are built only from cells carrying demand that day
+    (``_express_members`` requires ``raw_express > 0``, ``_smallday_members``
+    requires an ACTIVE, ``small_delivery_mask``-ed instance), so a zero total
+    would mean the group came from somewhere this function does not expect,
+    and an arbitrary split would silently hide that.
+    """
+    w = np.array([float(weights[z]) for z in members], dtype=np.float64)
+    tot = w.sum()
+    assert tot > 0, (
+        f"a realised tour with members {members} carries {tot} parcels — "
+        "there is no parcel-proportional share of its price")
+    return w / tot
+
+
+def cell_plan_costs(chosen: np.ndarray, hub_plz_list: list, schedules: list,
+                    m: dict) -> dict[str, np.ndarray | float]:
+    """Per-cell routing-cost decomposition of plan *chosen* (Task 11c).
+
+    Splits the same three disjoint terms ``run_triple`` sums into totals —
+    own tours (``dd_cost_mx``), the pooled small-delivery groups and the
+    express residual pool — down to one cell, so ``_tab_chosen_v2.csv``
+    never needs a post-hoc reconstruction of what one postal-code area costs.
+    Pooled and express group prices are attributed PARCEL-PROPORTIONALLY
+    (:func:`_parcel_shares`); own-tour cost already lives at cell granularity
+    in ``dd_cost_mx`` and is 0 for a cell that is pooled or express-only on
+    every one of its instances.
+
+    Uses the SAME partition/pricing helpers the cost path and
+    :func:`head_usage` use — ``_express_members`` / ``_express_partition`` /
+    ``_smallday_members`` / ``_smallday_partition`` / ``price_group`` — with
+    whatever head (or none) is already installed on *m*, so this is
+    bookkeeping on prices the plan was ALREADY priced with (a warm L1 memo
+    hit whenever *chosen* has already been priced, which stage 1/2 always
+    have), never a second opinion computed some other way.
+
+    Returns a dict of ``(n_plz,)`` arrays — ``own_cost``, ``pool_share``,
+    ``express_share``, ``cell_cost`` (their sum) — plus the three totals
+    ``dd_total``, ``pool_total``, ``express_total`` for the caller's own
+    bookkeeping.
+    """
+    chosen = np.asarray(chosen, dtype=np.int64)
+    n_plz = len(chosen)
+    pidx = np.arange(n_plz)
+    dd_cost_mx = m["dd_cost_mx"]
+    raw_express = m["raw_express"]
+    expr_stops = m["expr_stops"]
+    head = m.get("bundle_head")
+
+    own_cost = dd_cost_mx[pidx, chosen].astype(np.float64).copy()
+    pool_share = np.zeros(n_plz)
+    express_share = np.zeros(n_plz)
+
+    for hi in range(len(hub_plz_list)):
+        for d in range(C.N_DAYS):
+            contributing, _ = _express_members(
+                hi, d, chosen, hub_plz_list, schedules, raw_express, m)
+            if contributing:
+                for g in _express_partition(contributing, d, raw_express,
+                                            expr_stops, m):
+                    price = float(price_group(g, d, m, kind="express",
+                                              head=head))
+                    w = _parcel_shares(g, raw_express[:, d])
+                    for k, z in enumerate(g):
+                        express_share[z] += price * w[k]
+
+            small, _k = _smallday_members(hi, d, chosen, hub_plz_list, m)
+            if small:
+                parts, parcels, stops = _smallday_partition(
+                    hi, d, chosen, small, m)
+                for g in parts:
+                    price = float(price_group(
+                        g, d, m, kind="delivery", parcels_by_cell=parcels,
+                        stops_by_cell=stops, freq=1.0, head=head))
+                    w = _parcel_shares(g, parcels)
+                    for k, z in enumerate(g):
+                        pool_share[z] += price * w[k]
+
+    cell_cost = own_cost + pool_share + express_share
+    return dict(own_cost=own_cost, pool_share=pool_share,
+               express_share=express_share, cell_cost=cell_cost,
+               dd_total=float(own_cost.sum()),
+               pool_total=float(pool_share.sum()),
+               express_total=float(express_share.sum()))
+
+
+def _assert_cell_cost_identity(cell_cost: np.ndarray, ref: float,
+                               ref_col: str, label: str) -> None:
+    """Sigma_cells cell_cost_eur == the grid's own routing total (Task 11c).
+
+    Uses the same ``_tol`` window ``run_triple`` already uses for its own
+    dd+express+pool-vs-tracked-cost gate: a tenth of a cent, far above what
+    two summation orders of the same memoised group prices can differ by and
+    far below anything that could be a real bookkeeping defect.
+    """
+    got = float(cell_cost.sum())
+    assert abs(got - ref) <= _tol(ref), (
+        f"IDENTITY GATE FAILED {label}: sum(cells) cell_cost_eur = "
+        f"{got:.6f} != {ref_col} = {ref:.6f} "
+        f"(delta {got - ref:.3e}, tol {_tol(ref):.3e})")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1484,12 +1639,37 @@ def run_triple(P: float, th: float, prov: str, od: dict, prep: dict, m: dict,
         mean_days_stage1=float(sched_size[chosen_s1].mean()),
     )]
 
+    # ── Task 11c: native per-cell plan costs, both plans ─────────────────
+    # Reuses the exact group prices already computed above — warm L1 memo
+    # hits, not new pricing. `_stage2` decomposes chosen_s2 (== bal["chosen"]
+    # == schedule_idx_balanced), NOT chosen_s3: cost_stage2_eur is
+    # bal["cost"] at chosen_s2, and the identity below must hold against
+    # exactly that column in every `--stage3` mode, including "on" (where
+    # chosen_s3 can diverge from chosen_s2).
+    dec_s1 = cell_plan_costs(chosen_s1, hub_plz_list, schedules, m)
+    dec_s2 = cell_plan_costs(chosen_s2, hub_plz_list, schedules, m)
+    _assert_cell_cost_identity(
+        dec_s1["cell_cost"], init_cost, "cost_stage1_eur",
+        f"P={P} th={th} {prov} stage1")
+    _assert_cell_cost_identity(
+        dec_s2["cell_cost"], float(bal["cost"]), "cost_stage2_eur",
+        f"P={P} th={th} {prov} stage2")
+
     chosen_rows = [dict(
         penalty=P, share_willing=th, provider=prov, head_id=spec.head_id,
         plz=str(pc),
         schedule_idx_stage1=int(chosen_s1[pi]),
         schedule_idx_balanced=int(chosen_s2[pi]),
         schedule_idx_system_smoothed=int(chosen_s3[pi]),
+        own_cost_eur_stage1=float(dec_s1["own_cost"][pi]),
+        pool_share_eur_stage1=float(dec_s1["pool_share"][pi]),
+        express_share_eur_stage1=float(dec_s1["express_share"][pi]),
+        cell_cost_eur_stage1=float(dec_s1["cell_cost"][pi]),
+        own_cost_eur_stage2=float(dec_s2["own_cost"][pi]),
+        pool_share_eur_stage2=float(dec_s2["pool_share"][pi]),
+        express_share_eur_stage2=float(dec_s2["express_share"][pi]),
+        cell_cost_eur_stage2=float(dec_s2["cell_cost"][pi]),
+        cell_parcels_week=float(weekly_pkts[pi]),
     ) for pi, pc in enumerate(plz_keys)]
     t_out = time.perf_counter() - t0
 
@@ -1654,6 +1834,22 @@ def main() -> None:
             if marker not in have:
                 raise SystemExit(
                     f"{COSTS} predates Task {task} (no {marker!r} column) — "
+                    f"that is a {older} output directory. Point REV2_OUT_DIR "
+                    "at a fresh directory; this run's schema cannot be "
+                    "appended to it.")
+
+    # Same guard, for CHOSEN: Task 11c adds columns to _tab_chosen_v2.csv
+    # itself (own_cost_eur_stage1 etc.), between schedule_idx_system_smoothed
+    # and end-of-row. append_rows would catch this too, but only after an
+    # entire (theta, provider) block's compute — fail before it starts.
+    if CHOSEN.exists():
+        have_chosen = read_header(CHOSEN)
+        for marker, task, older in (
+                ("own_cost_eur_stage1", "11c (native per-cell plan costs)",
+                 "pre-11c v6"),):
+            if marker not in have_chosen:
+                raise SystemExit(
+                    f"{CHOSEN} predates Task {task} (no {marker!r} column) — "
                     f"that is a {older} output directory. Point REV2_OUT_DIR "
                     "at a fresh directory; this run's schema cannot be "
                     "appended to it.")
