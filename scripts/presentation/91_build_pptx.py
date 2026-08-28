@@ -718,10 +718,9 @@ def part_revision(prs, f, RV, *, tag: bool = True):
                 align=PP_ALIGN.CENTER)
         txt(s, L + 4.85, y + 0.86, 3.0, 0.50, f"peak {peak}", 30, bold=True,
             color=CRIM if i == 0 else TEAL)
-    bullets(s, [f"{f.DHL_ONE_CELL} of DHL's {f.DHL_HUBS} depots serve exactly "
-                f"one postal-code area.",
-                "Their peak falls only by delivering on more days — no "
-                "re-timing can help.",
+    bullets(s, [f"{f.one_cell_hubs} of DHL's {f.dhl_hubs} depots serve one "
+                f"area only — and DHL is the only multi-depot network here.",
+                "Their peak falls only by delivering on more days.",
                 "Consolidation buys fleet where a depot rotates days across "
                 "areas; elsewhere it buys kilometres."],
              BODY_T + 2 * ROW + 0.10, h=1.45)
@@ -824,14 +823,18 @@ def part_revision(prs, f, RV, *, tag: bool = True):
                   "θ = 100 %, operator-polished plan. Flat discount = 0.50 € "
                   "per delayed willing parcel; delayed parcels are demand on "
                   "non-delivery days times the willing share.")
+    _opt = RV.discount_optima(f)
     table(s, ["Operating point", "Delayed parcels/wk", "Saving, shadow price",
-              "Net after 0.50 € discount", "Break-even discount"],
-          [[(r0[0], "key"), r0[1], r0[2], (r0[3], "num"), (r0[4], "num")]
-           for r0 in RV.discount_rows(f)],
-          BODY_T, widths=[2.4, 2.6, 2.6, 2.9, 2.5], reserve=1.15)
+              "Net after 0.50 €, operator lens",
+              "Net after 0.50 €, routing lens", "Break-even discount"],
+          [[(r0[0], "key"), r0[1], r0[2], (r0[3], "num"), (r0[4], "num"),
+            r0[5]] for r0 in RV.discount_rows(f)],
+          BODY_T, widths=[1.9, 2.1, 2.1, 2.2, 2.2, 2.0], reserve=1.15)
     txt(s, L, BODY_B - 0.90, W, 0.80,
-        "Read as a payout the penalty halves the saving — it does not remove "
-        "it, and it moves the optimum to P = 0.25–0.5.", SZ_LEAD, bold=True,
+        f"Read as a payout the penalty halves the saving — and the optimum is "
+        f"lens-specific: P = {_opt['operator'][0]:g} in the operator lens "
+        f"({_opt['operator'][1]:.1f} %), P = {_opt['routing'][0]:g} in the "
+        f"routing lens ({_opt['routing'][1]:.1f} %).", SZ_LEAD, bold=True,
         color=RED, line=1.25)
     mark(s, RV.DISCOUNT_NOTES, "§40.17")
     return prs
@@ -2233,6 +2236,15 @@ def build(out: Path, keep_template_slides: bool, *, facts=None,
                 "The gap widens at higher penalties.",
                 "A schedule chosen on the surrogate does at least as well."],
             _y + 0.26, h=2.1)
+    if facts is not None:
+        # No revision counterpart yet, so the numbers stay and the slide says
+        # so where nobody can miss it -- a banner, not a source line.
+        revision.stamp(s)
+        revision.notes(s, "SUBMISSION grid. The direction of the error -- the "
+                          "surrogate under-promises -- is what carries over "
+                          "to the revision; the levels do not. The revision's "
+                          "re-run of both plans is still being produced.",
+                       cite="§40.18")
 
     # ═══ implications ═════════════════════════════════════════════════════
     s = new_slide(prs, "Implications", "Start where the advantage is strongest",

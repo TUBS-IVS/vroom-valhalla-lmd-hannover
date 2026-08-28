@@ -676,6 +676,39 @@ def load_per_plz() -> pd.DataFrame:
     return df
 
 
+def hub_cell_counts() -> pd.DataFrame:
+    """Per (provider, hub): how many cells that depot serves.
+
+    Read from the per-PLZ table's hub column, which is a static INPUT of the
+    model -- the hub assignment of `io/hubs.py`, not a grid result -- so it is
+    the same on every grid and the legacy pin costs nothing. This is what makes
+    the one-area-depot count on the slides a derived, asserted fact instead of
+    a typed-in one.
+    """
+    def _make():
+        d = _read(REV_LEGACY / "tab_per_plz_costs_theta1.csv",
+                  dtype={"plz": str})
+        g = (d[np.isclose(d.penalty, 0.0)]
+             .groupby(["provider", "hub"], as_index=False)
+             .agg(n_cells=("plz", "nunique")))
+        assert len(g) and g.n_cells.min() >= 1, "empty hub/cell assignment"
+        return g
+    return _cached("hub_cells", _make)
+
+
+def one_cell_hubs(provider: str = "DHL") -> tuple[int, int]:
+    """(hubs serving exactly one cell, hubs in total) for one provider.
+
+    DHL is the only multi-depot network in the case study; every other LSP has
+    a single depot, so `one_cell_hubs("GLS")` is (0, 1) and the statement the
+    slides make is a DHL statement.
+    """
+    g = hub_cell_counts()
+    h = g[g.provider == provider]
+    assert len(h), f"no hubs for {provider!r}"
+    return int((h.n_cells == 1).sum()), int(len(h))
+
+
 def load_pstar() -> pd.DataFrame:
     """Per-provider knee point P* on the cost/wait trade-off.
 

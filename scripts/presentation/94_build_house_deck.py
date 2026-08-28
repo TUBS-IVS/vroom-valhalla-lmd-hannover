@@ -1396,6 +1396,14 @@ def part_results(prs):
                 "The gap widens at higher penalties, so the conservative bias is "
                 "strongest exactly where service is protected most")],
            y + 0.22)
+    if _F is not None:
+        # No revision counterpart yet: the re-run of both plans is still being
+        # produced, so the numbers stay and the slide says so where nobody can
+        # miss it -- a banner, not a source line.
+        _RV.stamp(s)
+        _RV.notes(s, "SUBMISSION grid. The direction of the error -- the "
+                     "surrogate under-promises -- is what carries over to the "
+                     "revision; the levels do not.", cite="§40.18")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1520,9 +1528,10 @@ def part_revision(prs):
                f"θ = 100 %. The routing-optimal profile is quoted from the "
                f"compendium; the revision tables keep only the final plan.",
                [("Truck", BLACK,
-                 f"{f.DHL_ONE_CELL} of DHL's {f.DHL_HUBS} depots serve exactly "
-                 f"one postal-code area, and their peak falls only by "
-                 f"delivering on more days"),
+                 f"{f.one_cell_hubs} of DHL's {f.dhl_hubs} depots serve "
+                 f"exactly one postal-code area — DHL is the only multi-depot "
+                 f"network here — and their peak falls only by delivering on "
+                 f"more days"),
                 ("Target", RED,
                  "Consolidation buys fleet where a depot can rotate delivery "
                  "days across several areas; elsewhere it buys kilometres")],
@@ -1632,16 +1641,19 @@ def part_revision(prs):
                "θ = 100 %, operator-polished plan. Flat discount = 0.50 € per "
                "delayed willing parcel; delayed parcels are demand on "
                "non-delivery days times the willing share.")
+    opt = RV.discount_optima(f)
     H.B.table(s, ["Operating point", "Delayed parcels/wk",
-                  "Saving, shadow price", "Net after 0.50 €",
-                  "Break-even discount"],
-              [[(r0[0], "key"), r0[1], r0[2], (r0[3], "num"), (r0[4], "num")]
-               for r0 in RV.discount_rows(f)],
-              BODY_T, widths=[2.4, 2.6, 2.6, 2.6, 2.7], sz=SZ_BODY,
+                  "Saving, shadow price", "Net 0.50 €, operator lens",
+                  "Net 0.50 €, routing lens", "Break-even discount"],
+              [[(r0[0], "key"), r0[1], r0[2], (r0[3], "num"), (r0[4], "num"),
+                r0[5]] for r0 in RV.discount_rows(f)],
+              BODY_T, widths=[1.9, 2.1, 2.1, 2.2, 2.2, 2.0], sz=SZ_BODY,
               reserve=1.05)
-    txt(s, L, BODY_B - 0.88, W, 0.86,
-        "Read as a payout the penalty halves the saving — it does not remove "
-        "it, and it moves the optimum to P = 0.25–0.5.", SZ_LEAD, bold=True,
+    txt(s, L, BODY_B - 1.28, W, 1.26,
+        f"Read as a payout the penalty halves the saving — and the optimum is "
+        f"lens-specific: P = {opt['operator'][0]:g} in the operator lens "
+        f"({opt['operator'][1]:.1f} %), P = {opt['routing'][0]:g} in the "
+        f"routing lens ({opt['routing'][1]:.1f} %).", SZ_LEAD, bold=True,
         color=RED, line=1.22)
     mark(s, RV.DISCOUNT_NOTES, "§40.17")
 

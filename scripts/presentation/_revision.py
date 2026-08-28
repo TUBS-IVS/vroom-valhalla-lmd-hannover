@@ -91,6 +91,70 @@ def provisional(slide, *, tag: str = TAG_TEXT, enabled: bool = True):
     return box
 
 
+# What a slide gets when its numbers have no revision counterpart yet -- the
+# VROOM validation, whose re-run of both plans is still being produced. A
+# visible banner, not a footnote: a reader who does not read the source line
+# must still see that the numbers on the slide are the submission's.
+STAMP_TEXT = "Stand Einreichung 2026-07 — wird in Teil B aktualisiert"
+
+
+def stamped(slide) -> bool:
+    return any(sh.has_text_frame and STAMP_TEXT in sh.text_frame.text
+               for sh in slide.shapes)
+
+
+def stamp(slide, *, text: str = STAMP_TEXT, top: float = 0.98,
+          height: float = 0.40):
+    """The submission-era banner, across the top of the body area.
+
+    Idempotent, and it makes room for itself: a full-width box already sitting
+    on this row (the backup slides carry an "EXPLAINS SLIDE n" tag there) is
+    clipped to the left and the banner takes the right-hand side, rather than
+    printing across it and turning a warning into a layout fault.
+    """
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+    from pptx.util import Emu, Inches, Pt
+
+    if stamped(slide):
+        return None
+    left, width = 0.63, 12.21
+    for sh in slide.shapes:
+        if not sh.has_text_frame or not sh.text_frame.text.strip():
+            continue
+        if sh.top is None or sh.height is None or sh.width is None:
+            continue
+        if not (top - 0.08 <= Emu(sh.top).inches <= top + height - 0.10):
+            continue
+        keep = 5.9
+        if Emu(sh.width).inches > keep:
+            sh.width = Inches(keep)
+        left, width = 0.63 + keep + 0.24, 12.21 - keep - 0.24
+
+    box = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(left),
+                                 Inches(top), Inches(width), Inches(height))
+    box.fill.solid()
+    box.fill.fore_color.rgb = RGBColor(0xFD, 0xF3, 0xF5)
+    box.line.color.rgb = RGBColor(0xBE, 0x1E, 0x3C)
+    box.line.width = Pt(1.0)
+    box.shadow.inherit = False
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.margin_left = tf.margin_right = Inches(0.12)
+    tf.margin_top = tf.margin_bottom = Inches(0.04)
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    p0 = tf.paragraphs[0]
+    p0.alignment = PP_ALIGN.CENTER
+    run = p0.add_run()
+    run.text = text
+    run.font.name = "Arial"
+    run.font.size = Pt(15)
+    run.font.bold = True
+    run.font.color.rgb = RGBColor(0xBE, 0x1E, 0x3C)
+    return box
+
+
 def notes(slide, text: str, *, cite: str | list[str] | None = None):
     """Write the speaker notes, ending in the compendium section(s) cited."""
     parts = [text.strip()]
@@ -140,12 +204,18 @@ class Facts:
 
     # The stage-1 profile of a one-cell hub is not in the v2 tables -- the grid
     # keeps only the final plan per hub and day -- so it is quoted from the
-    # compendium and labelled as a quote wherever it appears.
+    # compendium and labelled as a quote wherever it appears. It is the ONLY
+    # typed-in number in this class; everything else, including the one-area
+    # depot count below, is derived and asserted.
     BANTORF_BEFORE = [0, 0, 33, 0, 0, 29]
     BANTORF_HUB = "Bantorf"
-    ONE_CELL_HUBS = 8            # 40.18 fig 6 (f): n = 8, all DHL
-    DHL_HUBS = 16                # 40.14
-    DHL_ONE_CELL = 9             # 40.14: 9 of 16 DHL hubs serve exactly one cell
+
+    # Filled by _load_one_cell_hub() from the hub assignment. They used to be
+    # literals, and one of them was wrong (9, against the compendium's and the
+    # figure's 8) on two built decks -- which is the argument for deriving even
+    # a fact this small.
+    one_cell_hubs: int = 0
+    dhl_hubs: int = 0
 
     @classmethod
     def load(cls) -> "Facts":
@@ -238,6 +308,18 @@ class Facts:
         assert self.bantorf_after == [10, 11, 13, 12, 10, 8], (
             f"compendium 40.14/40.18 quote Bantorf as 10 11 13 12 10 8 after "
             f"the operator polish; the grid says {self.bantorf_after}")
+        self.one_cell_hubs, self.dhl_hubs = D.one_cell_hubs("DHL")
+        assert (self.one_cell_hubs, self.dhl_hubs) == (8, 16), (
+            f"compendium 40.14 says 8 of DHL's 16 depots serve exactly one "
+            f"cell and 40.18's fig 6 (f) counts n = 8 in the single-cell "
+            f"bucket; the hub assignment says "
+            f"{self.one_cell_hubs} of {self.dhl_hubs}")
+        # DHL is the only multi-depot network in the case study, which is what
+        # makes this a DHL statement rather than a general law.
+        for other in [p for p in D.PROVIDERS if p != "DHL"]:
+            assert D.one_cell_hubs(other)[1] == 1, (
+                f"{other} is no longer single-depot; the one-area-depot slide "
+                f"and fig 6 (f)'s within-DHL caveat both need rewriting")
 
     def _load_consolidating(self) -> None:
         for P, th in ((10.0, 0.1), (10.0, 0.2), (5.0, 0.1), (0.0, 0.1)):
@@ -326,7 +408,9 @@ def one_cell_rows(f: Facts) -> list:
 
 
 ONE_CELL_NOTES = (
-    "Nine of DHL's sixteen hubs serve exactly one postal-code area. Under any "
+    "Eight of DHL's sixteen hubs serve exactly one postal-code area, derived "
+    "from the hub assignment and asserted against the compendium; DHL is the "
+    "only multi-depot network in the case study. Under any "
     "rotation a one-cell hub on a two-day pattern has the profile 0 0 33 0 0 "
     "29: the whole week's demand lands on two days, and the peak only comes "
     "down if the hub delivers on more days. Stage 2's old frequency lock could "
@@ -339,23 +423,42 @@ ONE_CELL_NOTES = (
 
 
 def discount_rows(f: Facts) -> list:
-    """The discount scenario at theta = 1, operator plan."""
+    """The discount scenario at theta = 1, operator plan, in BOTH lenses.
+
+    The flat-discount optimum is lens-specific -- P = 0.25 in the operator
+    lens, P = 0.5 in the routing lens -- so a table that shows only one of them
+    cannot be read for the other, and the presenter has nothing to point at.
+    """
     out = []
     for P in (0.0, 0.25, 0.5, 0.75, 1.0):
         d = f.discount[P]
         out.append([f"P = {P:g}", f"{d['delayed'] / 1000:.0f} k",
                     _pct(d["op_shadow"]), _pct(d["op_flat"]),
-                    f"{d['be_op']:.2f} EUR"])
+                    _pct(d["rout_flat"]), f"{d['be_op']:.2f} EUR"])
     return out
+
+
+def discount_optima(f: Facts) -> dict:
+    """Where the flat-0.50-EUR discount peaks, per lens: {lens: (P, net %)}."""
+    best = {}
+    for lens, key in (("operator", "op_flat"), ("routing", "rout_flat")):
+        P = max(f.discount, key=lambda p: f.discount[p][key])
+        best[lens] = (P, f.discount[P][key])
+    assert best["operator"][0] == 0.25 and best["routing"][0] == 0.5, (
+        f"compendium 40.17 puts the flat-discount optimum at P = 0.25 in the "
+        f"operator lens and P = 0.5 in the routing lens; the grid says {best}")
+    return best
 
 
 DISCOUNT_NOTES = (
     "What if the service penalty is not a shadow price but money actually paid "
     "to the waiting customer? At a flat 0.50 EUR per delayed parcel, P = 0 is "
     "no longer the best point -- it delays 680 000 parcels a week -- and the "
-    "optimum slides to P = 0.25-0.5 with 12.6-13.2 % net operator saving. The "
-    "break-even discount, what the operator could pay per delayed parcel and "
-    "still be at zero, runs 0.77 EUR at P = 0 to 2.24 EUR at P = 1 in the "
+    "optimum moves off the corner. WHERE it moves to is lens-specific: the "
+    "operator lens peaks at P = 0.25 with 13.2 % net, the routing lens at "
+    "P = 0.5 with 6.7 % net (2.6 / 6.5 / 6.7 / 5.4 / 4.3 % at P = 0 ... 1). "
+    "The break-even discount, what the operator could pay per delayed parcel "
+    "and still be at zero, runs 0.77 EUR at P = 0 to 2.24 EUR at P = 1 in the "
     "operator lens and 0.57-1.24 EUR in the routing lens. Interpreted as a "
     "payout the penalty halves the saving; it does not remove it.")
 

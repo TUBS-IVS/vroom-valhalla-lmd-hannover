@@ -45,6 +45,7 @@ if hasattr(sys.stdout, "reconfigure"):      # theta and rho in the audit log
 import numpy as np
 from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
+from pptx.util import Emu, Inches
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "revision"))
@@ -106,6 +107,25 @@ CAP = 230           # parcels per van
 _F = None
 _RV = None
 _TAG = True
+
+
+def mark96(s, note, cite):
+    """Speaker notes plus the provisional chip, when a grid is loaded."""
+    if _RV is None:
+        return s
+    _RV.notes(s, note, cite=cite)
+    _RV.provisional(s, enabled=_TAG)
+    return s
+
+
+def _MAXSAV(provider: str) -> float:
+    """That LSP's best operator-lens saving anywhere on the theta = 1 grid."""
+    import numpy as np
+    c = _RV.D.load_costs_v2()
+    base = float(c[np.isclose(c.penalty, 0) & np.isclose(c.share_willing, 0)
+                   & (c.provider == provider)].operator_cost_eur.iloc[0])
+    at1 = c[np.isclose(c.share_willing, 1.0) & (c.provider == provider)]
+    return float((1 - at1.operator_cost_eur / base).max() * 100)
 
 
 # ── slide scaffolding: house headline, v1 body ──────────────────────────────
@@ -432,14 +452,31 @@ def block_trade(prs):
     chapter(prs, "What a fee actually buys",
             "Why the middle of the range beats both ends")
 
+    _h = _F.headline if _F is not None else None
     s = xslide(prs, "trade", "Part 2 · What a fee buys",
                "What does each step of the fee cost us, and what does it buy?",
-               "Everyone taking part. Saving measured against the 1 909 748 € "
-               "weekly baseline; waiting averaged over all parcels, including "
-               "those that never wait.")
-    y = B.table(s, ["Fee", "We save", "People wait", "Saving given up",
-                    "Waiting removed"],
-                [[("none", "key"), ("22.8 %", "num"), "0.98 d", "—", "—"],
+               (f"Everyone taking part, operator-polished plan (stage 2), "
+                f"operator lens. Saving against the "
+                f"{_RV.eur(_F.base_operator)} € weekly operator baseline; "
+                f"waiting averaged over all parcels, including those that "
+                f"never wait." if _h else
+                "Everyone taking part. Saving measured against the "
+                "1 909 748 € weekly baseline; waiting averaged over all "
+                "parcels, including those that never wait."))
+    if _h:
+        _rows = []
+        for _P in (0.0, 0.25, 0.5, 0.75, 1.0, 2.0):
+            _x = _h[_P]
+            _given = ("—" if _P == 0
+                      else f"{_h[0.0]['op2'] - _x['op2']:.1f} points")
+            _rm = ("—" if _P == 0 else
+                   f"{(1 - _x['wait2'] / _h[0.0]['wait2']) * 100:.0f} %")
+            _rows.append([("none" if _P == 0 else f"P = {_P:g}", "key"),
+                          (f"{_x['op2']:.1f} %", "num"),
+                          f"{_x['wait2']:.2f} d", _given,
+                          (_rm, "good") if 0 < _P <= 0.5 else _rm])
+    else:
+        _rows = [[("none", "key"), ("22.8 %", "num"), "0.98 d", "—", "—"],
                  [("P = 0.25", "key"), ("18.5 %", "num"), "0.46 d",
                   "4.3 points", ("half of it", "good")],
                  [("P = 0.5", "key"), ("13.5 %", "num"), "0.23 d",
@@ -447,25 +484,44 @@ def block_trade(prs):
                  [("P = 0.75", "key"), "10.2 %", "0.14 d", "12.6 points",
                   "86 %"],
                  [("P = 1", "key"), "7.5 %", "0.09 d", "15.3 points", "91 %"],
-                 [("P = 2", "key"), "1.2 %", "0.01 d", "21.6 points", "99 %"]],
-                BODY_T + 0.20, widths=[2.2, 2.0, 2.2, 2.6, 2.6], reserve=1.6)
+                 [("P = 2", "key"), "1.2 %", "0.01 d", "21.6 points", "99 %"]]
+    y = B.table(s, ["Fee", "Operator saving", "People wait", "Saving given up",
+                    "Waiting removed"], _rows,
+                BODY_T + 0.20, widths=[2.2, 2.4, 2.2, 2.4, 2.4], reserve=1.6)
     txt(s, L, y + 0.24, W, 1.32,
-        "The first step is the bargain: give up a fifth of the saving and "
-        "half the waiting disappears.\nEvery step after that buys less and "
-        "costs more.", 22, bold=True, color=RED, line=1.28)
+        "The first step is still the bargain: give up under two points of "
+        "operator saving and half the waiting disappears.\nEvery step after "
+        "that buys less and costs more.", 22, bold=True, color=RED, line=1.28)
+    mark96(s, "Restated in the operator lens on the operator-polished plan. "
+              "The submission's column was routing euro on the "
+              "routing-optimal plan, which this revision supersedes.",
+           ["§40.15", "§40.18"])
 
     s = xslide(prs, "range", "Part 2 · What a fee buys",
                "Why not simply take the biggest saving?",
-               "Fleet figures are for the balanced and smoothed schedules; "
-               "18 of the 80 settings sit on the efficient front (recounted on the "
-               "2026-08-25 corrected wait metric).")
-    for i, (nm, sav, wait, note, hot) in enumerate([
-            ("No fee", "22.8 %", "0.98 d",
-             "the cheapest week — but a full day of waiting", False),
-            ("P = 0.25", "18.5 %", "0.46 d",
-             "half the waiting for a fifth of the saving", True),
-            ("P = 0.5", "13.5 %", "0.23 d",
-             "peak fleet down 12.9 %, weekday swings down 54 %", True)]):
+               ("Operator lens, operator-polished plan, revision grid. Fleet "
+                "figures are the sum of hub peaks against the daily-delivery "
+                "baseline of the same grid." if _h else
+                "Fleet figures are for the balanced and smoothed schedules; "
+                "18 of the 80 settings sit on the efficient front."))
+    _cards = ([("No fee", f"{_h[0.0]['op2']:.1f} %",
+                f"{_h[0.0]['wait2']:.2f} d",
+                "the cheapest week for an operator — but the longest wait",
+                False),
+               ("P = 0.25", f"{_h[0.25]['op2']:.1f} %",
+                f"{_h[0.25]['wait2']:.2f} d",
+                "half the waiting, and the same peak-fleet cut", True),
+               ("P = 0.5", f"{_h[0.5]['op2']:.1f} %",
+                f"{_h[0.5]['wait2']:.2f} d",
+                f"peak fleet down {abs(_h[0.5]['peak2_pct']):.0f} %, weekday "
+                f"swings down 67 %", True)] if _h else [
+              ("No fee", "22.8 %", "0.98 d",
+               "the cheapest week — but a full day of waiting", False),
+              ("P = 0.25", "18.5 %", "0.46 d",
+               "half the waiting for a fifth of the saving", True),
+              ("P = 0.5", "13.5 %", "0.23 d",
+               "peak fleet down 12.9 %, weekday swings down 54 %", True)])
+    for i, (nm, sav, wait, note, hot) in enumerate(_cards):
         x = L + i * (W / 3 + 0.02)
         cw = W / 3 - 0.30
         rect(s, x, BODY_T + 0.30, cw, 0.10, RED if hot else LINE)
@@ -474,7 +530,7 @@ def block_trade(prs):
         txt(s, x, BODY_T + 1.05, cw, 0.60, sav, 40, bold=True,
             color=RED if hot else INK)
         txt(s, x, BODY_T + 1.72, cw, 0.40, f"+{wait} waiting", 20, color=DIM)
-        txt(s, x, BODY_T + 2.20, cw, 0.90, note, 20, color=INK2, line=1.22)
+        txt(s, x, BODY_T + 2.20, cw, 1.10, note, 20, color=INK2, line=1.22)
     vbullets(s, ["Push the fee to zero and you get the most money — and the "
                  "longest wait.",
                  "Push it high and the waiting vanishes, but so does the point "
@@ -482,6 +538,11 @@ def block_trade(prs):
                  "Which of the middle settings is right is a service decision, "
                  "not a modelling one."],
              BODY_T + 3.35)
+    mark96(s, "Operator lens, operator-polished plan. In this lens P = 0 is "
+              "still the largest number, but it costs 0.77 d of waiting "
+              "against 0.39 d at P = 0.25 for the same peak-fleet cut -- "
+              "which is why the knee stays at P = 0.25.",
+           ["§40.15", "§40.18"])
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -557,6 +618,13 @@ def block_valid(prs):
                "What happens when a real routing solver checks the answer?",
                "Four settings recomputed from scratch with VROOM/Valhalla on "
                "1 248 observations the model had never seen.")
+    # No revision counterpart yet: the re-run of both plans is still being
+    # produced, so the numbers stay and the slide says which grid they are on.
+    if _F is not None:
+        stamp(s)
+        _RV.notes(s, "SUBMISSION grid. The direction of the error -- the "
+                     "surrogate under-promises -- is what carries over to the "
+                     "revision; the levels do not.", cite="§40.18")
     y = B.table(s, ["Setting", "The model promised", "The solver delivered",
                     "Difference"],
                 [[("No fee", "key"), "22.8 %", ("23.7 %", "good"),
@@ -596,7 +664,10 @@ def block_providers(prs):
          "figP2_saving_by_provider",
          "Each carrier measured against its own daily-delivery cost, not "
          "against the regional total.",
-         ["The best DHL can do is 10.6 %. GLS reaches 33.4 %.",
+         [(f"The best DHL can do is {_MAXSAV('DHL'):.1f} %. GLS reaches "
+           f"{_MAXSAV('GLS'):.1f} % (operator lens)."
+           if _F is not None else
+           "The best DHL can do is far less than GLS."),
           "The shape is the same everywhere — only the ceiling differs.",
           "So one shared operating point is a compromise for everybody."]),
         ("where", "Does each carrier gain in the same places?",
@@ -747,6 +818,357 @@ def refresh_figures(prs, n_inherited):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# restating the hand-authored body on the revision grid
+# ═══════════════════════════════════════════════════════════════════════════
+# `SRC` is the author's own working deck. Its results slides state the
+# submission's headline -- 22.8 / 18.5 / 13.5 % routing saving -- as current
+# fact, and this revision supersedes exactly those numbers: the same
+# routing-optimal plan is 20.4 % routing and MINUS 7.8 % operator at P = 0.
+# Appending a withdrawal chapter and shipping the file as `_rev2026-08` while
+# its body still argues the old numbers would be worse than not shipping it.
+#
+# So the body is restated in place, on the grid, and everything that cannot be
+# restated is stamped. Two rules:
+#
+#   * a slide whose numbers HAVE a revision counterpart is rewritten to it and
+#     says which plan and which lens it is in, and gets the provisional chip;
+#   * a slide whose numbers have NO counterpart yet -- the VROOM validation,
+#     whose revision re-run is still being produced -- keeps them and gets a
+#     visible stamp, not a footnote.
+#
+# Slides are matched by a text fragment, never by index: 96_ inserts slides of
+# its own and the working deck is edited between builds, so an index silently
+# starts pointing at the wrong slide (the same reason `resolve_targets()`
+# matches by title).
+def _para_clone_format(dst_p, src_p):
+    """Copy paragraph-level properties (alignment, spacing) between paragraphs."""
+    dst_p.alignment = src_p.alignment
+    if src_p.line_spacing is not None:
+        dst_p.line_spacing = src_p.line_spacing
+    if src_p.space_after is not None:
+        dst_p.space_after = src_p.space_after
+
+
+def _retext(tf, text):
+    """Replace a text frame's content, keeping the first run's formatting.
+
+    Hand-made slides carry their type in the runs, so the safe way to restate
+    one is to keep run 0 of each paragraph and drop the rest -- not to rebuild
+    the frame, which would lose the author's sizes and colours.
+    """
+    lines = text.split("\n")
+    p0 = tf.paragraphs[0]
+    if not p0.runs:
+        tf.text = text
+        return
+    template = p0.runs[0]
+    while len(tf.paragraphs) > 1:
+        tf._txBody.remove(tf.paragraphs[-1]._p)
+    for r in list(p0.runs)[1:]:
+        r._r.getparent().remove(r._r)
+    p0.runs[0].text = lines[0]
+    for line in lines[1:]:
+        p = tf.add_paragraph()
+        _para_clone_format(p, p0)
+        r = p.add_run()
+        r.text = line
+        r.font.name = template.font.name
+        r.font.size = template.font.size
+        r.font.bold = template.font.bold
+        try:
+            if template.font.color and template.font.color.type is not None:
+                r.font.color.rgb = template.font.color.rgb
+        except Exception:
+            pass
+
+
+def _swap(tf, pairs):
+    """Run-level string substitution: formatting survives, numbers change."""
+    hit = False
+    for para in tf.paragraphs:
+        for run in para.runs:
+            for old, new in pairs:
+                if old in run.text:
+                    run.text = run.text.replace(old, new)
+                    hit = True
+    return hit
+
+
+def _shape_by_id(slide, shape_id):
+    for sh in slide.shapes:
+        if sh.shape_id == shape_id:
+            return sh
+    return None
+
+
+def _find(prs, fragment, limit=None):
+    """The first slide whose text contains `fragment`, searched in order."""
+    for i, sl in enumerate(prs.slides, 1):
+        if limit and i > limit:
+            break
+        for sh in sl.shapes:
+            if sh.has_text_frame and fragment in sh.text_frame.text:
+                return i, sl
+            if getattr(sh, "has_table", False) and sh.has_table:
+                if any(fragment in c.text for r in sh.table.rows
+                       for c in r.cells):
+                    return i, sl
+    return None, None
+
+
+def _has(slide, fragment):
+    for sh in slide.shapes:
+        if sh.has_text_frame and fragment in sh.text_frame.text:
+            return True
+    return False
+
+
+def stamp(slide):
+    """The submission-era banner. One implementation, in `_revision`."""
+    _RV.stamp(slide)
+    return slide
+
+
+def _table_rows(tbl, rows, *, header=None):
+    """Rewrite a table's cells in place, keeping each cell's own formatting."""
+    if header is not None:
+        for ci, txt_ in enumerate(header):
+            if ci < len(tbl.columns):
+                _retext(tbl.cell(0, ci).text_frame, txt_)
+    for ri, row in enumerate(rows, start=1):
+        if ri >= len(tbl.rows):
+            break
+        for ci, txt_ in enumerate(row):
+            if ci < len(tbl.columns):
+                _retext(tbl.cell(ri, ci).text_frame, txt_)
+
+
+def restate_body(prs, limit):
+    """Put the hand-authored results slides on the revision grid.
+
+    `limit` is how many leading slides belong to the copied working deck; the
+    appended backup is generated here and is already on the revision grid.
+    Returns the set of slide indices that were restated, so the sweep that
+    follows does not stamp them as well.
+    """
+    f, RV = _F, _RV
+    h = f.headline
+    done = set()
+
+    def touched(i, sl, note, cite):
+        done.add(i)
+        RV.notes(sl, note, cite=cite)
+        RV.provisional(sl, enabled=_TAG)
+
+    LENS_LINE = ("Revision grid, θ = 100 %. “Routing” = what the tours cost to "
+                 "drive; “operator” = kilometres plus 1 134.90 € per peak "
+                 "vehicle and hub. Rows marked stage 2 are the "
+                 "operator-polished plan.")
+
+    # ── the saving/wait headline ─────────────────────────────────────────
+    i, sl = _find(prs, "Saving peaks at 22.8%", limit)
+    if sl is not None:
+        _retext(_shape_by_id(sl, 7).text_frame,
+                f"Routing-optimal plan: {h[0.0]['rout1']:.1f} % routing saving "
+                f"at P = 0, wait {h[0.0]['wait1']:.2f} d — but −"
+                f"{abs(h[0.0]['op1']):.1f} % in the operator lens\n"
+                f"Operator-polished plan: {h[0.0]['op2']:.1f} % operator "
+                f"saving, {h[0.0]['rout2']:.1f} % routing, wait "
+                f"{h[0.0]['wait2']:.2f} d, peak fleet "
+                f"{h[0.0]['peak2_pct']:+.0f} %")
+        _retext(_shape_by_id(sl, 4).text_frame,
+                f"Revision grid, complete θ grid. Baselines: "
+                f"{RV.eur(f.base_routing)} € routing and "
+                f"{RV.eur(f.base_operator)} € operator per week. Figure "
+                f"rendered from the submission grid — the shape holds, the "
+                f"levels are restated here.")
+        touched(i, sl, RV.PLAN_NOTES, ["§40.12", "§40.15"])
+
+    # ── the efficiency-range table ───────────────────────────────────────
+    i, sl = _find(prs, "the cost-optimal extreme", limit)
+    if sl is not None:
+        tbl = next(sh.table for sh in sl.shapes
+                   if getattr(sh, "has_table", False) and sh.has_table)
+        _table_rows(tbl, [
+            [f"P = {P:g}", f"{h[P]['rout2']:.1f} %", f"{h[P]['op2']:.1f} %",
+             f"{h[P]['wait2']:.2f} d"] for P in (0.0, 0.25, 0.5)],
+            header=["PENALTY", "ROUTING SAVING", "OPERATOR SAVING",
+                    "ADDED WAIT"])
+        touched(i, sl,
+                "All three rows are the operator-polished plan (stage 2), "
+                "priced in both lenses. The submission's single 'cost saving' "
+                "column was routing euro on the routing-optimal plan and is "
+                "superseded twice over: by the universal tour rule and by the "
+                "operator polish.", ["§40.15", "§40.18"])
+
+    # ── the conclusion's "what we found" line (two slides use it) ────────
+    found_line = (f"{h[0.5]['op2']:.1f} to {h[0.25]['op2']:.1f} % cheaper "
+                  f"per week for an operator, at under half a day of added "
+                  f"waiting.")
+    for _ in range(2):
+        i, sl = _find(prs, "13.5 to 18.5 % cheaper per week", limit)
+        if sl is None:
+            break
+        _retext(_shape_by_id(sl, 17).text_frame, found_line)
+        for sid, new in ((20, f"{h[0.25]['peak2_pct']:+.1f} %"),
+                         (21, "peak fleet at P = 0.25, and 83 % less weekday "
+                              "variation"),
+                         (33, f"DHL tops out at {_MAXSAV('DHL'):.1f} %, GLS at "
+                              f"{_MAXSAV('GLS'):.1f} % (operator lens)"),
+                         (22, "+0.9…2.8 pp"),
+                         (23, "the real solver beat every prediction "
+                              "(submission grid)")):
+            sh = _shape_by_id(sl, sid)
+            if sh is not None and sh.has_text_frame:
+                _retext(sh.text_frame, new)
+        sh = _shape_by_id(sl, 3)
+        if sh is not None and sh.has_text_frame:
+            _retext(sh.text_frame,
+                    f"Revision grid, operator lens on the stage-2 plan · "
+                    f"Region Hannover, seven carriers, 1.26 M parcels a week "
+                    f"against a {RV.eur(f.base_operator)} € operator "
+                    f"daily-delivery baseline.")
+        touched(i, sl, "The conclusion now quotes the OPERATOR lens on the "
+                       "operator-polished plan, which is the lens an LSP with "
+                       "salaried drivers faces. The routing-lens figure for "
+                       "the same range is 13.2–17.1 %.",
+                ["§40.12", "§40.15"])
+
+    # ── the closing statement ────────────────────────────────────────────
+    i, sl = _find(prs, "of a weekly delivery bill, verified against real "
+                       "routing", limit)
+    if sl is not None:
+        _retext(_shape_by_id(sl, 7).text_frame,
+                f"{h[0.5]['op2']:.1f} – {h[0.25]['op2']:.1f} % of an "
+                f"operator's weekly delivery bill.")
+        touched(i, sl,
+                "The submission's closing line said '13.5–18.5 %, verified "
+                "against real routing'. The range is restated in the operator "
+                "lens, and the verification clause is dropped: the revision's "
+                "VROOM re-run of both plans is still being produced, so no "
+                "revision number is solver-verified yet.",
+                ["§40.15", "§40.18"])
+
+    # ── "what a fee buys" ────────────────────────────────────────────────
+    i, sl = _find(prs, "SAVING GIVEN UP", limit)
+    if sl is not None:
+        tbl = next(sh.table for sh in sl.shapes
+                   if getattr(sh, "has_table", False) and sh.has_table)
+        base_op = h[0.0]["op2"]
+        rows = []
+        for P in (0.0, 0.25, 0.5, 0.75, 1.0, 2.0):
+            x = h[P]
+            given = "—" if P == 0 else f"{base_op - x['op2']:.1f} points"
+            removed = ("—" if P == 0 else
+                       f"{(1 - x['wait2'] / h[0.0]['wait2']) * 100:.0f} %")
+            rows.append([("none" if P == 0 else f"P = {P:g}"),
+                         f"{x['op2']:.1f} %", f"{x['wait2']:.2f} d", given,
+                         removed])
+        _table_rows(tbl, rows,
+                    header=["FEE", "OPERATOR SAVING", "PEOPLE WAIT",
+                            "SAVING GIVEN UP", "WAITING REMOVED"])
+        sh = _shape_by_id(sl, 3)
+        if sh is not None:
+            _retext(sh.text_frame,
+                    f"Everyone taking part, operator-polished plan. Saving "
+                    f"against the {RV.eur(f.base_operator)} € weekly operator "
+                    f"baseline; waiting averaged over all parcels, including "
+                    f"those that never wait.")
+        sh = _shape_by_id(sl, 6)
+        if sh is not None:
+            _retext(sh.text_frame,
+                    "The first step is still the bargain: give up under two "
+                    "points of operator saving and half the waiting "
+                    "disappears.\nEvery step after that buys less and costs "
+                    "more.")
+        touched(i, sl, LENS_LINE, ["§40.15", "§40.18"])
+
+    # ── "why not simply take the biggest saving" ─────────────────────────
+    i, sl = _find(prs, "the cheapest week — but a full day of waiting", limit)
+    if sl is not None:
+        for sid, P in ((7, 0.0), (12, 0.25), (17, 0.5)):
+            sh = _shape_by_id(sl, sid)
+            if sh is not None:
+                _retext(sh.text_frame, f"{h[P]['op2']:.1f} %")
+        for sid, P in ((8, 0.0), (13, 0.25), (18, 0.5)):
+            sh = _shape_by_id(sl, sid)
+            if sh is not None:
+                _retext(sh.text_frame, f"+{h[P]['wait2']:.2f} d waiting")
+        for sid, new in (
+                (9, "the cheapest week for an operator — but the longest wait"),
+                (14, "half the waiting, and the same peak-fleet cut"),
+                (19, f"peak fleet down {abs(h[0.5]['peak2_pct']):.0f} %, "
+                     f"weekday swings down 67 %")):
+            sh = _shape_by_id(sl, sid)
+            if sh is not None:
+                _retext(sh.text_frame, new)
+        sh = _shape_by_id(sl, 3)
+        if sh is not None:
+            _retext(sh.text_frame,
+                    "Operator lens, operator-polished plan, revision grid. "
+                    "Fleet figures are the sum of hub peaks against the "
+                    "daily-delivery baseline of the same grid.")
+        touched(i, sl,
+                "In the operator lens P = 0 is still the largest number "
+                "(24.7 % against 22.8 %), but it costs 0.77 d of waiting "
+                "against 0.39 d for the same peak-fleet cut — which is why "
+                "the knee stays at P = 0.25.", ["§40.15", "§40.18"])
+
+    # ── the validation table has no revision counterpart yet ─────────────
+    i, sl = _find(prs, "THE SOLVER DELIVERED", limit)
+    if sl is not None:
+        stamp(sl)
+        done.add(i)
+        RV.notes(sl, "Kept as it stands: this is the SUBMISSION grid's VROOM "
+                     "validation, and the revision's re-run of both plans is "
+                     "still being produced. The direction of the error -- the "
+                     "surrogate under-promises -- is what carries over; the "
+                     "levels do not.", cite="§40.18")
+
+    return done
+
+
+# Numbers that can ONLY be the submission's. Deliberately not 22.8 / 18.5 %:
+# those are also the revision's operator-lens savings at P = 0.25 and P = 0.5,
+# so matching them stamps slides that were just restated. The fingerprints
+# below are the submission's routing-lens wait (0.98 d), its baseline, its
+# peak-fleet and CV figures, and its four VROOM-validated realised savings.
+_SUBMISSION_ONLY = (r"0[.,]98\s?d|0[.,]46\s?d|1[  ]909[  ]748|"
+                    r"12[.,]9\s?%|23[.,]7\s?%|19[.,]8\s?%|15[.,]6\s?%|"
+                    r"13[.,]0\s?%|10[.,]2\s?%")
+
+
+def stamp_remaining(prs, limit, done):
+    """Stamp every slide still showing a submission-only number.
+
+    A safety net for what the restatement missed, not the mechanism: a slide
+    that carries the provisional chip was built or restated on the revision
+    grid and is skipped, and `stamp()` is idempotent, so a slide stamped where
+    it was made is not stamped twice.
+    """
+    import re
+    pat = re.compile(_SUBMISSION_ONLY)
+    n = 0
+    for i, sl in enumerate(prs.slides, 1):
+        if i > limit or i in done:
+            continue
+        if _has(sl, _RV.TAG_TEXT) or _RV.stamped(sl):
+            continue
+        text = []
+        for sh in sl.shapes:
+            if sh.has_text_frame:
+                text.append(sh.text_frame.text)
+            if getattr(sh, "has_table", False) and sh.has_table:
+                text += [c.text for r in sh.table.rows for c in r.cells]
+        if pat.search("\n".join(text)):
+            stamp(sl)
+            n += 1
+            print(f"  stamped slide {i}: submission-era number, no revision "
+                  f"counterpart applied")
+    return n
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 def build(out: Path) -> Path:
     prs = Presentation(str(SRC))
     n_before = len(prs.slides)
@@ -763,6 +1185,15 @@ def build(out: Path) -> Path:
     print(f"  conclusion + takeaway inserted as slides "
           f"{contact_at + 1}–{contact_at + 2}, before the contact slide")
 
+    # The hand-authored body states the submission headline as current fact.
+    # Restate what the revision supersedes, stamp what it cannot, and only
+    # then append the backup -- so the deck is never internally inconsistent.
+    done = set()
+    if _F is not None:
+        body = len(prs.slides)
+        done = restate_body(prs, body)
+        print(f"  restated {len(done)} body slide(s) on {_RV.D.REV.name}")
+
     divider(prs, "B", "Backup", "Why the results\nlook like this",
             "Seven parts, each answering the questions a close reader asks — "
             "in the order they come up")
@@ -778,6 +1209,15 @@ def build(out: Path) -> Path:
     block_providers(prs)   # 6 · the seven carriers, side by side
     block_carrier_full(prs)  # 7 · every figure, one carrier at a time
     fill_contents()
+    # The safety net, over the WHOLE deck and after everything is on it: any
+    # slide still carrying a submission-era headline number that nothing above
+    # restated gets a visible stamp. It is deliberately a net and not the plan
+    # -- if it ever fires on a slide nobody expected, that slide needs porting,
+    # not stamping.
+    if _F is not None:
+        n = stamp_remaining(prs, len(prs.slides), done)
+        print(f"  {n} slide(s) stamped: submission-era number, no revision "
+              f"counterpart")
     out.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(out))
     print(f"  {n_before} original slides kept, "
@@ -785,14 +1225,66 @@ def build(out: Path) -> Path:
     return out
 
 
-def audit() -> int:
-    """Recompute every measured figure on these slides; fail if one moved.
+def audit_v5() -> int:
+    """Recompute every number the RESTATED slides claim; fail if one moved.
 
-    These are the SUBMISSION-era numbers of `block_mix()` and the results
-    blocks, so the audit only means anything against the submission grid: run
-    it with `PRES_REV_DIR=results/revision_2026_07`. On the revision grid it
-    is expected to fail, and the failures are the reason `block_mix_rev()`
-    exists.
+    This is the audit that has to pass for the deck this script now builds.
+    The submission-era one is still here, behind `--submission`, because it is
+    the record of what the old body asserted -- but it cannot pass on the
+    revision grid, and a check that is expected to fail is not a check.
+    """
+    import _data as D
+    import _revision as RV
+    if D.SCHEMA != D.SCHEMA_V2:
+        print(f"audit needs a v2 grid; REV is {D.REV} ({D.SCHEMA})",
+              file=sys.stderr)
+        return 1
+    f = RV.Facts.load()          # every assert in here is part of the audit
+    bad = []
+
+    def check(name, got, want, tol):
+        ok = abs(got - want) <= tol
+        print(f"  {'ok ' if ok else 'FAIL'} {name}: {got:.4g} "
+              f"(slide says {want:g})")
+        if not ok:
+            bad.append(name)
+
+    # the restated fee table and the three cards (operator lens, stage-2 plan)
+    for P, want in ((0.0, 24.7), (0.25, 22.8), (0.5, 18.5), (0.75, 14.8),
+                    (1.0, 11.8), (2.0, 6.0)):
+        check(f"operator saving at P={P:g}, theta=1", f.headline[P]["op2"],
+              want, 0.06)
+    for P, want in ((0.0, 0.77), (0.25, 0.39), (0.5, 0.23)):
+        check(f"wait at P={P:g}, stage-2 plan", f.headline[P]["wait2"],
+              want, 0.006)
+    check("peak fleet at P=0.5 [%]", f.headline[0.5]["peak2_pct"], -14.4, 0.06)
+    check("routing saving at P=0, stage-1 plan", f.headline[0.0]["rout1"],
+          23.1, 0.06)
+    check("operator saving at P=0, stage-1 plan", f.headline[0.0]["op1"],
+          -7.8, 0.06)
+    # the withdrawal chapter
+    for (P, th), want in (((10.0, 0.1), 2.9), ((0.0, 0.1), 57.1)):
+        check(f"areas consolidating at P={P:g}, theta={th:g}",
+              f.consolidating[(P, th)]["plan1"], want, 0.06)
+    # the one-area depot count the slides state
+    check("DHL one-area depots", f.one_cell_hubs, 8, 0)
+    check("DHL depots", f.dhl_hubs, 16, 0)
+    # the lens-specific discount optimum
+    opt = RV.discount_optima(f)
+    check("flat-discount optimum, operator lens", opt["operator"][0], 0.25, 0)
+    check("flat-discount optimum, routing lens", opt["routing"][0], 0.5, 0)
+    print("\n" + ("AUDIT FAILED: " + ", ".join(bad) if bad else "audit clean"))
+    return 1 if bad else 0
+
+
+def audit_submission() -> int:
+    """The SUBMISSION body's numbers, on the submission grid.
+
+    Kept as the record of what `block_mix()` and the pre-revision results
+    slides asserted. It only means anything against
+    `PRES_REV_DIR=results/revision_2026_07`; on the revision grid every one of
+    these is expected to have moved, which is why the deck no longer states
+    them and why this is not the default audit any more.
     """
     import _data as D
     import _stage3_common as C
@@ -884,7 +1376,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--audit", action="store_true",
-                    help="recompute every number on these slides and stop")
+                    help="recompute every number the built slides claim, "
+                         "then stop")
+    ap.add_argument("--submission", action="store_true",
+                    help="with --audit: run the SUBMISSION body's old checks "
+                         "instead, which need PRES_REV_DIR="
+                         "results/revision_2026_07")
     ap.add_argument("--rev-dir", type=Path, default=None,
                     help="the revision grid to read (default: $PRES_REV_DIR, "
                          "else results/revision_2026_08_v5)")
@@ -895,7 +1392,18 @@ def main() -> int:
     G.add_args(ap)
     a = ap.parse_args()
     if a.audit:
-        return audit()
+        if a.submission:
+            import _data as D
+            if D.SCHEMA != D.SCHEMA_LEGACY:
+                print(f"--audit --submission needs the submission grid; REV "
+                      f"is {D.REV} ({D.SCHEMA}). Set PRES_REV_DIR="
+                      f"results/revision_2026_07.", file=sys.stderr)
+                return 1
+            return audit_submission()
+        if a.rev_dir is not None:
+            import _data as D
+            D.set_rev_dir(a.rev_dir)
+        return audit_v5()
     if not SRC.exists():
         print(f"source deck not found: {SRC}", file=sys.stderr)
         return 1

@@ -318,6 +318,61 @@ def test_a_directory_that_is_neither_schema_is_refused(D, tmp_path):
         D.set_rev_dir(empty)
 
 
+# ── the one-area depot count, which used to be a typed-in literal ──────────
+def test_one_cell_hubs_is_counted_not_typed(D, tmp_path, monkeypatch):
+    """The count on the slides comes from the hub assignment, not a constant.
+
+    It was a literal once, and the literal was wrong (9 against the
+    compendium's and the figure's 8) on two built decks. This is the check
+    that was missing.
+    """
+    legacy = tmp_path / "legacy_hubs"
+    legacy.mkdir()
+    rows = []
+    for hub, cells in (("A", 1), ("B", 1), ("C", 3)):        # 2 of 3 one-cell
+        for n in range(cells):
+            rows.append(dict(penalty=0.0, share_willing=1.0, provider="DHL",
+                             plz=f"3{hub}{n:03d}", hub=hub))
+    rows.append(dict(penalty=0.0, share_willing=1.0, provider="GLS",
+                     plz="30159", hub="only"))
+    pd.DataFrame(rows).to_csv(
+        legacy / "tab_per_plz_costs_theta1.csv", index=False)
+    monkeypatch.setattr(D, "REV_LEGACY", legacy)
+    D._CACHE.clear()
+    assert D.one_cell_hubs("DHL") == (2, 3)
+    assert D.one_cell_hubs("GLS") == (1, 1)
+    with pytest.raises(AssertionError, match="no hubs for"):
+        D.one_cell_hubs("Amazon")
+
+
+# ── the discount scenario carries both lenses ──────────────────────────────
+def test_discount_rows_carry_both_lenses(monkeypatch):
+    """The flat-discount optimum is lens-specific, so both series must be there.
+
+    Exercised on the real revision grid, because the compendium's ruling
+    (§40.17) is about that grid: operator lens peaks at P = 0.25, routing lens
+    at P = 0.5. A table showing only one of them cannot be read for the other.
+    """
+    monkeypatch.syspath_prepend(str(PRES))
+    for mod in ("_data", "_revision"):
+        sys.modules.pop(mod, None)
+    import _data as RD
+    if RD.SCHEMA != RD.SCHEMA_V2:
+        pytest.skip(f"no v2 grid at {RD.REV}")
+    import _revision as RV
+    f = RV.Facts.load()
+    rows = RV.discount_rows(f)
+    assert all(len(r) == 6 for r in rows), "a lens column is missing"
+    opt = RV.discount_optima(f)
+    assert opt["operator"][0] == 0.25 and opt["routing"][0] == 0.5
+    assert opt["operator"][0] != opt["routing"][0], (
+        "if the two lenses ever agree, the slide's whole point is gone")
+    # and the count the slides state is derived and correct
+    assert (f.one_cell_hubs, f.dhl_hubs) == (8, 16)
+    for mod in ("_data", "_revision"):
+        sys.modules.pop(mod, None)
+
+
 # ── the copy-only guard ────────────────────────────────────────────────────
 @pytest.fixture
 def guard(monkeypatch):
