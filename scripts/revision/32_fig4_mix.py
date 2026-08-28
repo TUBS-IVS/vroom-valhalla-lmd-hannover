@@ -158,7 +158,7 @@ def main():
     fig.text(cx, xlab_y, r"Willingness-to-wait share $\theta$ [%]",
              ha="center", va="top", fontsize=11)
     lb = axes[0, 0].get_tightbbox(r).transformed(inv)
-    fig.text(lb.x0 - 0.004, cy, "Share of postal-code areas [%]",
+    fig.text(lb.x0 - 0.004, cy, "Share of cells [%]",
              rotation=90, ha="right", va="center", fontsize=10)
     handles = [Patch(facecolor=FREQ_COLOR[s], label=f"{s} day/wk")
                for s in (2, 3, 4, 5, 6)]

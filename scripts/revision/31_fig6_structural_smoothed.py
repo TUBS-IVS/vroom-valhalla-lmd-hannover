@@ -287,7 +287,7 @@ def main():
     ax.axhline(0, color="black", linestyle="--", linewidth=0.7, alpha=0.5)
     ax.set_xlabel(r"Willingness-to-wait share $\theta$ [%]")
     ax.set_ylabel("Cost saving per postal-code area [%]")
-    ax.set_title(rf"(b) Saving by carrier type at operator-optimal $P^\star$"
+    ax.set_title(rf"(b) Saving by carrier type at routing-lens $P^\star$"
                   + "\n(line = median, band = 25-75th percentile)")
     ax.grid(alpha=0.3)
     ax.legend(loc="upper left", fontsize=10, title="Carrier type",
@@ -314,7 +314,7 @@ def main():
     ax.axhline(0, color="black", linestyle="--", linewidth=0.7, alpha=0.5)
     ax.set_xlabel(r"Willingness-to-wait share $\theta$ [%]")
     ax.set_ylabel("Cost saving per postal-code area [%]")
-    ax.set_title(rf"(c) Saving by region type at operator-optimal $P^\star$"
+    ax.set_title(rf"(c) Saving by region type at routing-lens $P^\star$"
                   + "\n(line = median, band = 25-75th percentile)")
     ax.grid(alpha=0.3)
     ax.legend(loc="upper left", fontsize=10, title="Region type",
@@ -360,7 +360,7 @@ def main():
                      linewidth=0.7, alpha=0.5)
         ax_.set_xlabel(r"Willingness-to-wait share $\theta$ [%]")
         ax_.set_ylabel("Cost saving per postal-code area [%]")
-        ax_.set_title(rf"{title} at operator-optimal $P^\star$"
+        ax_.set_title(rf"{title} at routing-lens $P^\star$"
                   + "\n(line = median, band = 25-75th percentile)")
         ax_.grid(alpha=0.3)
         legend_loc = ("lower left" if feat == "parcels_per_stop"

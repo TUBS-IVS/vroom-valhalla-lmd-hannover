@@ -509,3 +509,51 @@ def test_frozen_builder_warning_fires_before_any_filterwarnings(relpath):
         assert warn_idx < fw_idx, (
             f"{relpath}: FROZEN notice appears AFTER "
             "warnings.filterwarnings('ignore') -- it would be suppressed")
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# 30_/31_/32_: in-figure LABEL STRINGS follow the revised pipeline (2026-08
+# revision, Task 13D). The paper is accepted, so geometry/colour/size/panel
+# order of these frozen builders must not move -- that is proven separately
+# by an image diff of the rendered figures, not by these tests. What these
+# tests pin is the TEXT: the revised captions in
+# paper/EWGT_2026_rev1/tbc_preprint_main.tex call the unit of analysis
+# "cells" (not "postal-code areas"), name the two plans "routing-optimal
+# plan" / "operator plan" (not "before/after fleet balancing" language left
+# over from the submitted two-stage design), and state the per-LSP knee is
+# the "routing-lens" P* (not "operator-optimal"). Each test asserts the new
+# string is present AND the old one is gone, so a partial/reverted edit
+# fails loud either way.
+# ═════════════════════════════════════════════════════════════════════════
+
+def test_fig4_y_axis_label_says_cells_not_postal_code_areas():
+    src = (ROOT / "scripts/revision/32_fig4_mix.py").read_text(
+        encoding="utf-8")
+    assert "Share of cells [%]" in src
+    assert "Share of postal-code areas [%]" not in src
+
+
+def test_fig5_panel_subtitles_name_the_revised_plans():
+    src = (ROOT / "scripts/revision/30_fig5_heatmap_smoothed.py").read_text(
+        encoding="utf-8")
+    assert "(routing-optimal plan)" in src
+    assert "(operator plan)" in src
+    assert "(before fleet balancing)" not in src
+    assert "(after per-hub balancing and system smoothing)" not in src
+
+
+def test_fig5_panel_e_title_uses_en_dash_not_double_hyphen():
+    """Only the literal in-figure 'Mo--Sa' double hyphen is in scope (brief
+    Task 13D); the console-log 'Mo-Sa' (single hyphen) prints elsewhere in
+    this file and is deliberately left alone."""
+    src = (ROOT / "scripts/revision/30_fig5_heatmap_smoothed.py").read_text(
+        encoding="utf-8")
+    assert "Mo–Sa coefficient of variation reduction" in src
+    assert "Mo--Sa" not in src
+
+
+def test_fig6_panel_titles_say_routing_lens_not_operator_optimal():
+    src = (ROOT / "scripts/revision/31_fig6_structural_smoothed.py").read_text(
+        encoding="utf-8")
+    assert src.count(r"routing-lens $P^\star$") == 3
+    assert r"operator-optimal $P^\star$" not in src

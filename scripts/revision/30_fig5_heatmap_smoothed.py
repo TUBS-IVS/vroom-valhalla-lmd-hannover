@@ -82,7 +82,7 @@ rcParams.update({
 })
 
 BASE_TOTAL = C.BASE_TOTAL  # daily-delivery weekly cost across all providers
-SUFFIX = "(after per-hub balancing and system smoothing)"
+SUFFIX = "(operator plan)"
 
 
 def heat(ax, mat, cmap, title, vmin=None, vmax=None, fmt="{:.1f}",
@@ -225,7 +225,7 @@ def main():
                                      pivB.values.max()) / 5) * 5)
     heat(axes[0, 0], pivI, "viridis",
           "(a) Cost saving, cost-optimal selection\n"
-          "(before fleet balancing)",
+          "(routing-optimal plan)",
           vmin=0, vmax=v_cost_max, cbar_label="Saving [%]")
     heat(axes[0, 1], pivB, "viridis",
           f"(b) Cost saving, full pipeline\n{SUFFIX}",
@@ -243,7 +243,7 @@ def main():
           vmin=pk_min, vmax=pk_max, cbar_label="Reduction [%]")
     cv_max = float(np.ceil(pivCV.values.max() / 10) * 10)
     heat(axes[1, 1], pivCV, "magma",
-          f"(e) Mo--Sa coefficient of variation reduction\n{SUFFIX}",
+          f"(e) Mo–Sa coefficient of variation reduction\n{SUFFIX}",
           vmin=0, vmax=cv_max, cbar_label="Reduction [%]")
     pivCHG = -pivTOT
     tot_abs = max(abs(pivCHG.values.min()), abs(pivCHG.values.max()))

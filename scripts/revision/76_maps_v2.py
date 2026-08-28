@@ -353,7 +353,9 @@ def penalty_raumtyp_table(cells: pd.DataFrame, base: pd.DataFrame,
         g["saving_pct"] = (1 - g.plan_eur / g.base_eur) * 100
         sysv = float(grid[np.isclose(grid.penalty, P) & np.isclose(grid.share_willing, 1.0)]
                      .routing_saving_plan2_pct.iloc[0])
-        assert abs((1 - sub.cell_cost_eur.sum() / sub.base_cost_eur.sum()) * 100 - sysv) < 1e-6
+        assert abs((1 - sub.cell_cost_eur.sum() / sub.base_cost_eur.sum()) * 100 - sysv) < 1e-6, (
+            f"G: cell sum {(1 - sub.cell_cost_eur.sum() / sub.base_cost_eur.sum()) * 100} "
+            f"!= grid {sysv} at P={P}")
         g = pd.concat([g, pd.DataFrame([dict(raumtyp_3="system", base_eur=sub.base_cost_eur.sum(),
                                              plan_eur=sub.cell_cost_eur.sum(), n_cells=len(sub),
                                              saving_pct=sysv)])])
