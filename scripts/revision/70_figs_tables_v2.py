@@ -130,6 +130,22 @@ DEFAULT_REV = ROOT / "results" / "revision_2026_08_v5"
 DEFAULT_COMPARE = ROOT / "results" / "revision_2026_08_v5"
 FREQ_CLASSES = (2, 3, 4, 5, 6)
 
+#: 13C -- 75_fig_fleet_week_classes.py and 76_maps_v2.py render these
+#: supplementary figures standalone, on the same v6 grid, but outside this
+#: module. They still belong in the ONE provenance manifest 71_ reads from,
+#: so their stems are registered here (md5 + mtime, same as every figure
+#: this module draws itself). This module does not draw them -- do not add
+#: drawing logic for these stems here; run 75_/76_ to (re)produce them.
+EXTRA_SUPP_STEMS = (
+    "supp_fig7_fleet_week_classes",         # 75_fig_fleet_week_classes.py
+    "supp_map_freq_theta_v2",               # 76_maps_v2.py
+    "supp_map_freq_theta_P0_v2",
+    "supp_map_freq_theta_P0_routing_v2",
+    "supp_map_saving_P_v2",
+    "supp_map_wait_theta_v2",
+    "supp_penalty_raumtyp_v2",
+)
+
 RC = {
     "font.family": "serif", "font.size": 13,
     "mathtext.fontset": "dejavuserif",
@@ -1651,6 +1667,15 @@ def main(argv=None) -> int:
         if not args.no_legacy:
             produced += _render_accepted_figures(
                 rev, args.express_allocation)
+
+        for stem in EXTRA_SUPP_STEMS:
+            for ext in ("pdf", "png"):
+                p = figures / f"{stem}.{ext}"
+                assert p.exists(), (
+                    f"{p.relative_to(ROOT)} missing -- run 75_fig_fleet_week_"
+                    "classes.py / 76_maps_v2.py on this rev-dir before 70_ "
+                    "so their figures can be registered in the manifest")
+                produced.append(p)
 
         mpath = H.write_manifest(figures, rev, ROOT, produced)
         doc = H.read_manifest(mpath)
