@@ -89,7 +89,8 @@ FIGURE_MAP = {
         "fig_structural_grid_6.pdf"),
 }
 
-# Supplementary figures: the two-lens set 70_ renders itself. The paper is
+# Supplementary figures: the two-lens set 70_ renders itself, plus the
+# fleet/theta/raumtyp diagnostics Tasks 13C/13D added later. The paper is
 # accepted and its figures keep the submitted layout, so these are never a
 # main figure slot -- they are opt-in and land under their own names.
 COMPANION_MAP = {
@@ -105,7 +106,40 @@ COMPANION_MAP = {
                                 "fig_SM_per_cell_euro.pdf"),
     "supp_fig6b_operator_lens_v2": ("supp_fig6b_operator_lens_hub.pdf",
                                     "fig_SM_operator_lens_hub.pdf"),
+    "supp_fig7_fleet_week_classes": ("supp_fig7_fleet_week_classes.pdf",
+                                     "fig_SM_fleet_week_classes.pdf"),
+    "supp_map_freq_theta_v2": ("supp_map_freq_theta.pdf",
+                               "fig_SM_map_freq_theta.pdf"),
+    "supp_map_freq_theta_P0_v2": ("supp_map_freq_theta_P0.pdf",
+                                  "fig_SM_map_freq_theta_P0.pdf"),
+    "supp_map_freq_theta_P0_routing_v2": (
+        "supp_map_freq_theta_P0_routing.pdf",
+        "fig_SM_map_freq_theta_P0_routing.pdf"),
+    "supp_map_saving_P_v2": ("supp_map_saving_P.pdf",
+                             "fig_SM_map_saving_P.pdf"),
+    "supp_map_wait_theta_v2": ("supp_map_wait_theta.pdf",
+                               "fig_SM_map_wait_theta.pdf"),
+    "supp_penalty_raumtyp_v2": ("supp_penalty_raumtyp.pdf",
+                                "fig_SM_penalty_raumtyp.pdf"),
 }
+
+
+def unmapped_manifest_stems(doc: dict) -> list[str]:
+    """Manifest figure stems that neither FIGURE_MAP nor COMPANION_MAP owns.
+
+    This is the exact shape of the 13C/13D gap (task 13E): 70_ rendered
+    seven new supplementary figures, nobody added them to either
+    destination table, and ``plan()`` -- which only ever walks the tables,
+    never the manifest -- silently dropped them. They never reached the
+    paper and nothing said so. Any manifest figure entry (a ``fig``/
+    ``supp_`` stem) with no destination-table entry is now a hard refusal
+    instead of silent omission.
+    """
+    known = set(FIGURE_MAP) | set(COMPANION_MAP)
+    stems = {Path(name).stem for name in doc["figures"] if name.endswith(".pdf")}
+    return sorted(s for s in stems
+                  if s not in known
+                  and (s.startswith("fig") or s.startswith("supp_")))
 
 
 class ProvenanceError(RuntimeError):
@@ -220,6 +254,16 @@ def main(argv=None) -> int:
     print(f"  figures   {len(doc['figures'])} files, "
           f"{len(doc['grid_csvs'])} grid tables")
     print("=" * 100)
+
+    unmapped = unmapped_manifest_stems(doc)
+    if unmapped:
+        print("\nREFUSED -- the manifest has figure stem(s) with no "
+              "FIGURE_MAP/COMPANION_MAP entry in this script -- add them "
+              "before syncing. Silently skipping unmapped stems is exactly "
+              "how the 13C/13D supplementary figures went missing:")
+        for s in unmapped:
+            print(f"  * {s}")
+        return 1
 
     stale = H.check_manifest_fresh(doc, fig_dir)
     if stale:

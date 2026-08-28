@@ -577,7 +577,8 @@ def sync(tmp_path, monkeypatch):
     return mod, results, paper, sub
 
 
-def _grid(results: Path, name: str, payload: bytes = b"%PDF-1.4 v5\n"):
+def _grid(results: Path, name: str, payload: bytes = b"%PDF-1.4 v5\n",
+          extra_stems: tuple[str, ...] = ()):
     rev = results / name
     figs = rev / "figures"
     figs.mkdir(parents=True)
@@ -590,7 +591,14 @@ def _grid(results: Path, name: str, payload: bytes = b"%PDF-1.4 v5\n"):
                  "supp_fig4b_mean_days", "supp_fig5_grid_heatmap_v2",
                  "supp_fig5b_offdiagonal_v2",
                  "supp_fig6_structural_v2",
-                 "supp_fig6b_operator_lens_v2"):
+                 "supp_fig6b_operator_lens_v2",
+                 # 13C/13D additions -- keep this fixture a realistic stand-in
+                 # for a full 70_ render (FIGURE_MAP | COMPANION_MAP).
+                 "supp_fig7_fleet_week_classes",
+                 "supp_map_freq_theta_v2", "supp_map_freq_theta_P0_v2",
+                 "supp_map_freq_theta_P0_routing_v2",
+                 "supp_map_saving_P_v2", "supp_map_wait_theta_v2",
+                 "supp_penalty_raumtyp_v2") + extra_stems:
         f = figs / f"{stem}.pdf"
         f.write_bytes(payload + stem.encode() + name.encode())
         produced.append(f)
@@ -753,6 +761,66 @@ def test_71_never_shells_out_to_git():
         ctx = body[max(0, hit.start() - 12):hit.start() + 12]
         assert any(a in ctx for a in allowed), (
             f"71_ mentions git outside its warning text: {ctx!r}")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Task 13E: the seven 13C/13D supplementary stems (fleet/theta/raumtyp
+# diagnostics) that FIGURE_MAP/COMPANION_MAP did not know about, and the
+# fail-loud gate that now catches the next stem like them before it can
+# repeat the same silent gap.
+# ─────────────────────────────────────────────────────────────────────────
+NEW_13C_13D_STEMS = {
+    "supp_fig7_fleet_week_classes": ("supp_fig7_fleet_week_classes.pdf",
+                                     "fig_SM_fleet_week_classes.pdf"),
+    "supp_map_freq_theta_v2": ("supp_map_freq_theta.pdf",
+                               "fig_SM_map_freq_theta.pdf"),
+    "supp_map_freq_theta_P0_v2": ("supp_map_freq_theta_P0.pdf",
+                                  "fig_SM_map_freq_theta_P0.pdf"),
+    "supp_map_freq_theta_P0_routing_v2": (
+        "supp_map_freq_theta_P0_routing.pdf",
+        "fig_SM_map_freq_theta_P0_routing.pdf"),
+    "supp_map_saving_P_v2": ("supp_map_saving_P.pdf",
+                             "fig_SM_map_saving_P.pdf"),
+    "supp_map_wait_theta_v2": ("supp_map_wait_theta.pdf",
+                               "fig_SM_map_wait_theta.pdf"),
+    "supp_penalty_raumtyp_v2": ("supp_penalty_raumtyp.pdf",
+                                "fig_SM_penalty_raumtyp.pdf"),
+}
+
+
+def test_71_maps_and_syncs_the_13c_13d_supplementary_stems(sync):
+    """The gap this task closes: results/revision_2026_08_v6's manifest
+    carries these seven stems and the old table did not know any of them,
+    so they never reached the paper. Each must now resolve to the exact
+    preprint name (the `_v2` render suffix dropped) and `fig_SM_*` Elsevier
+    name, and --include-companions must actually copy+verify them."""
+    mod, results, paper, _ = sync
+    for stem, dest in NEW_13C_13D_STEMS.items():
+        assert mod.COMPANION_MAP[stem] == dest
+    rev, figs = _grid(results, "gridA")     # default fixture covers them
+    assert mod.main(["--include-companions"]) == 0
+    for stem, (pre, els) in NEW_13C_13D_STEMS.items():
+        src = figs / f"{stem}.pdf"
+        assert H.md5_of(paper / "figures" / pre) == H.md5_of(src)
+        assert H.md5_of(paper / "elsevier_source" / els) == H.md5_of(src)
+
+
+def test_71_refuses_when_manifest_has_an_unmapped_figure_stem(sync, capsys):
+    """This is exactly how the 13C/13D stems went missing: 70_ rendered a
+    new supplementary figure, nobody added it to FIGURE_MAP/COMPANION_MAP,
+    and the old plan() just silently skipped it -- it never reached the
+    paper and nothing said so. An unmapped fig*/supp_* stem must now
+    refuse instead of syncing quietly around the gap, and it must refuse
+    even without --include-companions since the stem would be invisible
+    either way."""
+    mod, results, paper, _ = sync
+    _grid(results, "gridA",
+          extra_stems=("supp_map_not_in_any_table_v2",))
+    assert mod.main([]) == 1
+    out = capsys.readouterr().out
+    assert "REFUSED" in out
+    assert "supp_map_not_in_any_table_v2" in out
+    assert not (paper / "figures").exists()
 
 
 # ─────────────────────────────────────────────────────────────────────────
