@@ -584,9 +584,13 @@ def _grid(results: Path, name: str, payload: bytes = b"%PDF-1.4 v5\n"):
     for csv in H.GRID_CSVS:
         (rev / csv).write_text(f"col\n{name}\n", encoding="utf-8")
     produced = []
-    for stem in ("fig4_freq_mix_two_plans", "fig5_grid_heatmap_v2",
-                 "fig6_structural_v2", "fig5b_offdiagonal_v2",
-                 "fig4b_mean_days"):
+    for stem in ("fig4_SM_mix_pct_8P", "fig5_grid_heatmap_6_smoothed",
+                 "fig6_structural_grid_6_smoothed",
+                 "supp_fig4_freq_mix_two_plans",
+                 "supp_fig4b_mean_days", "supp_fig5_grid_heatmap_v2",
+                 "supp_fig5b_offdiagonal_v2",
+                 "supp_fig6_structural_v2",
+                 "supp_fig6b_operator_lens_v2"):
         f = figs / f"{stem}.pdf"
         f.write_bytes(payload + stem.encode() + name.encode())
         produced.append(f)
@@ -649,7 +653,7 @@ def test_71_refuses_and_copies_nothing_when_the_grid_moved_on(sync, capsys):
     mod, results, paper, _ = sync
     rev, figs = _grid(results, "gridA")
     # the grid was re-run after the figures were drawn
-    later = figs.joinpath("fig5_grid_heatmap_v2.pdf").stat().st_mtime + 10_000
+    later = figs.joinpath("fig5_grid_heatmap_6_smoothed.pdf").stat().st_mtime + 10_000
     for csv in H.GRID_CSVS:
         os.utime(rev / csv, (later, later))
     assert mod.main([]) == 1
@@ -662,7 +666,7 @@ def test_71_refuses_and_copies_nothing_when_the_grid_moved_on(sync, capsys):
 def test_71_refuses_when_a_source_figure_was_edited(sync, capsys):
     mod, results, paper, _ = sync
     rev, figs = _grid(results, "gridA")
-    (figs / "fig6_structural_v2.pdf").write_bytes(b"HAND-EDITED")
+    (figs / "fig6_structural_grid_6_smoothed.pdf").write_bytes(b"HAND-EDITED")
     assert mod.main([]) == 1
     assert "changed since the render" in capsys.readouterr().out
     assert not (paper / "figures").exists()
@@ -674,7 +678,7 @@ def test_71_fails_when_a_destination_equals_the_submission(sync, capsys):
     rev, figs = _grid(results, "gridA")
     # the frozen submission happens to be byte-identical to what we sync
     (sub / "figures" / "fig5_cost_wait_fleet_heatmaps.pdf").write_bytes(
-        (figs / "fig5_grid_heatmap_v2.pdf").read_bytes())
+        (figs / "fig5_grid_heatmap_6_smoothed.pdf").read_bytes())
     assert mod.main([]) == 1
     out = capsys.readouterr().out
     assert "FAIL" in out
@@ -687,7 +691,7 @@ def test_71_identical_to_submission_can_be_overridden_explicitly(sync):
     mod, results, paper, sub = sync
     rev, figs = _grid(results, "gridA")
     (sub / "figures" / "fig5_cost_wait_fleet_heatmaps.pdf").write_bytes(
-        (figs / "fig5_grid_heatmap_v2.pdf").read_bytes())
+        (figs / "fig5_grid_heatmap_6_smoothed.pdf").read_bytes())
     assert mod.main(["--allow-identical-to-submission"]) == 0
 
 
@@ -720,16 +724,17 @@ def test_71_repairs_a_corrupted_destination(sync):
     dst.write_bytes(b"STALE FIGURE FROM THE SUBMISSION")
     assert mod.main(["--dry-run"]) == 1          # detected
     assert mod.main([]) == 0                     # repaired
-    assert H.md5_of(dst) == H.md5_of(figs / "fig5_grid_heatmap_v2.pdf")
+    assert H.md5_of(dst) == H.md5_of(figs / "fig5_grid_heatmap_6_smoothed.pdf")
 
 
 def test_71_companions_are_opt_in(sync):
     mod, results, paper, _ = sync
     _grid(results, "gridA")
     assert mod.main([]) == 0
-    assert not (paper / "figures" / "fig5b_offdiagonal_lens_plan.pdf").exists()
+    supp = "supp_fig5b_offdiagonal_lens_plan.pdf"
+    assert not (paper / "figures" / supp).exists()
     assert mod.main(["--include-companions"]) == 0
-    assert (paper / "figures" / "fig5b_offdiagonal_lens_plan.pdf").exists()
+    assert (paper / "figures" / supp).exists()
 
 
 def test_71_never_shells_out_to_git():
@@ -782,7 +787,7 @@ def test_71_stale_message_falls_back_to_the_absolute_path_outside_root(
     import os
     mod, results, paper, _ = sync
     rev, figs = _grid(results, "gridA")
-    later = (figs / "fig5_grid_heatmap_v2.pdf").stat().st_mtime + 10_000
+    later = (figs / "fig5_grid_heatmap_6_smoothed.pdf").stat().st_mtime + 10_000
     for csv in H.GRID_CSVS:
         os.utime(rev / csv, (later, later))
     monkeypatch.setattr(mod, "ROOT", tmp_path.parent / "unrelated_root")
@@ -791,3 +796,333 @@ def test_71_stale_message_falls_back_to_the_absolute_path_outside_root(
     assert "REFUSED -- the render is stale" in out
     assert str(rev) in out, "must fall back to the absolute path, not raise"
     assert not (paper / "figures").exists()
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Task 13B: per-cell euro costs, the operator lens per hub, head usage,
+# the grid-to-grid delta and the CO2 table
+# ═════════════════════════════════════════════════════════════════════════
+W = H.WEEK_FIXED_COST_EUR
+F = H.FIXED_COST_EUR
+
+#: two providers x two hubs x one cell per hub, over the four (P, theta)
+#: cells of CELLS -- small enough to write the expected numbers by hand,
+#: and internally CONSISTENT (the grid frame is derived FROM the per-cell
+#: frame, so operator = routing - 189.15*vd + 1134.90*peak holds exactly).
+PC_PROVIDERS = ["DHL", "GLS"]
+
+
+def _pc_rows():
+    rows = []
+    for P, th in CELLS:
+        for prov in PC_PROVIDERS:
+            for plan in ("stage1", "balanced"):
+                for k, plz in enumerate(["30159", "30161"]):
+                    if th == 0.0:                      # the pinned baseline
+                        cost, vd, peak = 1000.0, 30.0, 5.0
+                    elif plan == "stage1":
+                        cost, vd, peak = 800.0, 25.0, 7.0
+                    else:
+                        cost, vd, peak = 850.0, 26.0, 3.5
+                    w = 0.6 if k == 0 else 0.4
+                    rows.append(dict(
+                        penalty=P, share_willing=th, provider=prov, plz=plz,
+                        plan=plan, head_id="none", hub=f"{prov}-hub{k}",
+                        schedule_idx=38 if th == 0.0 else 0,
+                        own_cost_eur=w * cost * 0.8,
+                        pool_share_eur=w * cost * 0.15,
+                        express_share_eur=w * cost * 0.05,
+                        cell_cost_eur=w * cost,
+                        cell_parcels_week=1000.0 * w,
+                        mean_days=6.0 if th == 0.0 else 2.0,
+                        wait_days=0.0 if th == 0.0 else 1.0,
+                        veh_days_share=w * vd, peak_veh_share=w * peak,
+                        hub_peak_day=2))
+    return pd.DataFrame(rows)
+
+
+def _pc_costs(pc):
+    """The tab_costs_v2 frame the per-cell frame decomposes, exactly."""
+    g = pc.groupby(["penalty", "share_willing", "provider", "plan"]).agg(
+        c=("cell_cost_eur", "sum"), v=("veh_days_share", "sum"),
+        p=("peak_veh_share", "sum")).reset_index()
+    out = []
+    for (P, th, prov), gg in g.groupby(["penalty", "share_willing",
+                                        "provider"]):
+        s1 = gg[gg.plan == "stage1"].iloc[0]
+        s2 = gg[gg.plan == "balanced"].iloc[0]
+        out.append(dict(
+            penalty=P, share_willing=th, provider=prov,
+            cost_stage1_eur=s1.c, cost_stage2_eur=s2.c,
+            vehicle_days_before=s1.v, vehicle_days=s2.v,
+            sum_hub_peak_before=s1.p, sum_hub_peak=s2.p,
+            variable_before_eur=s1.c - F * s1.v,
+            variable_cost_eur=s2.c - F * s2.v,
+            operator_cost_before_eur=s1.c - F * s1.v + W * s1.p,
+            operator_cost_eur=s2.c - F * s2.v + W * s2.p,
+            penalty_before_eur=0.0, penalty_eur=0.0,
+            express_cost_eur=0.05 * s2.c, pool_cost_eur=0.15 * s2.c))
+    return pd.DataFrame(out)
+
+
+@pytest.fixture
+def pc():
+    return _pc_rows()
+
+
+# ── per-cell savings ─────────────────────────────────────────────────────
+def test_per_cell_saving_is_taken_against_the_cells_own_baseline(pc):
+    out = H.per_cell_savings(pc)
+    one = out[(out.provider == "DHL") & (out.plz == "30159")
+              & np.isclose(out.share_willing, 1.0)
+              & (out.plan == "stage1")].iloc[0]
+    assert one.baseline_cell_eur == pytest.approx(600.0)   # 0.6 * 1000
+    assert one.saving_eur == pytest.approx(600.0 - 480.0)  # 0.6 * 800
+    assert one.saving_pct == pytest.approx(20.0)
+
+
+def test_the_two_plans_share_one_per_cell_baseline(pc):
+    out = H.per_cell_savings(pc)
+    b = out.groupby(["provider", "plz"]).baseline_cell_eur.nunique()
+    assert (b == 1).all(), "a cell's baseline must not depend on the plan"
+
+
+def test_a_moving_per_cell_baseline_is_refused(pc):
+    bad = pc.copy()
+    m = (np.isclose(bad.share_willing, 0.0) & np.isclose(bad.penalty, 0.5)
+         & (bad.plz == "30159"))
+    bad.loc[m, "cell_cost_eur"] = bad.loc[m, "cell_cost_eur"] + 1.0
+    with pytest.raises(AssertionError, match="not identical across P"):
+        H.per_cell_savings(bad)
+
+
+# ── the operator lens per hub ────────────────────────────────────────────
+def test_hub_operator_cost_is_variable_plus_the_weekly_peak_bill(pc):
+    hubs = H.hub_lens(pc)
+    h = hubs[(hubs.provider == "DHL") & (hubs.hub == "DHL-hub0")
+             & np.isclose(hubs.share_willing, 1.0)
+             & (hubs.plan == "balanced")].iloc[0]
+    assert h.routing_eur == pytest.approx(0.6 * 850)
+    assert h.vehicle_days == pytest.approx(0.6 * 26)
+    assert h.hub_peak == pytest.approx(0.6 * 3.5)
+    assert h.operator_eur == pytest.approx(
+        0.6 * 850 - F * 0.6 * 26 + W * 0.6 * 3.5)
+
+
+def test_hub_operator_costs_sum_to_the_grids_operator_cost(pc):
+    """The point of the attribution: aggregating hubs rebuilds the grid."""
+    hubs = H.hub_lens(pc)
+    costs = _pc_costs(pc)
+    got = (hubs[hubs.plan == "balanced"]
+           .groupby(["penalty", "share_willing"]).operator_eur.sum())
+    want = costs.groupby(["penalty", "share_willing"]).operator_cost_eur.sum()
+    assert np.allclose(got.sort_index().values, want.sort_index().values)
+
+
+def test_hub_saving_is_against_the_same_hubs_baseline(pc):
+    hubs = H.hub_lens(pc)
+    h = hubs[(hubs.hub == "DHL-hub0") & np.isclose(hubs.share_willing, 1.0)
+             & (hubs.plan == "balanced")].iloc[0]
+    base = 0.6 * (1000 - F * 30 + W * 5)
+    assert h.baseline_operator_eur == pytest.approx(base)
+    assert h.operator_saving_eur == pytest.approx(base - h.operator_eur)
+
+
+# ── the identity gate, re-checked from the written CSVs ──────────────────
+def test_the_written_per_cell_table_is_gated_against_the_grid(pc):
+    d = H.check_per_cell_against_grid(pc, _pc_costs(pc))
+    assert len(d) == len(CELLS) * len(PC_PROVIDERS) * 2
+    assert d.cost_delta.abs().max() < 1e-9
+    assert d.vd_delta.abs().max() < 1e-9
+    assert d.peak_delta.abs().max() < 1e-9
+
+
+def test_a_per_cell_table_that_does_not_add_up_is_refused(pc):
+    costs = _pc_costs(pc)
+    costs.loc[0, "cost_stage2_eur"] = costs.loc[0, "cost_stage2_eur"] + 5.0
+    with pytest.raises(AssertionError, match="IDENTITY GATE failed on cost"):
+        H.check_per_cell_against_grid(pc, costs)
+
+
+def test_a_wrong_hub_peak_in_the_per_cell_table_is_refused(pc):
+    bad = pc.copy()
+    bad.loc[bad.index[0], "peak_veh_share"] += 1.0
+    with pytest.raises(AssertionError, match="IDENTITY GATE failed on peak"):
+        H.check_per_cell_against_grid(bad, _pc_costs(pc))
+
+
+def test_load_per_cell_names_the_command_that_produces_the_table(tmp_path):
+    with pytest.raises(H.PerCellMissing, match="72_per_cell_costs_v2.py"):
+        H.load_per_cell(tmp_path)
+
+
+# ── bucket aggregation ───────────────────────────────────────────────────
+def test_median_by_bucket_counts_cells_not_rows(pc):
+    """A PLZ code is served by several LSPs; the unit is the cell."""
+    d = H.per_cell_savings(pc)
+    d = d[d.plan == "stage1"].copy()
+    d["bucket"] = "all"
+    agg = H.median_by_bucket(d, "saving_eur", "bucket")
+    n = int(agg[np.isclose(agg.share_willing, 1.0)].n.iloc[0])
+    assert n == 4, "2 providers x 2 PLZ = 4 cells, not 4 rows per plan"
+
+
+def test_bucket_composition_flags_a_single_carrier_bucket(pc):
+    d = pc.copy()
+    d["bucket"] = np.where(d.provider == "DHL", "only-DHL", "mixed")
+    comp = H.bucket_composition(d, "bucket").set_index("bucket")
+    assert bool(comp.loc["only-DHL"].single_carrier)
+    assert comp.loc["only-DHL"].providers == "DHL"
+    assert int(comp.loc["only-DHL"].n) == 2
+
+
+# ── head usage: occurrence-weighted, never a mean of ratios ──────────────
+def _hu():
+    return pd.DataFrame([
+        # a big hub-day where the head priced almost nothing ...
+        dict(provider="DHL", kind="delivery", pooled_cost_eur=100000.0,
+             head_cost_eur=1000.0, n_groups_priced=100,
+             n_multi_cell_groups=50, n_head=1, n_fallback_uncertified=49,
+             n_fallback_unsupported=50, n_fallback_no_head=0),
+        # ... and a tiny one where it priced everything
+        dict(provider="DHL", kind="delivery", pooled_cost_eur=100.0,
+             head_cost_eur=100.0, n_groups_priced=1, n_multi_cell_groups=1,
+             n_head=1, n_fallback_uncertified=0, n_fallback_unsupported=0,
+             n_fallback_no_head=0),
+        # a provider/kind that pooled NOTHING at all
+        dict(provider="GLS", kind="express", pooled_cost_eur=0.0,
+             head_cost_eur=0.0, n_groups_priced=0, n_multi_cell_groups=0,
+             n_head=0, n_fallback_uncertified=0, n_fallback_unsupported=0,
+             n_fallback_no_head=0),
+    ])
+
+
+def test_head_share_is_occurrence_weighted_not_a_mean_of_ratios():
+    s = H.head_usage_summary(_hu()).set_index(["provider", "kind"])
+    got = float(s.loc[("DHL", "delivery")].head_cost_share)
+    assert got == pytest.approx(1100.0 / 100100.0)
+    assert got != pytest.approx(0.5 * (0.01 + 1.0)), (
+        "averaging the two rows' ratios would give 50.5 %")
+
+
+def test_head_share_is_nan_where_nothing_pooled():
+    s = H.head_usage_summary(_hu()).set_index(["provider", "kind"])
+    assert np.isnan(s.loc[("GLS", "express")].head_cost_share), (
+        "0 would say 'the head priced none of it'; nothing was there")
+    assert np.isnan(s.loc[("GLS", "express")].head_group_share)
+
+
+def test_head_usage_is_none_for_a_pre_task11_grid(tmp_path):
+    assert H.head_usage(tmp_path) is None
+
+
+# ── v5 -> v6 delta ───────────────────────────────────────────────────────
+def _full(shift: float):
+    costs = _costs()
+    costs["express_cost_eur"] = 0.05 * costs.cost_stage2_eur
+    costs["pool_cost_eur"] = 0.15 * costs.cost_stage2_eur
+    if shift:
+        m = ~np.isclose(costs.share_willing, 0.0)
+        costs.loc[m, "cost_stage2_eur"] = costs.loc[m, "cost_stage2_eur"] - shift
+    return H.headline_rows(costs, _wait()), costs
+
+
+def test_grid_delta_compares_savings_in_percentage_points():
+    fa, ca = _full(0.0)
+    fb, cb = _full(50.0)
+    d = H.grid_delta(fa, fb, ca, cb, "v5", "v6")
+    row = d[np.isclose(d.penalty, 0.0)].iloc[0]
+    # each grid's saving is against its OWN baseline (unchanged here), so
+    # the delta is exactly the cost shift expressed in percent
+    assert row.routing_saving_plan2_pct_delta_pp == pytest.approx(
+        100 * 50 * H.N_PROVIDERS / (1000 * H.N_PROVIDERS))
+    assert "pooled_v5_eur" in d.columns and "pooled_v6_eur" in d.columns
+
+
+def test_grid_delta_refuses_two_grids_with_different_penalties():
+    fa, ca = _full(0.0)
+    fb, cb = _full(0.0)
+    fb = fb[~np.isclose(fb.penalty, 0.5)]
+    with pytest.raises(AssertionError, match="same penalties"):
+        H.grid_delta(fa, fb, ca, cb, "v5", "v6")
+
+
+def test_a_head_free_grid_reports_a_zero_head_share():
+    _, ca = _full(0.0)
+    p = H.pooled_cost_totals(ca)
+    assert (p.head_cost_eur == 0.0).all()
+
+
+# ── CO2 from validated route kilometres ──────────────────────────────────
+def _vroom(tmp_path, **over):
+    rows = []
+    for plan in ("balanced",):
+        for P, km in ((0.0, 100.0), (0.5, 150.0)):
+            for i in range(2):
+                rows.append(dict(instance_id=f"{plan}{P}{i}", penalty=P,
+                                 share_willing=1.0, plan=plan,
+                                 vroom_distance_km=km / 2,
+                                 vroom_n_routes=3, vroom_status="OK",
+                                 g6_selected=True))
+    df = pd.DataFrame(rows)
+    for k, v in over.items():
+        df[k] = v
+    d = tmp_path / "validation"
+    d.mkdir(parents=True, exist_ok=True)
+    df.to_csv(d / H.VALIDATION_NAME, index=False)
+    return tmp_path
+
+
+def test_co2_refuses_a_grid_without_validated_kilometres(tmp_path):
+    with pytest.raises(H.Co2Unavailable, match="no validated route"):
+        H.co2_table(tmp_path)
+    assert H.co2_decision(tmp_path).startswith("REFUSED")
+
+
+def test_co2_is_km_times_the_declared_factor(tmp_path):
+    t = H.co2_table(_vroom(tmp_path))
+    r = t[np.isclose(t.penalty, 0.0)].iloc[0]
+    assert r.km_week == pytest.approx(100.0)
+    assert r.co2_t_week == pytest.approx(100.0 * H.CO2_KG_PER_KM / 1000.0)
+    assert r.co2_kg_per_km == H.CO2_KG_PER_KM
+
+
+def test_co2_reference_is_the_least_consolidated_validated_point(tmp_path):
+    t = H.co2_table(_vroom(tmp_path))
+    assert (t.ref_P == 0.5).all(), "the highest validated P is the reference"
+    r = t[np.isclose(t.penalty, 0.0)].iloc[0]
+    assert r.vs_least_consolidated_pct == pytest.approx(
+        100 * (100.0 - 150.0) / 150.0)
+    assert t[np.isclose(t.penalty, 0.5)].iloc[0].vs_least_consolidated_pct \
+        == pytest.approx(0.0)
+
+
+def test_co2_refuses_a_validation_that_is_only_a_sample(tmp_path):
+    with pytest.raises(AssertionError, match="SAMPLE"):
+        H.co2_table(_vroom(tmp_path, g6_selected=False))
+
+
+def test_co2_refuses_a_row_without_a_distance(tmp_path):
+    with pytest.raises(AssertionError, match="no.*distance"):
+        H.co2_table(_vroom(tmp_path, vroom_distance_km=np.nan))
+
+
+def test_co2_counts_flagged_rows_but_names_them(tmp_path):
+    t = H.co2_table(_vroom(tmp_path, vroom_status="PARTIAL"))
+    assert (t.n_flagged == 2).all(), (
+        "a PARTIAL solve is included in the kilometre total and COUNTED")
+    t2 = H.co2_table(_vroom(tmp_path, vroom_status="CACHED"))
+    assert (t2.n_flagged == 0).all(), "a cache hit is not a flag"
+
+
+def test_co2_decision_says_regenerated_when_it_can(tmp_path):
+    msg = H.co2_decision(_vroom(tmp_path))
+    assert msg.startswith("REGENERATED")
+    assert str(H.CO2_KG_PER_KM) in msg
+
+
+# ── the real region-type table ───────────────────────────────────────────
+def test_region_types_cover_the_grids_plz_universe():
+    rt = H.region_types(ROOT)
+    assert set(rt.raumtyp_3.unique()) <= set(H.RAUMTYP_ORDER)
+    assert rt.plz.is_unique

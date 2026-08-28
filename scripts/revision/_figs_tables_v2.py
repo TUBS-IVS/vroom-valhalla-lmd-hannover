@@ -665,3 +665,427 @@ def to_latex(df: pd.DataFrame, path: Path, caption: str, label: str,
         f"\\caption{{{caption}}}\n\\label{{{label}}}\n"
         f"{body}"
         "\\end{table}\n", encoding="utf-8")
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Per-cell plan costs (Task 13B) -- written by 72_per_cell_costs_v2.py
+# ═════════════════════════════════════════════════════════════════════════
+PER_CELL_NAME = "tab_per_cell_costs_v2.csv"
+PER_CELL_COLS = (
+    "penalty", "share_willing", "provider", "plz", "plan", "hub",
+    "schedule_idx", "own_cost_eur", "pool_share_eur", "express_share_eur",
+    "cell_cost_eur", "cell_parcels_week", "mean_days", "wait_days",
+    "veh_days_share", "peak_veh_share", "hub_peak_day",
+)
+PLAN_OF_KEY = {"stage1": 1, "balanced": 2}
+
+
+class PerCellMissing(FileNotFoundError):
+    """``72_`` has not been run on this grid yet."""
+
+
+def load_per_cell(rev_dir: Path) -> pd.DataFrame:
+    """The per-cell plan-cost table of one grid, schema-checked.
+
+    Raises :class:`PerCellMissing` naming the command that produces it
+    rather than a bare ``FileNotFoundError``: the euro panels of fig. 6 have
+    no substitute, so the caller has to decide loudly.
+    """
+    path = Path(rev_dir) / "tables" / PER_CELL_NAME
+    if not path.exists():
+        raise PerCellMissing(
+            f"{path} does not exist. Run\n"
+            f"    python scripts/revision/72_per_cell_costs_v2.py "
+            f"--rev-dir {rev_dir}\n"
+            "first -- the per-PLZ euro panels have no substitute.")
+    df = pd.read_csv(path, dtype={"plz": str})
+    missing = [c for c in PER_CELL_COLS if c not in df.columns]
+    assert not missing, f"{path} lacks {missing} -- re-run 72_"
+    bad = set(df.plan.unique()) - set(PLAN_OF_KEY)
+    assert not bad, f"{path}: unknown plan value(s) {bad}"
+    return df
+
+
+def per_cell_savings(pc: pd.DataFrame) -> pd.DataFrame:
+    """Per-cell euro saving against the cell's own theta = 0 baseline.
+
+    The baseline is the (P = 0, theta = 0) row, which the grid pins to the
+    daily schedule for BOTH plans -- asserted here per cell, because a
+    baseline that differed by plan would make the two plans' savings
+    incomparable.  Returns *pc* with ``baseline_cell_eur``, ``saving_eur``
+    and ``saving_pct`` added.
+    """
+    b = pc[np.isclose(pc.share_willing, 0.0)]
+    assert len(b) > 0, "no theta=0 rows -- the per-cell table has no baseline"
+    key = ["provider", "plz"]
+    spread = (b.groupby(key).cell_cost_eur.max()
+              - b.groupby(key).cell_cost_eur.min()).abs()
+    assert (spread < 1e-6).all(), (
+        "the theta=0 per-cell baseline is not identical across P and plan "
+        f"(worst spread {spread.max():.6f} EUR at {spread.idxmax()}) -- "
+        "savings would be measured against a moving baseline")
+    base = (b.groupby(key, as_index=False).cell_cost_eur.mean()
+            .rename(columns={"cell_cost_eur": "baseline_cell_eur"}))
+    out = pc.merge(base, on=key, how="left")
+    assert out.baseline_cell_eur.notna().all(), (
+        "a cell has no theta=0 baseline row")
+    assert (out.baseline_cell_eur > 0).all(), (
+        "a cell has a zero/negative baseline cost -- a saving percentage "
+        "would be meaningless")
+    out["saving_eur"] = out.baseline_cell_eur - out.cell_cost_eur
+    out["saving_pct"] = 100 * out.saving_eur / out.baseline_cell_eur
+    return out
+
+
+def hub_lens(pc: pd.DataFrame) -> pd.DataFrame:
+    """The OPERATOR lens per hub, from the per-cell attribution.
+
+    The weekly fixed bill is sized by a hub's PEAK day, so it is a property
+    of the hub, not of any one cell: what a cell "contributes" to it depends
+    on when the rest of the hub peaks.  The per-cell peak column is
+    therefore only summed to the level where it means something --
+
+        operator = sum cell_cost - 189.15 * sum veh_days
+                                 + 1134.90 * sum peak_veh
+
+    -- and the saving is taken against the same hub's theta = 0 operator
+    cost.  Hub names are unique per provider, not globally, so the key is
+    (provider, hub).
+    """
+    key = ["penalty", "share_willing", "provider", "hub", "plan"]
+    g = pc.groupby(key, as_index=False).agg(
+        routing_eur=("cell_cost_eur", "sum"),
+        vehicle_days=("veh_days_share", "sum"),
+        hub_peak=("peak_veh_share", "sum"),
+        parcels_week=("cell_parcels_week", "sum"),
+        n_cells=("plz", "nunique"))
+    g["variable_eur"] = g.routing_eur - FIXED_COST_EUR * g.vehicle_days
+    g["operator_eur"] = g.variable_eur + WEEK_FIXED_COST_EUR * g.hub_peak
+    b = g[np.isclose(g.share_willing, 0.0)]
+    base = (b.groupby(["provider", "hub"], as_index=False)
+            .agg(baseline_operator_eur=("operator_eur", "mean"),
+                 baseline_routing_eur=("routing_eur", "mean")))
+    out = g.merge(base, on=["provider", "hub"], how="left")
+    assert out.baseline_operator_eur.notna().all(), (
+        "a hub has no theta=0 baseline row")
+    out["operator_saving_eur"] = out.baseline_operator_eur - out.operator_eur
+    out["operator_saving_pct"] = (100 * out.operator_saving_eur
+                                  / out.baseline_operator_eur)
+    out["routing_saving_eur"] = out.baseline_routing_eur - out.routing_eur
+    return out
+
+
+#: the runner's tolerance semantics (61_grid_run_v2._tol), so the gate
+#: re-run from the written CSVs has exactly the window 72_ used in
+#: memory: a tenth of a cent absolute floor, 1e-9 relative.
+PER_CELL_ABS_TOL = 1e-3
+PER_CELL_REL_TOL = 1e-9
+
+
+def check_per_cell_against_grid(pc: pd.DataFrame, costs: pd.DataFrame,
+                                rtol: float = PER_CELL_REL_TOL,
+                                atol: float = PER_CELL_ABS_TOL
+                                ) -> pd.DataFrame:
+    """Re-run 72_'s identity gate from the two CSVs alone.
+
+    ``72_`` asserts it while the matrices are in memory; this repeats it
+    from the written files, so a figure can never be drawn from a per-cell
+    table that does not add up to the grid it claims to decompose.  Returns
+    the per (P, theta, provider, plan) deltas.
+    """
+    ref_col = {("stage1", "cost"): "cost_stage1_eur",
+               ("stage1", "vd"): "vehicle_days_before",
+               ("stage1", "peak"): "sum_hub_peak_before",
+               ("balanced", "cost"): "cost_stage2_eur",
+               ("balanced", "vd"): "vehicle_days",
+               ("balanced", "peak"): "sum_hub_peak"}
+    got = (pc.groupby(["penalty", "share_willing", "provider", "plan"],
+                      as_index=False)
+           .agg(cost=("cell_cost_eur", "sum"), vd=("veh_days_share", "sum"),
+                peak=("peak_veh_share", "sum")))
+    rows = []
+    for _, r in got.iterrows():
+        c = costs[np.isclose(costs.penalty, r.penalty)
+                  & np.isclose(costs.share_willing, r.share_willing)
+                  & (costs.provider == r.provider)]
+        assert len(c) == 1, (
+            f"({r.penalty}, {r.share_willing}, {r.provider}): "
+            f"{len(c)} grid row(s)")
+        c = c.iloc[0]
+        d = dict(penalty=r.penalty, share_willing=r.share_willing,
+                 provider=r.provider, plan=r.plan)
+        for what in ("cost", "vd", "peak"):
+            want = float(c[ref_col[(r.plan, what)]])
+            d[f"{what}_delta"] = float(r[what]) - want
+            d[f"{what}_ref"] = want
+        rows.append(d)
+    out = pd.DataFrame(rows)
+    for what in ("cost", "vd", "peak"):
+        w = np.maximum(atol,
+                       rtol * np.abs(out[f"{what}_ref"].to_numpy()))
+        bad = out[np.abs(out[f"{what}_delta"]) > w]
+        assert bad.empty, (
+            f"per-cell IDENTITY GATE failed on {what} for {len(bad)} "
+            f"(P, theta, provider, plan) group(s), worst "
+            f"{bad[f'{what}_delta'].abs().max():.6e} -- e.g. "
+            f"{bad.iloc[0].to_dict()}")
+    return out
+
+
+# ---------------------------------------------------------------------
+# Structural facts: the penalty/theta-independent PLZ features
+# ---------------------------------------------------------------------
+RAUMTYP_ORDER = ["urban", "suburban", "rural"]
+
+
+def region_types(root: Path) -> pd.DataFrame:
+    """``plz -> raumtyp_3`` (urban / suburban / rural).
+
+    PLZ level, not cluster level: the grid's cell keys are PLZ codes and all
+    of them are in ``data/geodata/plz_raumtyp.csv``; the cluster file is
+    keyed on cluster heads and would leave a third of them unmatched.
+    """
+    p = Path(root) / "data" / "geodata" / "plz_raumtyp.csv"
+    rt = pd.read_csv(p, dtype={"plz": str})[["plz", "raumtyp_3"]]
+    bad = set(rt.raumtyp_3.unique()) - set(RAUMTYP_ORDER)
+    assert not bad, f"{p}: unknown region type(s) {bad}"
+    return rt
+
+
+def median_by_bucket(df: pd.DataFrame, value: str, bucket: str,
+                     by=("share_willing",)) -> pd.DataFrame:
+    """Median + IQR + n of *value* per bucket and theta.
+
+    ``n`` counts the (provider, plz) CELLS -- or (provider, hub) hubs -- in
+    the bucket, not the rows: a PLZ code is served by several LSPs.
+    """
+    unit = ["provider", "plz"] if "plz" in df.columns else ["provider", "hub"]
+    g = df.groupby([*by, bucket], observed=True)
+    out = g[value].agg(med="median", lo=lambda s: s.quantile(0.25),
+                       hi=lambda s: s.quantile(0.75)).reset_index()
+    n = (df.groupby([*by, bucket], observed=True)[unit]
+         .apply(lambda d: d.drop_duplicates().shape[0])
+         .rename("n").reset_index())
+    return out.merge(n, on=[*by, bucket], how="left")
+
+
+def bucket_composition(df: pd.DataFrame, bucket: str) -> pd.DataFrame:
+    """n and the carrier composition of every bucket of a split.
+
+    Region Hannover has exactly one multi-depot network, so a structural
+    bucket can be one carrier's depots in disguise; a legend that hides that
+    invites a causal reading it cannot support (Task 13 review I-1).
+    """
+    unit = ["provider", "plz"] if "plz" in df.columns else ["provider", "hub"]
+    rows = []
+    for b, g in df.groupby(bucket, observed=True):
+        provs = sorted(g.provider.unique())
+        rows.append(dict(
+            feature=bucket, bucket=b,
+            n=int(g[unit].drop_duplicates().shape[0]),
+            providers=", ".join(provs), single_carrier=len(provs) == 1))
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------
+# Head usage (Task 11) -- occurrence-weighted, never a mean of ratios
+# ---------------------------------------------------------------------
+HEAD_USAGE_NAME = "tab_head_usage_v2.csv"
+
+
+def head_usage(rev_dir: Path):
+    """``tab_head_usage_v2.csv``, or None for a pre-Task-11 grid."""
+    p = Path(rev_dir) / HEAD_USAGE_NAME
+    if not p.exists():
+        return None
+    return pd.read_csv(p)
+
+
+def _ratio(num, den):
+    """``num/den`` with NaN -- not 0 -- where nothing pooled.
+
+    A (P, theta, provider) that realised no pooled tour has no head share:
+    reporting 0 would say "the head priced none of it", which is a different
+    statement from "there was nothing to price" (Task 11 concern 3).
+    """
+    num = np.asarray(num, dtype=float)
+    den = np.asarray(den, dtype=float)
+    return np.where(den > 0, num / np.where(den > 0, den, np.nan), np.nan)
+
+
+def head_usage_summary(hu: pd.DataFrame, by=("provider", "kind")
+                       ) -> pd.DataFrame:
+    """Head-priced share of pooled COST and of TOURS, occurrence-weighted.
+
+    Sums the numerators and denominators and divides once.  Averaging the
+    per-row ``head_cost_share`` would weight a 200-EUR hub-day the same as a
+    60 000-EUR one and would silently drop the NaN rows.
+    """
+    g = hu.groupby(list(by), as_index=False).agg(
+        pooled_cost_eur=("pooled_cost_eur", "sum"),
+        head_cost_eur=("head_cost_eur", "sum"),
+        n_groups=("n_groups_priced", "sum"),
+        n_multi_cell=("n_multi_cell_groups", "sum"),
+        n_head=("n_head", "sum"),
+        n_fallback_uncertified=("n_fallback_uncertified", "sum"),
+        n_fallback_unsupported=("n_fallback_unsupported", "sum"),
+        n_fallback_no_head=("n_fallback_no_head", "sum"))
+    g["head_cost_share"] = _ratio(g.head_cost_eur, g.pooled_cost_eur)
+    g["head_group_share"] = _ratio(g.n_head, g.n_groups)
+    g["head_share_of_multi_cell"] = _ratio(g.n_head, g.n_multi_cell)
+    return g
+
+
+# ---------------------------------------------------------------------
+# v5 -> v6: what the bundle head changed
+# ---------------------------------------------------------------------
+def pooled_cost_totals(costs: pd.DataFrame) -> pd.DataFrame:
+    """Per (P, theta): the pooled (express + small-delivery) cost.
+
+    Present in both schemas: ``express_cost_eur`` and ``pool_cost_eur`` are
+    written by the runner at the FINAL (stage-2) plan in v5 and v6 alike.
+    ``head_cost_eur`` only exists from Task 11 on; a head-free grid priced
+    exactly none of its pooled cost with a head, so 0.0 there is the fact,
+    not a fill value.
+    """
+    missing = [c for c in ("express_cost_eur", "pool_cost_eur")
+               if c not in costs.columns]
+    assert not missing, (
+        f"tab_costs_v2.csv lacks {missing} -- every v5/v6 grid writes the "
+        "express/pooled cost split; without it the pooled total cannot be "
+        "formed")
+    agg = dict(express_cost_eur=("express_cost_eur", "sum"),
+               pool_cost_eur=("pool_cost_eur", "sum"))
+    if "head_cost_eur" in costs.columns:
+        agg["head_cost_eur"] = ("head_cost_eur", "sum")
+    g = costs.groupby(["penalty", "share_willing"], as_index=False).agg(**agg)
+    g["pooled_cost_eur"] = g.express_cost_eur + g.pool_cost_eur
+    if "head_cost_eur" not in g.columns:
+        g["head_cost_eur"] = 0.0
+    g["head_cost_share"] = _ratio(g.head_cost_eur, g.pooled_cost_eur)
+    return g
+
+
+def grid_delta(full_a: pd.DataFrame, full_b: pd.DataFrame,
+               costs_a: pd.DataFrame, costs_b: pd.DataFrame,
+               label_a: str, label_b: str,
+               theta: float = 1.0) -> pd.DataFrame:
+    """What changed between two grids at one theta, per P.
+
+    ``full_*`` are ``headline_rows`` frames, i.e. savings already taken
+    against each grid's OWN baseline -- v6's head prices the theta = 0
+    pooled tours too, so its baseline is not v5's and the two must never be
+    mixed.  Savings are compared in PERCENTAGE POINTS, costs in euro.
+    """
+    keep = ["penalty", "routing_saving_plan1_pct", "routing_saving_plan2_pct",
+            "operator_saving_plan1_pct", "operator_saving_plan2_pct",
+            "sum_hub_peak_plan2", "wait_d_plan2", "mean_days_plan2"]
+    a = full_a[np.isclose(full_a.share_willing, theta)][keep]
+    b = full_b[np.isclose(full_b.share_willing, theta)][keep]
+    m = a.merge(b, on="penalty", suffixes=("_a", "_b"))
+    assert len(m) == len(a) == len(b), (
+        f"the two grids do not cover the same penalties at theta={theta}")
+    pa = pooled_cost_totals(costs_a)
+    pb = pooled_cost_totals(costs_b)
+    pa = pa[np.isclose(pa.share_willing, theta)]
+    pb = pb[np.isclose(pb.share_willing, theta)]
+    cols = ["penalty", "pooled_cost_eur", "head_cost_eur", "head_cost_share"]
+    m = (m.merge(pa[cols], on="penalty")
+         .merge(pb[cols], on="penalty", suffixes=("_a", "_b")))
+    out = pd.DataFrame({"penalty": m.penalty})
+    out[f"pooled_{label_a}_eur"] = m.pooled_cost_eur_a
+    out[f"pooled_{label_b}_eur"] = m.pooled_cost_eur_b
+    out["pooled_delta_eur"] = m.pooled_cost_eur_b - m.pooled_cost_eur_a
+    out[f"head_share_{label_b}"] = m.head_cost_share_b
+    for col in ("routing_saving_plan1_pct", "routing_saving_plan2_pct",
+                "operator_saving_plan1_pct", "operator_saving_plan2_pct"):
+        out[f"{col}_{label_a}"] = m[f"{col}_a"]
+        out[f"{col}_{label_b}"] = m[f"{col}_b"]
+        out[f"{col}_delta_pp"] = m[f"{col}_b"] - m[f"{col}_a"]
+    out["sum_hub_peak_plan2_delta"] = (m.sum_hub_peak_plan2_b
+                                       - m.sum_hub_peak_plan2_a)
+    out["wait_d_plan2_delta"] = m.wait_d_plan2_b - m.wait_d_plan2_a
+    return out.sort_values("penalty").reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------
+# CO2 from validated route kilometres (Kompendium 38.6)
+# ---------------------------------------------------------------------
+#: kg CO2 per vehicle-km. EXTERNAL ASSUMPTION, not a model result -- the
+#: same factor 38.6 states for the submitted table, kept so the regenerated
+#: numbers are comparable with it.
+CO2_KG_PER_KM = 0.25
+VALIDATION_NAME = "tab_vroom_v2.csv"
+
+
+class Co2Unavailable(RuntimeError):
+    """No validated route kilometres for this grid -- refuse, never carry."""
+
+
+def co2_table(rev_dir: Path, factor: float = CO2_KG_PER_KM) -> pd.DataFrame:
+    """km/week and t CO2/week per validated (plan, P, theta), from VROOM.
+
+    Built from ``<rev>/validation/tab_vroom_v2.csv`` -- **actual** solved
+    route kilometres, never surrogate cost, because 38.6's quantity is
+    kilometres.  ``vs_least_consolidated_pct`` is the change against the
+    least consolidated validated point OF THE SAME PLAN (the highest P),
+    which is 38.6's own reference: there is no VROOM baseline solve of daily
+    delivery on this allocation, so a "vs daily baseline" column would be an
+    invention.
+
+    Raises :class:`Co2Unavailable` when the grid has no validation data.
+    There is deliberately no fallback: the submitted table belongs to a
+    different grid, a different plan and a different cost path, so carrying
+    it over silently is exactly the failure 38.8 is about.
+    """
+    path = Path(rev_dir) / "validation" / VALIDATION_NAME
+    if not path.exists():
+        raise Co2Unavailable(
+            f"{path} does not exist, so this grid has no validated route "
+            "kilometres. 38.6 is built from real VROOM km at the validated "
+            "operating points; the surrogate cost cannot substitute for it "
+            "(euro, not km), and the submitted table describes a different "
+            "grid and a different plan. Run Task 12's validation on this "
+            "grid first (67_validate_vroom_v2.py) -- do NOT carry the old "
+            "numbers over.")
+    v = pd.read_csv(path)
+    for col in ("penalty", "share_willing", "plan", "vroom_distance_km",
+                "vroom_status"):
+        assert col in v.columns, f"{path} lacks {col!r}"
+    assert v.vroom_distance_km.notna().all(), (
+        f"{path}: {int(v.vroom_distance_km.isna().sum())} row(s) have no "
+        "distance -- an unsolved instance cannot be counted as 0 km")
+    if "g6_selected" in v.columns:
+        sel = v.g6_selected.astype(bool)
+        assert sel.all(), (
+            f"{path}: {int((~sel).sum())} of {len(v)} row(s) are not "
+            "g6_selected -- this validation is a SAMPLE, so its kilometre "
+            "sum is not the plan's weekly mileage")
+    status = v.vroom_status.astype(str).str.upper()
+    flagged = ~status.isin(["OK", "CACHED"])
+    g = (v.assign(_flag=flagged.astype(int))
+         .groupby(["plan", "penalty", "share_willing"], as_index=False)
+         .agg(n_instances=("vroom_distance_km", "size"),
+              km_week=("vroom_distance_km", "sum"),
+              n_routes=("vroom_n_routes", "sum"),
+              n_flagged=("_flag", "sum")))
+    g["co2_t_week"] = g.km_week * factor / 1000.0
+    ref = (g.sort_values("penalty").groupby("plan")
+           .agg(ref_km=("km_week", "last"), ref_P=("penalty", "last"))
+           .reset_index())
+    g = g.merge(ref, on="plan", how="left")
+    g["vs_least_consolidated_pct"] = 100 * (g.km_week - g.ref_km) / g.ref_km
+    g["co2_kg_per_km"] = factor
+    return g.sort_values(["plan", "penalty"]).reset_index(drop=True)
+
+
+def co2_decision(rev_dir: Path) -> str:
+    """One line saying whether the CO2 table can be regenerated here."""
+    try:
+        t = co2_table(rev_dir)
+    except Co2Unavailable as exc:
+        return f"REFUSED -- {exc}"
+    plans = ", ".join(sorted(t.plan.unique()))
+    return (f"REGENERATED from {len(t)} validated point(s) "
+            f"(plans: {plans}) at {CO2_KG_PER_KM} kg CO2/vehicle-km "
+            "(external assumption, Kompendium 38.6).")

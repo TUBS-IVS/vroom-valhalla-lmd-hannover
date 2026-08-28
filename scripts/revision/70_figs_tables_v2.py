@@ -38,17 +38,32 @@ The two lenses
 
 Outputs (all under ``<rev>/``)
 ------------------------------
+The paper is ACCEPTED, so its figures keep the SUBMITTED layout and
+only their numbers change.  Those three are rendered by the FROZEN
+builders (30_/31_/32_) on tables ``74_v2_to_legacy_tables.py`` adapts
+from this grid, and land in ``figures/`` under their canonical stems:
+
 ``figures/``
-  ``manifest.json``                       provenance: rev dir, git HEAD,
-                                          timestamp, md5 of every figure and
-                                          of the four grid CSVs.  ``71_``
-                                          takes its source from this file and
-                                          refuses to sync without it.
-  ``fig4_freq_mix_two_plans.{png,pdf}``   frequency mix, both plans
-  ``fig4b_mean_days.{png,pdf}``           mean delivery days, both plans
-  ``fig5_grid_heatmap_v2.{png,pdf}``      headline 2x3 (see below)
-  ``fig5b_offdiagonal_v2.{png,pdf}``      the other half of the 2x2
-  ``fig6_structural_v2.{png,pdf}``        Pareto + knees + structure
+  ``fig4_SM_mix_pct_8P.{png,pdf}``          ACCEPTED  (32_)
+  ``fig5_grid_heatmap_6_smoothed.{png,pdf}``ACCEPTED  (30_)
+  ``fig6_structural_grid_6_smoothed.*``     ACCEPTED  (31_)
+
+Everything this module draws itself is SUPPLEMENTARY -- the two-lens,
+two-plan set -- and carries a ``supp_`` prefix so no sync can put it
+in a main figure slot:
+
+  ``manifest.json``                        provenance: rev dir, git
+                                           HEAD, timestamp, md5 of
+                                           every figure (accepted AND
+                                           supplementary) and of the
+                                           four grid CSVs.  ``71_``
+                                           takes its source from here.
+  ``supp_fig4_freq_mix_two_plans.*``       frequency mix, both plans
+  ``supp_fig4b_mean_days.*``               mean delivery days
+  ``supp_fig5_grid_heatmap_v2.*``          two-lens 2x3
+  ``supp_fig5b_offdiagonal_v2.*``          the other half of the 2x2
+  ``supp_fig6_structural_v2.*``            per-cell euro breakdown
+  ``supp_fig6b_operator_lens_v2.*``        the operator lens per hub
 
 ``tables/``
   ``tab_headline_theta1_v2.csv|.tex``     2x2 headline at theta=1
@@ -56,6 +71,20 @@ Outputs (all under ``<rev>/``)
   ``tab_pstar_knees_v2.csv|.tex``         per-LSP knee P*, both lenses
   ``tab_stage2_ablation_v2.csv|.tex``     range / solo / freqpres / v5
   ``tab_fleet_diagnostics_v2.csv|.tex``   gap to the flat-profile bound
+  ``tab_per_cell_structural_v2.csv``      median + IQR per (feature, bucket,
+                                          theta, plan), euro AND percent
+  ``tab_head_usage_summary*_v2.csv|.tex`` head-priced share of the pooled
+                                          cost, occurrence-weighted
+  ``tab_grid_delta_v2.csv|.tex``          what the bundle head changed
+                                          (``--compare-dir``)
+  ``tab_co2_km_v2.csv|.tex``              vehicle-km and CO2 from THIS
+                                          grid's validated VROOM routes
+
+Per-cell euro costs come from ``72_per_cell_costs_v2.py``
+(``<rev>/tables/tab_per_cell_costs_v2.csv``); their sum is re-gated against
+the grid's own routing total, vehicle-days and hub peaks here, from the
+written CSVs alone.  A missing per-cell table REFUSES (exit 2) unless
+``--allow-missing-per-cell`` is passed -- fig 6 (b)-(f) has no substitute.
 
 Colours come from ``scripts/presentation/_style.py`` only; provider identity
 is deliberately not a hue (Kompendium §38).  The frequency legend is
@@ -97,6 +126,8 @@ import _figs_tables_v2 as H  # noqa: E402
 import _style as S  # noqa: E402  -- the ONLY colour source
 
 DEFAULT_REV = ROOT / "results" / "revision_2026_08_v5"
+#: the head-free grid a head-enabled render is compared against
+DEFAULT_COMPARE = ROOT / "results" / "revision_2026_08_v5"
 FREQ_CLASSES = (2, 3, 4, 5, 6)
 
 RC = {
@@ -125,7 +156,14 @@ def save(fig, out_dir: Path, name: str) -> list[Path]:
     for ext, meta in (("png", _PNG_META), ("pdf", _PDF_META)):
         path = out_dir / f"{name}.{ext}"
         fig.savefig(path, bbox_inches="tight", metadata=meta)
-        print(f"  saved {path.relative_to(ROOT)}")
+        # relative_to raises when the output tree is outside the repo (a
+        # scratch render, another checkout): a path in a progress line is
+        # never worth a traceback.
+        try:
+            shown = path.relative_to(ROOT)
+        except ValueError:
+            shown = path
+        print(f"  saved {shown}")
         written.append(path)
     plt.close(fig)
     return written
@@ -298,7 +336,7 @@ def fig5(full: pd.DataFrame, base: dict, base_cv: float, out: Path,
              "plans and must not be read as one series. "
              + _baseline_sentence(base) + H.COST_MODEL_TEXT,
              ha="center", va="bottom", fontsize=10)
-    return save(fig, out, "fig5_grid_heatmap_v2")
+    return save(fig, out, "supp_fig5_grid_heatmap_v2")
 
 
 def fig5b(full: pd.DataFrame, base: dict, out: Path,
@@ -335,7 +373,7 @@ def fig5b(full: pd.DataFrame, base: dict, out: Path,
              "routing-optimal two-day patterns multiply the hub peaks. "
              + H.COST_MODEL_TEXT,
              ha="center", va="bottom", fontsize=10)
-    return save(fig, out, "fig5b_offdiagonal_v2")
+    return save(fig, out, "supp_fig5b_offdiagonal_v2")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -388,7 +426,7 @@ def fig4(mix1: pd.DataFrame, mix2: pd.DataFrame,
                  r"$(P, \theta)$ grid, both plans "
                  r"(service penalty $P$ in €/parcel/day)", fontsize=11.5)
     fig.tight_layout(rect=[0, 0.045, 1, 0.95])
-    return save(fig, out, "fig4_freq_mix_two_plans")
+    return save(fig, out, "supp_fig4_freq_mix_two_plans")
 
 
 def fig4b(full: pd.DataFrame, out: Path) -> list[Path]:
@@ -418,7 +456,7 @@ def fig4b(full: pd.DataFrame, out: Path) -> list[Path]:
                  r"(6 = daily; 1 day/week is infeasible at "
                  r"$\mathrm{MAX\_HOLDING\_DAYS}=3$)", fontsize=11.5)
     fig.tight_layout(rect=[0, 0, 1, 0.94])
-    return save(fig, out, "fig4b_mean_days")
+    return save(fig, out, "supp_fig4b_mean_days")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -457,7 +495,16 @@ def _structural_facts() -> pd.DataFrame:
                 parcels_per_stop=(wk / (nspd * H.N_DAYS)
                                   if nspd > 0 else np.nan),
                 hub_n_cells=cells_per_hub.get(str(plz), np.nan)))
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    # Region type (urban / suburban / rural) -- the submitted fig 6 (c)
+    # split, joined at PLZ level (the grid's cell key).
+    rt = H.region_types(ROOT)
+    df = df.merge(rt, on="plz", how="left")
+    assert df.raumtyp_3.notna().all(), (
+        "cells without a region type: "
+        f"{sorted(df[df.raumtyp_3.isna()].plz.unique())[:10]} -- "
+        "data/geodata/plz_raumtyp.csv does not cover the grid's PLZ set")
+    return df
 
 
 def _quartile_lines(ax, df, feat, label, unit, cmap,
@@ -518,9 +565,140 @@ def _quartile_lines(ax, df, feat, label, unit, cmap,
     return pd.DataFrame(comp)
 
 
-def fig6(full: pd.DataFrame, knees_r: pd.DataFrame, knees_o: pd.DataFrame,
-         cell_freq2: pd.DataFrame,
-         out: Path) -> tuple[list[Path], pd.DataFrame]:
+def _bucketise(df: pd.DataFrame, feat: str, edges=None, labs=None
+               ) -> tuple[pd.DataFrame, list]:
+    """Add a categorical ``bucket`` column; quartiles unless edges are given.
+
+    Discrete features (hub size, region type) pass explicit classes, because
+    their quartiles collapse onto repeated values.
+    """
+    d = df[df[feat].notna()].copy()
+    if edges is None:
+        edges = d[feat].quantile([0, .25, .5, .75, 1.]).values
+        labs = [f"Q1 ($\\leq${edges[1]:.1f})",
+                f"Q2 ({edges[1]:.1f}-{edges[2]:.1f})",
+                f"Q3 ({edges[2]:.1f}-{edges[3]:.1f})",
+                f"Q4 (>{edges[3]:.1f})"]
+        assert len(set(np.round(edges, 9))) == len(edges), (
+            f"{feat}: quartile edges are not unique ({edges}) -- pass "
+            "explicit class edges for this discrete feature")
+    d["bucket"] = pd.cut(d[feat], bins=edges, labels=labs,
+                         include_lowest=True)
+    return d, list(labs)
+
+
+def _at_own_pstar(df: pd.DataFrame, knees: pd.DataFrame) -> pd.DataFrame:
+    """Keep each LSP's rows at ITS OWN knee P* (all theta).
+
+    The knee is lens-specific (Task 13 §4), so the caller passes the knee
+    table of the lens the panel is drawn in; pairing a lens with the other
+    lens's P* is exactly the mixture the amendment forbids.
+    """
+    parts = []
+    for _, r in knees.iterrows():
+        parts.append(df[(df.provider == r.provider)
+                        & np.isclose(df.penalty, r.P_star)])
+    out = pd.concat(parts, ignore_index=True)
+    assert out.provider.nunique() == knees.provider.nunique(), (
+        "an LSP has no rows at its own P* -- knee table and data disagree")
+    return out
+
+
+def _saving_panel(ax, df: pd.DataFrame, order: list, colours: dict,
+                  value: str, ylabel: str, letter: str, what: str,
+                  lens: str, legend_title: str, legend_loc="upper left",
+                  band_plan: str = "stage1") -> pd.DataFrame:
+    """Median *value* vs theta per bucket, BOTH plans, one lens.
+
+    Line style carries the plan (solid = the plan named first in
+    ``H.PLAN_OF_KEY``), colour carries the bucket, and the IQR band is drawn
+    for ``band_plan`` only -- two overlapping bands would be unreadable.
+    Every legend entry carries the bucket's n and its carrier composition:
+    Region Hannover has exactly one multi-depot network, so a structural
+    bucket can be one carrier's cells in disguise (Task 13 review I-1).
+    """
+    comp = H.bucket_composition(df, "bucket").set_index("bucket")
+    for plan, style, lw in (("stage1", "-", 2.0), ("balanced", "--", 1.7)):
+        d = df[df.plan == plan]
+        if d.empty:
+            continue
+        agg = H.median_by_bucket(d, value, "bucket")
+        for b in order:
+            g = agg[agg.bucket == b].sort_values("share_willing")
+            if g.empty:
+                continue
+            lab = None
+            if plan == band_plan and b in comp.index:
+                c = comp.loc[b]
+                provs = str(c.providers).split(", ")
+                who = provs[0] if c.single_carrier else f"{len(provs)} LSPs"
+                lab = f"{b}  n={int(c.n)}, {who}"
+            ax.plot(g.share_willing * 100, g.med, style, color=colours[b],
+                    linewidth=lw, marker="o" if plan == band_plan else None,
+                    markersize=4, markeredgecolor="black",
+                    markeredgewidth=0.4, label=lab, zorder=3)
+            if plan == band_plan:
+                ax.fill_between(g.share_willing * 100, g.lo, g.hi,
+                                color=colours[b], alpha=0.16, linewidth=0)
+    ax.axhline(0, color="black", ls=":", lw=0.7, alpha=0.6)
+    ax.set_xlabel(r"Willingness-to-wait share $\theta$ [%]")
+    ax.set_ylabel(ylabel)
+    ax.set_title(f"({letter}) {what}\n{lens}" + r" $\cdot$ both plans, "
+                 r"each LSP at its own $P^\star$", fontsize=11.5)
+    ax.grid(alpha=0.3)
+    leg = ax.legend(loc=legend_loc, fontsize=8, title=legend_title,
+                    title_fontsize=8.5)
+    ax.add_artist(leg)
+    ax.legend(handles=[
+        Line2D([], [], color="0.25", linestyle=s, linewidth=1.8,
+               label=H.PLAN_WORD[H.PLAN_OF_KEY[p]])
+        for p, s in (("stage1", "-"), ("balanced", "--"))],
+        loc="lower left", fontsize=8, title="Plan", title_fontsize=8.5)
+    return comp.reset_index()
+
+
+def _pareto(ax, full, letter, sav_col, wait_col, theta_levels, cmap_th,
+            cmap_P, P_idx):
+    """One system Pareto front. Refuses a saving/wait pair of two plans."""
+    assert H.plan_of(sav_col) == H.plan_of(wait_col), (
+        f"Pareto panel ({letter}) mixes plans: {sav_col} is plan "
+        f"{H.plan_of(sav_col)}, {wait_col} is plan {H.plan_of(wait_col)}")
+    for it, th in enumerate(theta_levels):
+        g = full[np.isclose(full.share_willing, th)].sort_values("penalty")
+        ax.plot(g[wait_col], g[sav_col], "-", color=cmap_th[it],
+                linewidth=2.0, label=rf"$\theta = {th:g}$", zorder=2)
+        for _, row in g.iterrows():
+            ax.scatter(row[wait_col], row[sav_col], s=38,
+                       color=cmap_P[P_idx[row.penalty]],
+                       edgecolor="black", linewidth=0.4, zorder=3)
+    ax.axhline(0, color="black", ls="--", lw=0.7, alpha=0.5)
+    ax.set_xlabel("Mean additional customer wait [d]")
+    ax.set_ylabel("Weekly cost saving vs baseline [%]")
+    ax.set_title(f"({letter}) System Pareto front\n"
+                 + H.declare(sav_col).replace("·", r"$\cdot$"),
+                 fontsize=11.5)
+    ax.grid(alpha=0.3)
+    ax.legend(loc="upper left", fontsize=9, ncol=2,
+              title="Willingness-to-wait share", title_fontsize=9)
+
+
+def fig6(full: pd.DataFrame, cells_r: pd.DataFrame, out: Path
+         ) -> tuple[list[Path], pd.DataFrame]:
+    """(a) system Pareto + (b)-(f) MEDIAN per-cell euro saving.
+
+    This is the submitted figure's layout -- Pareto, carrier type, region
+    type, hub distance, postal-code area, parcels per drop-site -- rebuilt
+    on the v5/v6 grid from ``72_per_cell_costs_v2.py``'s per-cell costs.
+    The submitted version approximated a cell's express cost by a
+    parcel-proportional share of the PROVIDER's express total; the per-cell
+    table splits each realised TOUR instead, and its sum is gated against
+    the grid's own routing total, so nothing here is an approximation of
+    the grid it summarises.
+
+    ``area size`` is panel (e), as in the submission -- the hub-size split
+    (which is DHL-only below its top class) lives in the operator-lens
+    companion, where the mechanism it shows belongs.
+    """
     rcParams.update(RC)
     fig, ax = plt.subplots(2, 3, figsize=(18.0, 10.4))
 
@@ -531,48 +709,97 @@ def fig6(full: pd.DataFrame, knees_r: pd.DataFrame, knees_o: pd.DataFrame,
     cmap_P = plt.get_cmap(S.CMAP_PENALTY)(np.linspace(0.05, 0.95,
                                                       len(P_unique)))
     P_idx = {P: i for i, P in enumerate(P_unique)}
-
-    def pareto(a, letter, sav_col, wait_col):
-        # a front built from two columns of DIFFERENT plans is a mixture,
-        # not a front -- refuse before drawing it
-        assert H.plan_of(sav_col) == H.plan_of(wait_col), (
-            f"Pareto panel ({letter}) mixes plans: {sav_col} is plan "
-            f"{H.plan_of(sav_col)}, {wait_col} is plan "
-            f"{H.plan_of(wait_col)}")
-        for it, th in enumerate(theta_levels):
-            g = full[np.isclose(full.share_willing, th)].sort_values("penalty")
-            a.plot(g[wait_col], g[sav_col], "-", color=cmap_th[it],
-                   linewidth=2.0, label=rf"$\theta = {th:g}$", zorder=2)
-            for _, row in g.iterrows():
-                a.scatter(row[wait_col], row[sav_col], s=38,
-                          color=cmap_P[P_idx[row.penalty]],
-                          edgecolor="black", linewidth=0.4, zorder=3)
-        a.axhline(0, color="black", ls="--", lw=0.7, alpha=0.5)
-        a.set_xlabel("Mean additional customer wait [d]")
-        a.set_ylabel("Weekly cost saving vs baseline [%]")
-        a.set_title(f"({letter}) System Pareto front\n"
-                    + H.declare(sav_col).replace("·", r"$\cdot$"),
-                    fontsize=11.5)
-        a.grid(alpha=0.3)
-        a.legend(loc="upper left", fontsize=9, ncol=2,
-                 title="Willingness-to-wait share", title_fontsize=9)
-
-    pareto(ax[0, 0], "a", "routing_saving_plan1_pct", "wait_d_plan1")
-    pareto(ax[0, 1], "b", "operator_saving_plan2_pct", "wait_d_plan2")
+    _pareto(ax[0, 0], full, "a", "routing_saving_plan1_pct", "wait_d_plan1",
+            theta_levels, cmap_th, cmap_P, P_idx)
     sm = plt.cm.ScalarMappable(
         cmap=matplotlib.colors.ListedColormap(cmap_P),
         norm=matplotlib.colors.BoundaryNorm(
             np.arange(len(P_unique) + 1) - 0.5, ncolors=len(P_unique)))
     sm.set_array([])
-    cb = fig.colorbar(sm, ax=ax[0, 1], fraction=0.046, pad=0.03,
+    cb = fig.colorbar(sm, ax=ax[0, 0], fraction=0.046, pad=0.03,
                       ticks=np.arange(len(P_unique)))
     cb.ax.set_yticklabels([f"{p:g}" for p in P_unique], fontsize=9)
     cb.set_label(r"Service penalty $P$ [€/p/d]", fontsize=10)
 
-    # (c) per-LSP knee fronts, both lenses. Marker carries the lens/plan,
-    # fill carries the carrier class, provider identity is text -- never a
-    # hue. Both legend entries are derived from their own cost column.
-    a = ax[0, 2]
+    ylab = "Median per-area saving\n[€/week]"
+    cmap_q = plt.get_cmap(S.CMAP_QUARTILE)(np.linspace(0.45, 0.92, 4))
+    comps = []
+
+    # (b) carrier type -- an explicit class order, coloured by S.CARRIER
+    d = cells_r.copy()
+    d["bucket"] = pd.Categorical(d.carrier_class,
+                                 categories=S.CARRIER_ORDER, ordered=True)
+    comps.append(_saving_panel(
+        ax[0, 1], d, S.CARRIER_ORDER, dict(S.CARRIER), "saving_eur", ylab,
+        "b", "Saving by carrier type", H.LENS_ROUTING, "Carrier type")
+        .assign(feature="carrier_class"))
+
+    # (c) region type
+    d = cells_r[cells_r.raumtyp_3.notna()].copy()
+    d["bucket"] = pd.Categorical(d.raumtyp_3, categories=H.RAUMTYP_ORDER,
+                                 ordered=True)
+    comps.append(_saving_panel(
+        ax[0, 2], d, H.RAUMTYP_ORDER, dict(S.RAUMTYP), "saving_eur", ylab,
+        "c", "Saving by region type", H.LENS_ROUTING, "Region type")
+        .assign(feature="raumtyp_3"))
+
+    # (d)-(f) continuous structure, own quartiles
+    for a_, letter, feat, title, legend_title in (
+            (ax[1, 0], "d", "hub_dist_km", "Saving by hub distance",
+             "Hub distance [km]"),
+            (ax[1, 1], "e", "area_km2", "Saving by postal-code area",
+             r"Area [km$^2$]"),
+            (ax[1, 2], "f", "parcels_per_stop",
+             "Saving by parcels per drop-site",
+             "Parcels per drop-site visit [pkts/visit]")):
+        d, order = _bucketise(cells_r, feat)
+        comps.append(_saving_panel(
+            a_, d, order, {b: cmap_q[i] for i, b in enumerate(order)},
+            "saving_eur", ylab, letter, title, H.LENS_ROUTING,
+            legend_title).assign(feature=feat))
+
+    comp = pd.concat(comps, ignore_index=True)
+    fig.tight_layout(pad=0.8, w_pad=1.6, h_pad=1.8, rect=[0, 0.045, 1, 1])
+    fig.text(0.5, 0.004,
+             "Panels (b)-(f): median over postal-code areas of the weekly "
+             "cost saving of that area against its own daily-delivery "
+             f"baseline, {H.LENS_ROUTING}; band = IQR of the "
+             f"{H.PLAN_WORD[1]} plan. Each LSP is shown at its own knee "
+             r"$P^\star$ of this lens. A cell's cost is its own tour plus a "
+             "parcel-proportional share of every pooled tour it rides in; "
+             "the per-area costs sum exactly to the grid's routing total "
+             "(identity gate, 72_). " + H.COST_MODEL_TEXT,
+             ha="center", va="bottom", fontsize=9, wrap=True)
+    return save(fig, out, "supp_fig6_structural_v2"), comp
+
+
+def fig6b(full: pd.DataFrame, knees_r: pd.DataFrame, knees_o: pd.DataFrame,
+          hubs_o: pd.DataFrame, cell_freq2: pd.DataFrame, out: Path
+          ) -> tuple[list[Path], pd.DataFrame]:
+    """The operator lens: per HUB, not per cell -- plus the two lens panels.
+
+    The weekly fixed bill is sized by a hub's PEAK day, so it is a property
+    of the hub: what a cell "contributes" to it depends on when the rest of
+    the hub peaks.  A per-cell operator saving is therefore not a
+    well-defined quantity, and this figure does not draw one -- it shows the
+    operator lens at the level where the number means something, and says so
+    in its footer.
+    """
+    rcParams.update(RC)
+    fig, ax = plt.subplots(2, 3, figsize=(18.0, 10.4))
+
+    theta_levels = [0.1, 0.2, 0.4, 0.6, 0.8, 1.0]
+    P_unique = np.array(sorted(full.penalty.unique()))
+    cmap_th = plt.get_cmap(S.CMAP_THETA)(np.linspace(0.15, 0.9,
+                                                     len(theta_levels)))
+    cmap_P = plt.get_cmap(S.CMAP_PENALTY)(np.linspace(0.05, 0.95,
+                                                      len(P_unique)))
+    P_idx = {P: i for i, P in enumerate(P_unique)}
+    _pareto(ax[0, 0], full, "a", "operator_saving_plan2_pct", "wait_d_plan2",
+            theta_levels, cmap_th, cmap_P, P_idx)
+
+    # (b) per-LSP knee P*, both lenses (marker = lens/plan, fill = class)
+    a = ax[0, 1]
     marker_handles = []
     for kn, mk, cost_col in [(knees_r, "o", "routing_saving_plan1_pct"),
                              (knees_o, "s", "operator_saving_plan2_pct")]:
@@ -581,15 +808,14 @@ def fig6(full: pd.DataFrame, knees_r: pd.DataFrame, knees_o: pd.DataFrame,
                       facecolor=S.CARRIER[r.carrier_class],
                       edgecolor="black", linewidth=0.6, zorder=3)
             a.annotate(r.provider, (r.wait_d, r.saving_pct),
-                       textcoords="offset points", xytext=(6, 4),
-                       fontsize=8)
+                       textcoords="offset points", xytext=(6, 4), fontsize=8)
         marker_handles.append(Line2D(
             [], [], linestyle="none", marker=mk, markersize=8,
             markerfacecolor="white", markeredgecolor="black",
             label=H.declare(cost_col).replace("·", "/")))
     a.set_xlabel(r"Mean additional customer wait at $P^\star$ [d]")
     a.set_ylabel(r"Cost saving at $P^\star$ [%]")
-    a.set_title(r"(c) Per-LSP knee $P^\star$, both lenses", fontsize=11.5)
+    a.set_title(r"(b) Per-LSP knee $P^\star$, both lenses", fontsize=11.5)
     a.grid(alpha=0.3)
     leg1 = a.legend(handles=marker_handles, loc="lower right", fontsize=8,
                     title="Lens / plan", title_fontsize=8.5)
@@ -599,64 +825,72 @@ def fig6(full: pd.DataFrame, knees_r: pd.DataFrame, knees_o: pd.DataFrame,
              loc="upper left", fontsize=9, title="Carrier type",
              title_fontsize=9)
 
-    # (d)-(f) structural: delivery frequency of the operator plan.
-    # Ramp starts at 0.45: YlOrBr below that is about 1.4:1 against white,
-    # and the palest series in (f) is the single-cell-hub curve -- the one
-    # line the panel exists to show.
+    ylab = "Median per-hub saving\n[€/week]"
     cmap_q = plt.get_cmap(S.CMAP_QUARTILE)(np.linspace(0.45, 0.92, 4))
-    plan_note = H.declare("mean_days_plan2")
-    comps = [
-        _quartile_lines(ax[1, 0], cell_freq2, "hub_dist_km", "Hub distance",
-                        "km", cmap_q),
-        _quartile_lines(ax[1, 1], cell_freq2, "parcels_per_stop",
-                        "Parcels per drop-site visit", "pkts/visit", cmap_q),
-        _quartile_lines(ax[1, 2], cell_freq2, "hub_n_cells",
-                        "Cells served by the hub", "areas", cmap_q,
-                        edges=[0.5, 1.5, 4.5, 12.5, 1e9],
-                        labs=["1 (single-cell hub)", "2-4", "5-12",
-                              r"$\geq$13"]),
-    ]
-    comp = pd.concat(comps, ignore_index=True)
+    comps = []
 
-    # I-1: name the confound instead of letting the reader infer a law.
-    # Region Hannover has exactly one multi-depot network, so a hub-size
-    # bucket below the top class is that carrier's depots relabelled.
-    single = comp[comp.single_carrier & (comp.feature == "hub_n_cells")]
+    # (c) per-hub operator saving by carrier type
+    d = hubs_o.copy()
+    d["bucket"] = pd.Categorical(d.carrier_class,
+                                 categories=S.CARRIER_ORDER, ordered=True)
+    comps.append(_saving_panel(
+        ax[0, 2], d, S.CARRIER_ORDER, dict(S.CARRIER), "operator_saving_eur",
+        ylab, "c", "Hub saving by carrier type", H.LENS_OPERATOR,
+        "Carrier type", band_plan="balanced").assign(feature="carrier_class"))
+
+    # (d) per-hub operator saving by hub size -- the DHL-only caveat panel
+    hub_edges = [0.5, 1.5, 4.5, 12.5, 1e9]
+    hub_labs = ["1 (single-cell hub)", "2-4", "5-12", r"$\geq$13"]
+    d, order = _bucketise(hubs_o, "n_cells", edges=hub_edges, labs=hub_labs)
+    comps.append(_saving_panel(
+        ax[1, 0], d, order, {b: cmap_q[i] for i, b in enumerate(order)},
+        "operator_saving_eur", ylab, "d", "Hub saving by hub size",
+        H.LENS_OPERATOR, "Cells served by the hub",
+        band_plan="balanced").assign(feature="hub_n_cells"))
+
+    # (e) per-hub operator saving by the hub's dominant region type
+    d = hubs_o[hubs_o.raumtyp_3.notna()].copy()
+    d["bucket"] = pd.Categorical(d.raumtyp_3, categories=H.RAUMTYP_ORDER,
+                                 ordered=True)
+    comps.append(_saving_panel(
+        ax[1, 1], d, H.RAUMTYP_ORDER, dict(S.RAUMTYP), "operator_saving_eur",
+        ylab, "e", "Hub saving by region type", H.LENS_OPERATOR,
+        "Region type (parcel-dominant)",
+        band_plan="balanced").assign(feature="raumtyp_3"))
+
+    # (f) the mechanism: delivery frequency by hub size (Kompendium 40.14)
+    fcomp = _quartile_lines(ax[1, 2], cell_freq2, "hub_n_cells",
+                            "Cells served by the hub", "areas", cmap_q,
+                            edges=hub_edges, labs=hub_labs)
+    single = fcomp[fcomp.single_carrier]
     carriers = sorted({c for cs in single.providers for c in cs.split(", ")})
-    single_carrier_note = (f" ({carriers[0]} only below the top class)"
-                           if len(single) and len(carriers) == 1 else "")
-    for a_, letter, what, note in [
-            (ax[1, 0], "d", "hub distance", ""),
-            (ax[1, 1], "e", "parcels per drop-site visit", ""),
-            (ax[1, 2], "f", "hub size", single_carrier_note)]:
-        a_.set_title(f"({letter}) Delivery frequency by {what}{note}\n"
-                     + plan_note + r", $P = 0$", fontsize=11.5)
+    note = (f" ({carriers[0]} only below the top class)"
+            if len(single) and len(carriers) == 1 else "")
+    ax[1, 2].set_title(f"(f) Delivery frequency by hub size{note}\n"
+                       + H.declare("mean_days_plan2") + r", $P = 0$",
+                       fontsize=11.5)
 
+    comp = pd.concat(comps + [fcomp.assign(panel="f")], ignore_index=True)
     if len(single) and len(carriers) == 1:
         who = carriers[0]
         confound = (
-            "Panel (f) caveat: the "
-            + " / ".join(f"'{b}'" for b in single.bucket)
-            + f" bucket(s) hold {who} cells only, because {who} runs the "
-              "only multi-depot network in the case study (16 hubs; every "
-              "other LSP has a single depot). Hub size and carrier identity "
-              f"are confounded here, so this panel is a within-{who} "
-              "statement, not a general law. ")
-        mech = (f"Within {who}'s network a hub serving a single area cannot "
-                "rotate delivery days across cells, so the operator polish "
-                "drives it back to (near-)daily service. ")
+            f"Panels (d) and (f): the small-hub buckets hold {who} cells "
+            f"only, because {who} runs the only multi-depot network in the "
+            "case study (16 hubs; every other LSP has a single depot). Hub "
+            "size and carrier identity are confounded there, so those two "
+            f"panels are within-{who} statements, not general laws. ")
     else:
         confound = ""
-        mech = ("A hub serving a single area cannot rotate delivery days "
-                "across cells, so the operator polish drives it back to "
-                "(near-)daily service. ")
-    fig.tight_layout(pad=0.8, w_pad=1.6, h_pad=1.8, rect=[0, 0.035, 1, 1])
+    fig.tight_layout(pad=0.8, w_pad=1.6, h_pad=1.8, rect=[0, 0.045, 1, 1])
     fig.text(0.5, 0.004,
-             "Panels (a) and (b) are different lenses AND different plans. "
-             + confound + mech + H.COST_MODEL_TEXT,
+             f"The {H.LENS_OPERATOR} is HUB-attributable, not "
+             "cell-attributable: the weekly fixed bill is sized by the hub's "
+             "peak day, so what one area contributes to it depends on when "
+             "the rest of the hub peaks. Panels (c)-(e) therefore aggregate "
+             "the per-area attribution to the hub before taking a saving. "
+             + confound + H.COST_MODEL_TEXT,
              ha="center", va="bottom", fontsize=9, wrap=True)
-    return save(fig, out, "fig6_structural_v2"), comp
-
+    return save(fig, out, "supp_fig6b_operator_lens_v2"), comp
 
 # ─────────────────────────────────────────────────────────────────────────
 # Tables
@@ -784,6 +1018,235 @@ def write_tables(full: pd.DataFrame, base: dict, knees_r, knees_o,
 
 
 ABLATION_POINTS = [(0.0, 1.0), (0.25, 1.0), (0.5, 1.0), (0.0, 0.6)]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Lens frames: per CELL for the routing lens, per HUB for the operator lens
+# ─────────────────────────────────────────────────────────────────────────
+def _lens_frames(pc: pd.DataFrame, struct: pd.DataFrame,
+                 knees_r: pd.DataFrame, knees_o: pd.DataFrame
+                 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """``(cells at the routing P*, hubs at the operator P*)``.
+
+    Each LSP is taken at the knee of the lens the frame is drawn in -- the
+    knee is lens-dependent (Task 13 §4) and pairing a lens with the other
+    lens's P* is the mixture the amendment forbids.  Carrier class comes
+    from the SAME knee table as the P*, so class and operating point can
+    never come from different lenses either.
+    """
+    pcs = H.per_cell_savings(pc)
+    cells = pcs.merge(struct, on=["provider", "plz"], how="left")
+    assert cells.hub_dist_km.notna().all(), (
+        "per-cell/structural join left unmatched cells -- the checkpoint "
+        "and the per-cell table disagree on the (provider, plz) universe")
+
+    hubs = H.hub_lens(pc)
+    # a hub's region type = the type its parcels are in (parcel-dominant),
+    # so the label describes where the hub's work is, not where its
+    # smallest cell is
+    P0 = float(sorted(cells.penalty.unique())[0])
+    rt = (cells[np.isclose(cells.share_willing, 0.0)
+                & np.isclose(cells.penalty, P0)
+                & (cells.plan == "stage1")]
+          .groupby(["provider", "hub", "raumtyp_3"], as_index=False)
+          .cell_parcels_week.sum()
+          .sort_values("cell_parcels_week", ascending=False)
+          .drop_duplicates(["provider", "hub"])[["provider", "hub",
+                                                 "raumtyp_3"]])
+    hubs = hubs.merge(rt, on=["provider", "hub"], how="left")
+    assert hubs.raumtyp_3.notna().all(), "a hub has no region type"
+
+    cls_r = dict(zip(knees_r.provider, knees_r.carrier_class))
+    cls_o = dict(zip(knees_o.provider, knees_o.carrier_class))
+    cells["carrier_class"] = cells.provider.map(cls_r)
+    hubs["carrier_class"] = hubs.provider.map(cls_o)
+    assert cells.carrier_class.notna().all()
+    assert hubs.carrier_class.notna().all()
+    return _at_own_pstar(cells, knees_r), _at_own_pstar(hubs, knees_o)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Tables that need the per-cell table, the head usage or the validation
+# ─────────────────────────────────────────────────────────────────────────
+def write_per_cell_tables(cells_r: pd.DataFrame, hubs_o: pd.DataFrame,
+                          tables: Path) -> dict:
+    """The numbers behind fig 6 (b)-(f) and fig 6b (c)-(e), as CSV.
+
+    Median AND the interquartile range, in euro AND in percent, per
+    (feature, bucket, theta, plan) -- so a caption can quote a panel without
+    re-deriving it, and so the percent version (which the submitted figure
+    showed) is available next to the euro version this one plots.
+    """
+    tables.mkdir(parents=True, exist_ok=True)
+    HUB_CLASSES = dict(edges=[0.5, 1.5, 4.5, 12.5, 1e9],
+                       labs=["1", "2-4", "5-12", ">=13"])
+    # (feature, how to bucket it) -- "q" = own quartiles, "hub" = the
+    # discrete hub-size classes, None = the feature IS the class
+    CELL_SPECS = [("carrier_class", None), ("raumtyp_3", None),
+                  ("hub_dist_km", "q"), ("area_km2", "q"),
+                  ("parcels_per_stop", "q")]
+    HUB_SPECS = [("carrier_class", None), ("raumtyp_3", None),
+                 ("n_cells", "hub")]
+    out = []
+    for level, frame, lens, values, specs in (
+            ("cell", cells_r, H.LENS_ROUTING,
+             ("saving_eur", "saving_pct"), CELL_SPECS),
+            ("hub", hubs_o, H.LENS_OPERATOR,
+             ("operator_saving_eur", "operator_saving_pct"), HUB_SPECS)):
+        for feat, mode in specs:
+            if mode is None:
+                d = frame[frame[feat].notna()].copy()
+                d["bucket"] = d[feat]
+            else:
+                d, _order = _bucketise(
+                    frame, feat, **(HUB_CLASSES if mode == "hub" else {}))
+            # the plan must be a key, not an average: median_by_bucket gets
+            # one plan at a time
+            for plan in sorted(d.plan.unique()):
+                dp = d[d.plan == plan]
+                for value in values:
+                    agg = H.median_by_bucket(dp, value, "bucket")
+                    out.append(agg.assign(level=level, lens=lens,
+                                          feature=feat, plan=plan,
+                                          value=value))
+    tab = pd.concat(out, ignore_index=True)
+    p = tables / "tab_per_cell_structural_v2.csv"
+    tab.to_csv(p, index=False)
+    print(f"  wrote {p.name} ({len(tab)} rows)")
+    return {"per_cell_structural": p}
+
+
+def write_head_usage(rev: Path, tables: Path) -> dict:
+    """Head-priced share of pooled cost and of tours, occurrence-weighted."""
+    hu = H.head_usage(rev)
+    if hu is None:
+        print("  head usage: this grid predates Task 11 "
+              f"({rev / H.HEAD_USAGE_NAME} absent) -- no head, nothing to "
+              "summarise")
+        return {}
+    written = {}
+    for name, by in (("provider_kind", ("provider", "kind")),
+                     ("kind", ("kind",)),
+                     ("theta_kind", ("share_willing", "kind"))):
+        s = H.head_usage_summary(hu, by=by)
+        p = tables / f"tab_head_usage_summary_{name}_v2.csv"
+        s.to_csv(p, index=False)
+        written[f"head_usage_{name}"] = p
+    overall = H.head_usage_summary(hu, by=("head_id",))
+    p = tables / "tab_head_usage_summary_v2.csv"
+    overall.to_csv(p, index=False)
+    written["head_usage"] = p
+    pk = H.head_usage_summary(hu, by=("provider", "kind"))
+    show = pk[["provider", "kind", "pooled_cost_eur", "head_cost_eur",
+               "head_cost_share", "n_groups", "n_multi_cell", "n_head",
+               "head_share_of_multi_cell"]]
+    print("\nhead-priced share of POOLED cost, occurrence-weighted "
+          "(NaN = this provider/kind pooled nothing at all):")
+    print(show.to_string(index=False))
+    tex = show.rename(columns={
+        "provider": "LSP", "kind": "tour kind",
+        "pooled_cost_eur": r"pooled [\euro/wk]",
+        "head_cost_eur": r"head-priced [\euro/wk]",
+        "head_cost_share": "head share of cost",
+        "n_groups": "tours", "n_multi_cell": "multi-cell tours",
+        "n_head": "head-priced tours",
+        "head_share_of_multi_cell": "head share of multi-cell tours"})
+    H.to_latex(tex, tables / "tab_head_usage_summary_v2.tex",
+               caption=("Certified-support bundle head: what actually priced "
+                        "the realised pooled tours, summed over the whole "
+                        "grid and divided once (never a mean of ratios). "
+                        "A blank share means the LSP realised no pooled tour "
+                        "of that kind at all."),
+               label="tab:head_usage")
+    return written
+
+
+def write_delta(rev: Path, compare: Path, full: pd.DataFrame,
+                costs: pd.DataFrame, tables: Path) -> dict:
+    """v5 -> v6 delta at theta = 1: what the bundle head changed.
+
+    Both grids' savings are taken against THEIR OWN theta = 0 baseline: the
+    head prices the baseline's pooled small-cell tours too, so v6's baseline
+    is not v5's and a saving computed across the two would be meaningless
+    (Task 11 review addendum).
+    """
+    if compare is None:
+        print("  no --compare-dir: the grid-to-grid delta table is skipped")
+        return {}
+    if not (compare / "tab_costs_v2.csv").exists():
+        print(f"  --compare-dir {compare} has no tab_costs_v2.csv -- the "
+              "delta table is skipped")
+        return {}
+    Gc = H.RevGrid(compare, require_chosen=True)
+    base_c = H.baseline(Gc.costs)
+    full_c = H.headline_rows(Gc.costs, Gc.wait, base_c,
+                             Gc.n_cells_per_provider())
+    a, b = compare.name.replace("revision_2026_08_", ""), \
+        rev.name.replace("revision_2026_08_", "")
+    d = H.grid_delta(full_c, full, Gc.costs, costs, a, b)
+    p = tables / "tab_grid_delta_v2.csv"
+    d.to_csv(p, index=False)
+    print(f"\ngrid delta at theta=1  ({a} -> {b}):")
+    cols = ["penalty", f"pooled_{a}_eur", f"pooled_{b}_eur",
+            "pooled_delta_eur", f"head_share_{b}",
+            "routing_saving_plan1_pct_delta_pp",
+            "operator_saving_plan2_pct_delta_pp",
+            "sum_hub_peak_plan2_delta"]
+    print(d[cols].to_string(index=False))
+    tex = d[cols].rename(columns={
+        "penalty": "$P$",
+        f"pooled_{a}_eur": rf"pooled {a} [\euro/wk]",
+        f"pooled_{b}_eur": rf"pooled {b} [\euro/wk]",
+        "pooled_delta_eur": r"$\Delta$ pooled [\euro/wk]",
+        f"head_share_{b}": f"head share {b}",
+        "routing_saving_plan1_pct_delta_pp": r"$\Delta$ rout.\ sav.\ [pp]",
+        "operator_saving_plan2_pct_delta_pp": r"$\Delta$ oper.\ sav.\ [pp]",
+        "sum_hub_peak_plan2_delta": r"$\Delta \sum_h$ peak"})
+    H.to_latex(tex, tables / "tab_grid_delta_v2.tex",
+               caption=(rf"What the certified-support bundle head changed at "
+                        rf"$\theta = 1$: grid {a} (head-free) against grid "
+                        rf"{b} (head installed). Savings are percentage-point "
+                        r"differences, each taken against its OWN grid's "
+                        r"$\theta = 0$ baseline -- the head prices the "
+                        r"baseline's pooled tours too, so the two baselines "
+                        r"differ. " + H.COST_MODEL_CAPTION),
+               label="tab:grid_delta")
+    return {"delta": p}
+
+
+def write_co2(rev: Path, tables: Path) -> dict:
+    """CO2 and vehicle-km from the grid's OWN validated route kilometres."""
+    try:
+        t = H.co2_table(rev)
+    except H.Co2Unavailable as exc:
+        print(f"\nCO2 table (Kompendium 38.6): REFUSED -- {exc}")
+        return {}
+    p = tables / "tab_co2_km_v2.csv"
+    t.to_csv(p, index=False)
+    print("\nCO2 / vehicle-km from validated VROOM routes "
+          f"({H.CO2_KG_PER_KM} kg/vehicle-km, external assumption):")
+    print(t[["plan", "penalty", "share_willing", "n_instances", "km_week",
+             "co2_t_week", "vs_least_consolidated_pct",
+             "n_flagged"]].to_string(index=False))
+    tex = (t[["plan", "penalty", "km_week", "co2_t_week",
+              "vs_least_consolidated_pct"]]
+           .rename(columns={"plan": "plan", "penalty": "$P$",
+                            "km_week": "km/week",
+                            "co2_t_week": "CO$_2$ t/week",
+                            "vs_least_consolidated_pct":
+                                r"vs least consolidated [\%]"}))
+    H.to_latex(tex, tables / "tab_co2_km_v2.tex",
+               caption=(r"Vehicle kilometres and CO$_2$ at the validated "
+                        r"operating points, from the actual VROOM routes of "
+                        r"this grid. CO$_2$ factor "
+                        f"{H.CO2_KG_PER_KM} kg/vehicle-km (external "
+                        r"assumption, not a model result). The reference is "
+                        r"the least consolidated \emph{validated} point of "
+                        r"the same plan; there is no VROOM baseline solve of "
+                        r"daily delivery on this allocation."),
+               label="tab:co2_km")
+    return {"co2": p}
+
 
 
 def _ablation_row(variant: str, rev_dir: Path, base: dict, *,
@@ -927,47 +1390,62 @@ def write_ablation(rev: Path, base: dict, v5_costs: pd.DataFrame,
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# CO2 (§38.6) -- carried over unless a v5 gates report shows G1b diffs
-# ─────────────────────────────────────────────────────────────────────────
-def co2_decision(rev: Path) -> str:
-    """Regenerate the CO2/vehicle-km table only if this grid can support it.
-
-    The rule from the task brief is "regenerate only if this grid's gates
-    report shows G1b diffs > 0".  Two facts decide it:
-
-    1. whether this grid HAS a gates report with a G1b count at all, and
-    2. whether this grid has VROOM route kilometres -- the CO2 table
-       (Kompendium 38.6) is built from real routes at the four validated
-       operating points, not from surrogate cost, so without a validation
-       directory there is nothing to recompute it FROM.
-    """
-    gr = rev / "gates_report.md"
-    val = rev / "validation"
-    have_val = val.exists() and any(val.glob("*.csv"))
-    if not gr.exists():
-        gate = f"no gates report at {gr}, so no G1b diff is demonstrated"
-    else:
-        txt = gr.read_text(encoding="utf-8", errors="replace")
-        gate = ("gates report present and mentions G1b"
-                if "G1b" in txt else "gates report present, no G1b section")
-    if not have_val:
-        return (f"CARRY OVER unchanged. {gate}; and this grid has no "
-                f"validation/ route data ({val}), so there are no VROOM "
-                "kilometres to rebuild the table from -- the CO2 figures "
-                "(Kompendium 38.6) stay the four validated points of the "
-                "2026-07 revision until Task 12 re-validates.")
-    return (f"REVIEW REQUIRED: {gate}, and this grid HAS validation route "
-            f"data ({val}). Recompute the CO2/vehicle-km table from it "
-            "before reusing the carried-over numbers.")
+# CO2 (Kompendium 38.6) -- REGENERATED from this grid's own validated
+# route kilometres by H.co2_table(); H.co2_decision() says whether that
+# is possible here and REFUSES otherwise.  There is deliberately no
+# carry-over path: the submitted table describes a different grid, a
+# different plan and a different cost path (Task 13B).
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# The ACCEPTED paper figures: the frozen builders, on tables 74_
+# adapts from this grid.  Their layout is the submitted one; only the
+# numbers change.  Everything this module renders itself is
+# SUPPLEMENTARY (``supp_`` prefix) and 71_ never syncs it into a main
+# figure slot.
+# ─────────────────────────────────────────────────────────────────────────
+def _render_accepted_figures(rev: Path, express_allocation: str
+                             ) -> list[Path]:
+    import importlib.util
+    path = Path(__file__).resolve().parent / "74_v2_to_legacy_tables.py"
+    spec = importlib.util.spec_from_file_location("_legacy74", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    print(chr(10) + "--- accepted paper figures (74_ adapter + the "
+          "three frozen builders) ---")
+    produced, meta = mod.build_and_render(
+        rev, express_allocation=express_allocation, do_render=True)
+    bt = meta["base_total_eur"]
+    cv = meta["baseline_cv_exact"]
+    print(f"  grid baseline {bt:,.2f} EUR/wk, Mo-Sa fleet CV "
+          f"{cv:.4f}; {len(produced)} file(s) copied into figures/")
+    return produced
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--rev-dir", default=str(DEFAULT_REV),
                     help="v5-schema grid directory (default: %(default)s)")
     ap.add_argument("--no-figures", action="store_true")
     ap.add_argument("--no-tables", action="store_true")
+    ap.add_argument("--compare-dir", default=str(DEFAULT_COMPARE),
+                    help="the OTHER grid for the delta table (default: "
+                         "%(default)s); skipped when it is the same "
+                         "directory as --rev-dir or does not exist")
+    ap.add_argument("--no-legacy", action="store_true",
+                    help="skip the accepted paper figures (74_ + the three "
+                         "frozen builders). The supplementary two-lens "
+                         "figures are rendered either way")
+    ap.add_argument("--express-allocation", default="per-tour",
+                    choices=("per-tour", "dd-only"),
+                    help="how 74_ hands a cell its express residual to "
+                         "the frozen fig-6 builder; see 74_'s docstring")
+    ap.add_argument("--allow-missing-per-cell", action="store_true",
+                    help="downgrade a missing tab_per_cell_costs_v2.csv "
+                         "from a refusal to a skip. fig 6 (b)-(f) and the "
+                         "operator-lens companion are then NOT rendered -- "
+                         "there is no substitute for them")
     args = ap.parse_args(argv)
 
     rev = Path(args.rev_dir)
@@ -979,6 +1457,12 @@ def main(argv=None) -> int:
     # never invokes them -- run them with REV_DIR set in the shell instead.
     os.environ["REV_DIR"] = str(rev)
     figures, tables = rev / "figures", rev / "tables"
+    compare = Path(args.compare_dir) if args.compare_dir else None
+    if compare is not None:
+        if not compare.is_absolute():
+            compare = (ROOT / compare).resolve()
+        if compare == rev:
+            compare = None          # a grid is not its own reference
 
     print("=" * 74)
     print(f"v5 figures/tables  REV_DIR = {rev}")
@@ -1029,6 +1513,28 @@ def main(argv=None) -> int:
               f"{a.carrier_class} -> {b.carrier_class}"
               f"{'   *CHANGED*' if a.carrier_class != b.carrier_class else ''}")
 
+    # ── per-cell euro costs (72_): fig 6 (b)-(f) and the operator-lens
+    #    companion have no substitute, so a missing table refuses by
+    #    default and only an explicit flag downgrades it to a skip.
+    struct_all = _structural_facts()
+    cells_r = hubs_o = pc = None
+    try:
+        pc = H.load_per_cell(rev)
+    except H.PerCellMissing as exc:
+        if not args.allow_missing_per_cell:
+            print(f"\nREFUSED -- {exc}")
+            return 2
+        print(f"\nWARNING: {exc}\n  --allow-missing-per-cell was passed: "
+              "fig 6, fig 6b and the per-cell tables are SKIPPED.")
+    if pc is not None:
+        deltas = H.check_per_cell_against_grid(pc, G.costs)
+        print(f"\nper-cell identity gate: {len(deltas)} (P, theta, provider, "
+              "plan) group(s) re-checked from the written CSVs, worst "
+              f"|delta| cost {deltas.cost_delta.abs().max():.3e} EUR / "
+              f"vehicle-days {deltas.vd_delta.abs().max():.3e} / hub peak "
+              f"{deltas.peak_delta.abs().max():.3e}")
+        cells_r, hubs_o = _lens_frames(pc, struct_all, knees_r, knees_o)
+
     if not args.no_figures:
         print("\n--- figures ---")
         sizes = H.schedule_sizes()
@@ -1041,22 +1547,31 @@ def main(argv=None) -> int:
         produced += fig4(mix1, mix2, figures)
         produced += fig4b(full, figures)
 
-        struct = _structural_facts()
         cf = G.chosen[np.isclose(G.chosen.penalty, 0.0)].copy()
         cf["plz"] = cf.plz.astype(str)
         cf["size"] = sizes[cf.schedule_idx_balanced.values.astype(int)]
-        cf = cf.merge(struct, on=["provider", "plz"], how="left")
+        cf = cf.merge(struct_all, on=["provider", "plz"], how="left")
         assert cf.hub_dist_km.notna().all(), (
             "structural join left unmatched cells -- checkpoint and grid "
             "disagree on the (provider, plz) universe")
-        paths, comp = fig6(full, knees_r, knees_o, cf, figures)
-        produced += paths
+        if cells_r is not None:
+            paths, comp = fig6(full, cells_r, figures)
+            produced += paths
+            paths, comp_b = fig6b(full, knees_r, knees_o, hubs_o, cf,
+                                  figures)
+            produced += paths
+            comp = pd.concat([comp.assign(figure="fig6"),
+                              comp_b.assign(figure="fig6b")],
+                             ignore_index=True)
+            print("\nfig 6 / 6b bucket composition "
+                  "(a single-carrier bucket cannot separate structure from "
+                  "carrier identity):")
+            print(comp.to_string(index=False))
+            comp.to_csv(figures / "fig6_bucket_composition.csv", index=False)
 
-        print("\nfig 6 (d)-(f) bucket composition "
-              "(a single-carrier bucket cannot separate structure from "
-              "carrier identity):")
-        print(comp.to_string(index=False))
-        comp.to_csv(figures / "fig6_bucket_composition.csv", index=False)
+        if not args.no_legacy:
+            produced += _render_accepted_figures(
+                rev, args.express_allocation)
 
         mpath = H.write_manifest(figures, rev, ROOT, produced)
         doc = H.read_manifest(mpath)
@@ -1073,11 +1588,16 @@ def main(argv=None) -> int:
         print("\n--- tables ---")
         write_tables(full, base, knees_r, knees_o, tables)
         write_ablation(rev, base, G.costs, tables)
+        if cells_r is not None:
+            write_per_cell_tables(cells_r, hubs_o, tables)
+        write_head_usage(rev, tables)
+        write_delta(rev, compare, full, G.costs, tables)
+        write_co2(rev, tables)
         print("\nwritten to " + str(tables.relative_to(ROOT)) + ":")
         for f in sorted(tables.iterdir()):
             print(f"  {f.name:<42} {f.stat().st_size:>9,d} B")
 
-    print("\nCO2 table (Kompendium 38.6): " + co2_decision(rev))
+    print("\nCO2 table (Kompendium 38.6): " + H.co2_decision(rev))
     return 0
 
 

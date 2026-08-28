@@ -100,10 +100,27 @@ def main():
     sm = pd.read_csv(BAL / "_tab_chosen_with_system_smoothing.csv")
     sm["plz"] = sm.plz.astype(str)
     j = sched.merge(sm, on=["penalty", "share_willing", "provider", "plz"])
-    assert (j.schedule_size_init == j.schedule_size_system_smoothed).all(), \
-        "frequency not preserved across stages -- fig4 caption claim invalid"
-    print(f"Stage-invariance OK: schedule_size_init == schedule_size_system_smoothed "
-          f"for all {len(j)} (penalty, share_willing, provider, plz) rows")
+    same = j.schedule_size_init == j.schedule_size_system_smoothed
+    # Whether the stages preserve a cell's delivery FREQUENCY is a
+    # property of the GRID, not of this code: the 2026-07 pipeline
+    # re-times days only, a v5/v6 stage 2 is frequency-free by design.
+    # C.FREQ_INVARIANT declares which grid this is (default: the 2026-07
+    # one, so the gate is unchanged); when it is not declared the
+    # violation is REPORTED loudly instead of silently passing, because
+    # the fig-4 caption may then not claim invariance.
+    if C.FREQ_INVARIANT:
+        assert same.all(), \
+            "frequency not preserved across stages -- fig4 caption claim invalid"
+        print(f"Stage-invariance OK: schedule_size_init == schedule_size_system_smoothed "
+              f"for all {len(j)} (penalty, share_willing, provider, plz) rows")
+    else:
+        n_diff = int((~same).sum())
+        print("Stage-invariance NOT DECLARED (REV_FREQ_INVARIANT=0): "
+              f"{n_diff} of {len(j)} (penalty, share_willing, provider, "
+              "plz) rows change delivery frequency between the plotted "
+              "(init) plan and the final plan. This figure shows the "
+              "init plan; its caption must NOT claim that the later "
+              "stages preserve delivery frequency.")
 
     P_VALUES = sorted(sched.penalty.unique())
     P_VALUES = [p for p in P_VALUES if not np.isclose(p, 0.4)]

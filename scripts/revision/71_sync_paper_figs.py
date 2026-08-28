@@ -80,22 +80,31 @@ PAPER_SUB = ROOT / "paper" / "EWGT_2026"
 
 # source stem in <rev>/figures  ->  (preprint name, elsevier name)
 FIGURE_MAP = {
-    "fig4_freq_mix_two_plans": ("fig4_delivery_frequency_mix.pdf",
-                                "fig_SM_mix_pct_8P.pdf"),
-    "fig5_grid_heatmap_v2": ("fig5_cost_wait_fleet_heatmaps.pdf",
-                             "fig_grid_heatmap_6.pdf"),
-    "fig6_structural_v2": ("fig6_pareto_structural_breakdown.pdf",
-                           "fig_structural_grid_6.pdf"),
+    "fig4_SM_mix_pct_8P": ("fig4_delivery_frequency_mix.pdf",
+                           "fig_SM_mix_pct_8P.pdf"),
+    "fig5_grid_heatmap_6_smoothed": ("fig5_cost_wait_fleet_heatmaps.pdf",
+                                     "fig_grid_heatmap_6.pdf"),
+    "fig6_structural_grid_6_smoothed": (
+        "fig6_pareto_structural_breakdown.pdf",
+        "fig_structural_grid_6.pdf"),
 }
 
-# Companion figures the manuscript does not \includegraphics yet.  Off by
-# default: syncing a file the .tex never references only invites the next
-# stale-figure confusion.
+# Supplementary figures: the two-lens set 70_ renders itself. The paper is
+# accepted and its figures keep the submitted layout, so these are never a
+# main figure slot -- they are opt-in and land under their own names.
 COMPANION_MAP = {
-    "fig5b_offdiagonal_v2": ("fig5b_offdiagonal_lens_plan.pdf",
-                             "fig_grid_heatmap_offdiag.pdf"),
-    "fig4b_mean_days": ("fig4b_mean_delivery_days.pdf",
-                        "fig_SM_mean_days.pdf"),
+    "supp_fig5_grid_heatmap_v2": ("supp_fig5_two_lens_heatmaps.pdf",
+                                  "fig_SM_two_lens_heatmaps.pdf"),
+    "supp_fig5b_offdiagonal_v2": ("supp_fig5b_offdiagonal_lens_plan.pdf",
+                                  "fig_SM_offdiagonal.pdf"),
+    "supp_fig4_freq_mix_two_plans": ("supp_fig4_freq_mix_two_plans.pdf",
+                                     "fig_SM_mix_two_plans.pdf"),
+    "supp_fig4b_mean_days": ("supp_fig4b_mean_delivery_days.pdf",
+                             "fig_SM_mean_days.pdf"),
+    "supp_fig6_structural_v2": ("supp_fig6_per_cell_euro.pdf",
+                                "fig_SM_per_cell_euro.pdf"),
+    "supp_fig6b_operator_lens_v2": ("supp_fig6b_operator_lens_hub.pdf",
+                                    "fig_SM_operator_lens_hub.pdf"),
 }
 
 

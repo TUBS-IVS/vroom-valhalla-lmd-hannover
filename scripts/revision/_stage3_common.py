@@ -27,9 +27,41 @@ PROVIDERS = ["DHL", "Amazon", "DPD", "FedEx", "GLS", "Hermes", "UPS"]
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 N_DAYS = 6
 MAX_HOLD = 3
-BASE_TOTAL = 1909747.75
+#: Daily-delivery weekly cost across all providers -- the denominator of
+#: every saving percentage.  It is a property of the GRID, not of the
+#: code: the 2026-07 Stage-3 grid pays 1 909 747.75, a v5/v6 grid pays
+#: its own theta=0 total (the bundle head prices the baseline's pooled
+#: small-cell tours too).  ``REV_BASE_TOTAL`` carries the grid's own
+#: value; the default keeps the frozen builders byte-reproducible.
+BASE_TOTAL = float(os.environ.get("REV_BASE_TOTAL", "1909747.75"))
 
-RUN_DIR = ROOT / "results" / "runs" / "path2_2026_05_29"
+#: Baseline Mon-Sat coefficient of variation of the system fleet, which
+#: 30_ asserts before drawing panel (e).  Also a property of the grid:
+#: the 2026-07 fleet accounting gives 0.135, the v5/v6 express-exact one
+#: gives 0.139.  Never quote one across the other -- state which grid.
+BASELINE_CV = float(os.environ.get("REV_BASELINE_CV", "0.135"))
+
+#: Does stage 2 preserve each cell's delivery FREQUENCY?  True for the
+#: 2026-07 grid (its balancing and smoothing only re-time days), and
+#: FALSE for v5/v6, whose stage 2 is frequency-free by design (Task
+#: 6f).  32_ asserts the invariant when it is declared and REPORTS the
+#: violation count when it is not -- so a caption can never claim
+#: invariance on a grid that does not have it.
+FREQ_INVARIANT = os.environ.get("REV_FREQ_INVARIANT", "1") not in (
+    "0", "false", "False", "no")
+
+# The canonical 2026-05-29 production run.  The four frozen builders read
+# their Stage-1/Stage-2 inputs (tab_balancing_summary.csv,
+# tab_chosen_schedules.csv, _tab_chosen_with_system_smoothing.csv) from
+# here.  ``REV_RUN_DIR`` re-points that half the same way ``REV_DIR``
+# re-points the other half, so a v5/v6 grid can be rendered through the
+# UNCHANGED builders after 74_v2_to_legacy_tables.py has adapted it.
+# With no environment set the default is the canonical run and every
+# builder reproduces the submitted revision figure.
+RUN_DIR = Path(os.environ.get("REV_RUN_DIR",
+                              ROOT / "results" / "runs" / "path2_2026_05_29"))
+if not RUN_DIR.is_absolute():
+    RUN_DIR = (ROOT / RUN_DIR).resolve()
 
 # Output/input root of the revision tables and figures.  The four builders
 # (30_/31_/32_/40_) read their inputs from here and write figures/ + tables/
