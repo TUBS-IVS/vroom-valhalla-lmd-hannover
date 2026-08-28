@@ -64,6 +64,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -114,7 +115,8 @@ def resolve_manifest(manifest: str | None, rev_dir: str | None) -> Path:
     if rev_dir:
         rev = Path(rev_dir)
         if not rev.is_absolute():
-            rev = (ROOT / rev).resolve()
+            rev = ROOT / rev
+        rev = rev.resolve()
         path = rev / "figures" / H.MANIFEST_NAME
         if not path.exists():
             raise ProvenanceError(
@@ -123,7 +125,9 @@ def resolve_manifest(manifest: str | None, rev_dir: str | None) -> Path:
                 f"--rev-dir {rev_dir}\n"
                 "before syncing that grid into the paper")
         doc = H.read_manifest(path)
-        if Path(doc["rev_dir"]).resolve() != rev:
+        recorded = os.path.normcase(str(Path(doc["rev_dir"]).resolve()))
+        typed = os.path.normcase(str(rev))
+        if recorded != typed:
             raise ProvenanceError(
                 f"{path} was written for {doc['rev_dir']}, not for {rev} -- "
                 "re-run 70_ on this grid rather than syncing someone "
@@ -213,8 +217,13 @@ def main(argv=None) -> int:
         print("\nREFUSED -- the render is stale, nothing copied:")
         for r in stale:
             print(f"  * {r}")
+        rev_for_msg = Path(doc["rev_dir"])
+        try:
+            rev_for_msg = rev_for_msg.relative_to(ROOT)
+        except ValueError:
+            pass          # rev_dir is not under ROOT -- print it absolute
         print("\nRe-run 70_figs_tables_v2.py --rev-dir "
-              f"{Path(doc['rev_dir']).relative_to(ROOT)} and try again.")
+              f"{rev_for_msg} and try again.")
         return 1
 
     jobs = plan(fig_dir, args.include_companions)

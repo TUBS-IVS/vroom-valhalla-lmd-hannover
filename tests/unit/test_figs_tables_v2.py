@@ -748,3 +748,46 @@ def test_71_never_shells_out_to_git():
         ctx = body[max(0, hit.start() - 12):hit.start() + 12]
         assert any(a in ctx for a in allowed), (
             f"71_ mentions git outside its warning text: {ctx!r}")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# N-1 / N-2 (task-13-rereview.md): provenance path comparisons must not
+# depend on the caller's exact path spelling, and must never crash in
+# place of the intended refusal message
+# ─────────────────────────────────────────────────────────────────────────
+def test_71_accepts_a_non_canonical_absolute_rev_dir(sync):
+    """N-1: resolve_manifest's `--rev-dir` branch only called `.resolve()`
+    when the path was NOT already absolute, so a valid-but-non-canonical
+    absolute path (an unresolved `..` segment, an 8.3 short name on Windows,
+    mixed case, ...) was falsely refused as "written for a different
+    directory" even though it names the exact same grid the manifest was
+    rendered from.
+    """
+    mod, results, paper, _ = sync
+    rev, figs = _grid(results, "gridA")
+    noncanonical = rev / ".." / rev.name       # same directory, not resolved
+    assert str(noncanonical) != str(rev), "test setup must be non-canonical"
+    assert mod.main(["--rev-dir", str(noncanonical)]) == 0
+    assert (paper / "figures" / "fig5_cost_wait_fleet_heatmaps.pdf").exists()
+
+
+def test_71_stale_message_falls_back_to_the_absolute_path_outside_root(
+        sync, tmp_path, monkeypatch, capsys):
+    """N-2: the stale-render remediation message did `.relative_to(ROOT)`
+    unconditionally, which raises ValueError -- crashing main() with a
+    traceback in place of the intended refusal -- whenever the manifest's
+    recorded rev_dir is not a literal subpath of this process's ROOT (a
+    render from another checkout, another machine, or a tmp harness).
+    """
+    import os
+    mod, results, paper, _ = sync
+    rev, figs = _grid(results, "gridA")
+    later = (figs / "fig5_grid_heatmap_v2.pdf").stat().st_mtime + 10_000
+    for csv in H.GRID_CSVS:
+        os.utime(rev / csv, (later, later))
+    monkeypatch.setattr(mod, "ROOT", tmp_path.parent / "unrelated_root")
+    assert mod.main([]) == 1
+    out = capsys.readouterr().out
+    assert "REFUSED -- the render is stale" in out
+    assert str(rev) in out, "must fall back to the absolute path, not raise"
+    assert not (paper / "figures").exists()
