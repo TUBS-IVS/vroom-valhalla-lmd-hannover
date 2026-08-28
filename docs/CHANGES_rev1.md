@@ -27,7 +27,9 @@ table files are relative to `results/revision_2026_08_v5/tables/`.
 - **New:** the clause is deleted, and a new paragraph states the effective cost
   model of every label: 189.15 EUR per vehicle-day + 0.3864 EUR/km + 36 EUR per
   route-hour, with VROOM's default `per_hour` active in **all** labels
-  (72.2 % fixed / 6.0 % distance / 21.7 % time). The Daganzo backbone has only
+  (72.2 % fixed / 6.0 % distance / 21.7 % time **over the surrogate's training
+  pool**; 70.7 / 6.1 / 23.2 % over the re-routed validation labels — both
+  populations are now named in the paper, see G9). The Daganzo backbone has only
   the vehicle and distance terms, so `alpha` and the learned residual absorb the
   time component. Driver wage is inside `c_f`; the route-time term is an
   **additional** charge and is explicitly *not* claimed to be inside it.
@@ -1055,3 +1057,67 @@ file already uses. The patch was regenerated on the fix-round-3 base.
 Patched page counts move with the manuscript: **17 → 16** (not 15, as in round 2)
 because item 3 added roughly 1,200 characters to §3.3. Both patched documents
 build clean at 23 bibitems.
+
+## G9 — Final branch-review fixes (`final-branch-review.md`, I1 / I3 / M1)
+
+Three paper-side items from the whole-branch review. None changes a result; all
+three were recomputed independently from the tracked artefacts before editing.
+
+### I1 — the two over-pricing ranges now cover the same population
+
+`tbc_preprint_main.tex` §3.4 quoted the consolidated points as over-priced by
+"$1.2$ to $2.9\%$ and $0.5$ to $2.5\%$ respectively". The operator range spanned
+all six consolidated points; the routing range spanned only the four item-1
+points, so the clause joined two different populations with "respectively". The
+routing range is now **$0.8$ to $2.9\%$** and the clause says the two ranges span
+the same six points.
+
+Recomputed from `results/revision_2026_08_v6/validation/tab_vroom_v2.csv` on the
+clean basis (`n_unassigned == 0`, `jobs_removed == 0`, status in `{OK, CACHED}`),
+gap = `(Σ pred − Σ actual) / Σ actual`:
+
+| item | P | routing gap % | operator gap % |
+|---|---:|---:|---:|
+| 2 | 0 | 0.821 | 0.491 |
+| 1 | 0 | 1.246 | 1.081 |
+| 2 | 0.25 | 1.539 | 1.233 |
+| 1 | 0.25 | 1.695 | 1.648 |
+| 1 | 0.5 | 2.404 | 2.203 |
+| 1 | 0.75 | 2.862 | 2.539 |
+
+Baseline (item 0, n = 1,683): routing +4.385 %, operator +4.047 % — the printed
+$4.4$ / $4.0\%$. The argument is unchanged: every consolidated gap is still
+smaller than the baseline's, so every predicted saving remains an upper bound.
+The G-round table above (row **I2/M3**) records the earlier, narrower scoping and
+is left as the historical record of that round.
+
+### I3 — the label-cost shares now name their population and carry a `% src:`
+
+"the three terms contribute $72.2$, $6.0$, and $21.7\%$ of label cost" was the
+only headline-adjacent number in the manuscript without a `% src:` line. It is
+**exactly reproducible**, but on the **surrogate's training pool**, not on the
+validation labels:
+
+| population | rows | fixed | distance | time |
+|---|---:|---:|---:|---:|
+| `results/supplementary/sweep_v3_mergefix/training_matrix.csv` | 2,733 (all `OK`) | 72.207 % | 5.989 % | 21.748 % |
+| `results/revision_2026_08_v6/validation/tab_vroom_v2.csv`, clean | 8,609 | 70.703 % | 6.057 % | 23.183 % |
+
+Shares are `189.15·Σ n_routes` / `0.3864·Σ km` / `36·Σ duration_h` over the summed
+solver cost. Both the main text (§2.2) and Supplementary S2 now name the training
+pool for $72.2 / 6.0 / 21.7$ and give $70.7 / 6.1 / 23.2$ for the validation
+labels, and a `% src:` block above the paragraph records both computations. The
+compendium's §40.12 line `(72 / 6 / 22 %)` is refreshed to the same precision;
+the paper's population is the right one for a statement about *label* cost, so
+the paper's figure stands and the compendium follows it.
+
+### M1 — the $P \cdot \theta = 0$ corner is stated in full
+
+`balancing.py` and `61_grid_run_v2.py` both record that the service penalty is
+identically zero over the whole corner $P \cdot \theta = 0$, "not merely at
+$\theta = 0$". §2.4 stated only the $\theta$ half. It now states both, and
+distinguishes them: at $\theta = 0$ stage 1 is daily and stage 2 is pinned, so
+the baseline is recovered exactly; at $P = 0$ with $\theta > 0$ nothing is
+pinned and the polish's wait and frequency changes are simply unpriced — which
+is why the service differences reported at $(0, 1)$ are a by-product, not an
+optimized trade.
