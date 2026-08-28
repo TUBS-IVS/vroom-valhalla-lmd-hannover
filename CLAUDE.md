@@ -38,10 +38,15 @@ research working tree into a publishable reproducibility package:
   869 lines) are now split into focused submodules. The original module
   names remain as backwards-compatible re-export shims, so existing
   imports continue to work.
-- `scripts/pipeline/` — four numbered canonical pipeline stages
-  (`01_train_surrogate.py` ... `04_validate_vroom.py`).
+- `scripts/revision/` — **the canonical pipeline for the EWGT 2026
+  revision (rev1)**, and the only path that produces the current numbers.
+  See "Which pipeline is canonical" below.
+- `scripts/pipeline/` — the four numbered stages of the **submitted**
+  version (`01_train_surrogate.py` ... `04_validate_vroom.py`). Kept for
+  reproducibility of `paper/EWGT_2026/`; deprecated for the revision.
 - `scripts/figures/`, `scripts/paper/`, `scripts/data/`, `scripts/exploratory/`,
-  `scripts/_archive/` — research scripts sorted by role.
+  `scripts/_archive/` — research scripts sorted by role. `scripts/paper/`
+  also holds `guard_tex.py`, the manuscript structure guard.
 - `results/paper_*` + `results/runs/` + `results/supplementary/` —
   canonical and supplementary outputs (tracked). `results/_archive/`
   is gitignored.
@@ -129,10 +134,45 @@ The main orchestration flow in `pipeline.stages` is:
 6. Resolve non-baseline scenarios with VROOM.
 7. Evaluate KPIs and write comparison outputs.
 
-The canonical paper pipeline (`batch-delivery paper`) instead runs the
-four-stage pipeline scripts under `scripts/pipeline/` (01_train_surrogate
-... 04_validate_vroom). The full seven-stage in-process orchestrator is
-still available via `batch-delivery run`.
+The full seven-stage in-process orchestrator is available via
+`batch-delivery run`.
+
+## Which Pipeline Is Canonical
+
+There are two paper pipelines in this repo, and they do not produce
+comparable numbers. Reach for the right one.
+
+**EWGT rev1 (current, canonical): `scripts/revision/`.** Run directly —
+these stages are long-running and resumable, and they are addressed at a run
+directory (`61_` at `$REV2_OUT_DIR`, default
+`results/revision_2026_08_v6/`; the downstream stages at `--live-dir` /
+`--rev-dir`), so there is deliberately no CLI wrapper. Order:
+
+| Stage | Script | Role |
+|---|---|---|
+| grid | `61_grid_run_v2.py` | the `(P, theta, provider)` grid under the universal tour rule; writes both plans (routing-optimal, operator-polished) |
+| gates | `62_gates_check.py` | G1a / G1b / G3 / G4 against a live run dir (read-only, live-safe) |
+| head | `63_bundle_sampler.py` → `64_solve_bundles_vroom.py` → `64a_bundle_coverage.py` → `65_train_bundle_head.py` | bundle pool, VROOM labels, coverage, the bundle head + Gate U |
+| validation | `67_validate_vroom_v2.py` | out-of-sample VROOM re-routing of both plans under both lenses |
+| figures/tables | `70_figs_tables_v2.py` (with `_figs_tables_v2.py`) | every revision figure and table |
+| sync | `71_sync_paper_figs.py` | md5-verified copy into `paper/EWGT_2026_rev1/`; refuses a destination identical to the frozen submission |
+| derived tables | `72_per_cell_costs_v2.py`, `73_tables_ops_v2.py`, `74_v2_to_legacy_tables.py` | per-cell plan costs, ops/knee tables, legacy-schema adapter for the frozen builders |
+| supplementary | `75_fig_fleet_week_classes.py`, `76_maps_v2.py`, `77_mechanism_v2.py`, `78_fleet_week_v2.py` | supplementary figures |
+| pack | `79_build_final_pack.py` | assembles `results/revision_2026_08_final/` with per-file provenance |
+
+**Submitted version (reproducibility only): `scripts/pipeline/`**, driven by
+`batch-delivery paper`. It still runs, and reproducing `paper/EWGT_2026/` is
+a legitimate reason to use it, but it is **deprecated for the revision**: it
+predates the universal tour rule, the pool term, the two cost lenses and the
+operator-cost polish. 28 scripts raise a `DeprecationWarning` on import —
+stages 02–04 of `scripts/pipeline/`, six superseded `scripts/revision/`
+stages (`10_` … `50_`) and 19 under `scripts/paper/` — and
+`batch-delivery paper` prints the same notice before it runs. Stage 01
+(`01_train_surrogate.py`) is **not** deprecated: the revision uses the same
+surrogate, `daganzo_hybrid_v3aug_median.pkl`. Never quote submitted-version
+numbers beside the revision's.
+
+`docs/PIPELINE.md` documents both.
 
 ## Development Commands
 

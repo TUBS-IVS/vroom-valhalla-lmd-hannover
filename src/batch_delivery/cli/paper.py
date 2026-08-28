@@ -1,7 +1,26 @@
-"""``batch-delivery paper`` — orchestrate the four canonical pipeline
-stages that reproduce the EWGT 2026 paper outputs end-to-end.
+"""``batch-delivery paper`` — orchestrate the four **submitted-version**
+pipeline stages under ``scripts/pipeline/``.
 
-The four stages live as standalone scripts under ``scripts/pipeline/``:
+.. warning::
+
+   **This is not the EWGT rev1 pipeline.** These four stages reproduce the
+   numbers of the *submitted* manuscript (``paper/EWGT_2026/``). They
+   predate the universal tour rule, the pool term, the two cost lenses and
+   the operator-cost polish, so their output is **not** comparable with the
+   revision's. Every one of them raises a ``DeprecationWarning`` on import,
+   and this command prints the same notice before it runs anything.
+
+   The canonical pipeline for the EWGT 2026 **revision** is the numbered
+   script sequence under ``scripts/revision/`` — see ``docs/PIPELINE.md``
+   and ``scripts/README.md``. There is deliberately no CLI wrapper for it:
+   the stages are long-running, resumable and take a live run directory, so
+   they are invoked directly.
+
+The command is kept runnable because reproducing the submitted version is a
+legitimate reason to want it. It is simply no longer the default meaning of
+"the paper pipeline".
+
+The four submitted-version stages::
 
     01_train_surrogate.py     Daganzo-LGB-Hybrid surrogate training
     02_optimize_grid.py       (P, theta) 88-cell coordinate-descent run
@@ -46,10 +65,45 @@ STAGES: list[tuple[int, str, str, str]] = [
 ]
 
 
+#: Printed on **every** invocation, before anything runs, including
+#: ``--dry-run``. The stale-path failure mode this closes is concrete: a
+#: reviewer follows a doc pointer, runs ``batch-delivery paper``, and gets a
+#: grid computed without the pool term, without the universal tour rule,
+#: without the two lenses and without the operator polish — i.e. numbers that
+#: are not the revision's. Silence here is the defect; the notice is the fix.
+REVISION_NOTICE = """
+  ============================================================================
+  NOTICE: this is the SUBMITTED-VERSION pipeline, not the EWGT rev1 pipeline.
+  ============================================================================
+  The four scripts/pipeline/ stages reproduce paper/EWGT_2026/ (the submitted
+  manuscript). They predate the universal tour rule, the pool term, the two
+  cost lenses and the operator-cost polish, so their numbers are NOT
+  comparable with the revision's and must never be quoted beside them.
+
+  The canonical pipeline for the EWGT 2026 revision is scripts/revision/:
+
+      61_grid_run_v2.py        the (P, theta, provider) grid, two plans
+      62_gates_check.py        gates G1a / G1b / G3 / G4 (read-only)
+      63_/64_/64a_/65_         bundle pool -> bundle head + Gate U
+      67_validate_vroom_v2.py  out-of-sample VROOM re-routing, both lenses
+      70_figs_tables_v2.py     figures and tables
+      71_sync_paper_figs.py    md5-verified sync into paper/EWGT_2026_rev1/
+      72_/73_/74_              per-cell costs, ops tables, legacy adapter
+      75_ .. 78_               supplementary figures
+      79_build_final_pack.py   the final results pack
+
+  See docs/PIPELINE.md. Those stages take a live run directory and are
+  invoked directly, so there is deliberately no CLI wrapper for them.
+
+  Continuing with the submitted-version pipeline.
+  ============================================================================
+"""
+
+
 def _print_plan(stages_to_run: list[tuple[int, str, str, str]], dry_run: bool) -> None:
     typer.echo("")
-    typer.echo("  EWGT 2026 paper pipeline")
-    typer.echo("  " + "-" * 25)
+    typer.echo("  EWGT 2026 SUBMITTED-version paper pipeline")
+    typer.echo("  " + "-" * 42)
     for n, script, desc, _output in stages_to_run:
         marker = "  [DRY RUN]" if dry_run else "         "
         typer.echo(f"  {marker} Stage {n}  {desc}")
@@ -76,13 +130,23 @@ def paper_cmd(
         help="Skip stage 4 (VROOM validation). Useful when the Docker stack is offline.",
     ),
 ) -> None:
-    """Reproduce every EWGT 2026 paper number from scratch.
+    """Reproduce the SUBMITTED EWGT 2026 paper numbers from scratch.
 
-    Runs the four canonical pipeline stages in order. Each stage writes
+    Runs the four ``scripts/pipeline/`` stages in order. Each stage writes
     its outputs to a fixed location under ``results/`` so subsequent
     stages can pick them up. Stages are idempotent: re-running a stage
     with existing outputs simply overwrites them.
+
+    These stages are DEPRECATED for the EWGT rev1 revision: they predate the
+    universal tour rule, the pool term, the two cost lenses and the
+    operator-cost polish. The revision's canonical pipeline is the numbered
+    sequence under ``scripts/revision/`` (61_ grid ... 79_ final pack); see
+    ``docs/PIPELINE.md``. A notice to that effect is printed before anything
+    runs, including under ``--dry-run``.
     """
+    # Fail loud before doing anything: never run stale stages silently.
+    typer.echo(REVISION_NOTICE, err=True)
+
     if stage is not None and not (1 <= stage <= 4):
         typer.echo(f"error: --stage must be 1..4, got {stage}", err=True)
         raise typer.Exit(code=2)
