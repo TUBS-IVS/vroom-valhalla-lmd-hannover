@@ -235,7 +235,11 @@ def run_checks(tex_path: Path, pdf: Path | None = None,
         echo(f"   exempted draft blocks ({sum(counts.values())} line(s) "
              f"suppressed):")
         for p, n in counts.items():
-            note = "  <-- suppresses nothing; stale?" if n == 0 else ""
+            # A 0 is not automatically a defect: the defaults describe the
+            # MAIN manuscript, and the supplementary legitimately matches
+            # none of them. On a document that used to match, a 0 means the
+            # block moved or was deleted and the exemption can go.
+            note = "  <-- no match in this document" if n == 0 else ""
             echo(f"      {n:>3}x  {p!r}{note}")
     if hidden:
         failures.append(f"{len(hidden)} comment line(s) hide a control sequence "
