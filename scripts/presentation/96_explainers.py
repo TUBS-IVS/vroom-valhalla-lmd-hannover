@@ -614,33 +614,60 @@ def block_valid(prs):
     chapter(prs, "Can the numbers be trusted",
             "What happens when a real routing solver checks the answer")
 
+    # This slide used to restate the SUBMISSION's realised savings
+    # (22.8 -> 23.7 % and so on) under a Part-A stamp promising a Part-B fix.
+    # It is rebuilt here on the validation actually in use: predicted against
+    # actual COST on the same tours, which is what a validation without a
+    # solved theta = 0 baseline can honestly show.
+    _vf = _RV.validation_facts() if _F is not None else None
     s = xslide(prs, "valid", "Part 5 · Can we trust it",
                "What happens when a real routing solver checks the answer?",
-               "Four settings recomputed from scratch with VROOM/Valhalla on "
-               "1 248 observations the model had never seen.")
-    # No revision counterpart yet: the re-run of both plans is still being
-    # produced, so the numbers stay and the slide says which grid they are on.
-    if _F is not None:
-        stamp(s)
-        _RV.notes(s, "SUBMISSION grid. The direction of the error -- the "
-                     "surrogate under-promises -- is what carries over to the "
-                     "revision; the levels do not.", cite="§40.18")
-    y = B.table(s, ["Setting", "The model promised", "The solver delivered",
-                    "Difference"],
-                [[("No fee", "key"), "22.8 %", ("23.7 %", "good"),
+               (f"{_vf['n']} routing instances recomputed from scratch with "
+                f"VROOM/Valhalla on {_vf['grid']}, both plans at θ = 100 %. "
+                f"Costs, not savings: a realised SAVING needs a solved "
+                f"θ = 0 baseline, which this validation has not reached yet."
+                if _vf else
+                "Four settings recomputed from scratch with VROOM/Valhalla on "
+                "1 248 observations the model had never seen."))
+    if _vf is not None:
+        # The vintage is the validation's, not the submission's, so the banner
+        # says which validation and what is still outstanding.
+        _RV.stamp(s, text=_RV.VALIDATION_STAMP)
+        _RV.notes(s, _RV.validation_notes(_vf), cite=_RV.cites())
+    if _vf is not None:
+        _rows = [[(r[0], "key"), r[1], r[2], r[3], (r[4], "good")]
+                 for r in _RV.validation_rows(_vf)]
+        _head = ["Setting", "Plan", "The model priced", "The solver charged",
+                 "Model above solver"]
+        _w = [1.8, 2.9, 2.6, 2.6, 2.5]
+    else:
+        _rows = [[("No fee", "key"), "22.8 %", ("23.7 %", "good"),
                   "+0.9 points"],
                  [("P = 0.25", "key"), "18.5 %", ("19.8 %", "good"),
                   "+1.3 points"],
                  [("P = 0.5", "key"), "13.5 %", ("15.6 %", "good"),
                   "+2.1 points"],
                  [("P = 0.75", "key"), "10.2 %", ("13.0 %", "good"),
-                  "+2.8 points"]],
-                BODY_T + 0.20, widths=[3.0, 3.0, 3.4, 2.4], reserve=2.4)
-    vbullets(s, ["Every one of the four came out better than promised.",
-                 "So the model is wrong in the direction that is safe: it "
-                 "under-promises.",
-                 "What this does not prove is that the routing solver matches "
-                 "the real street."],
+                  "+2.8 points"]]
+        _head = ["Setting", "The model promised", "The solver delivered",
+                 "Difference"]
+        _w = [3.0, 3.0, 3.4, 2.4]
+    y = B.table(s, _head, _rows, BODY_T + 0.20, widths=_w, reserve=2.4)
+    vbullets(s, ([f"The model prices the same tours "
+                  f"{_vf['gap_lo']:.1f}–{_vf['gap_hi']:.1f} % above the "
+                  f"solver at every point, in both plans.",
+                  f"So it is wrong in the direction that is safe: it "
+                  f"under-promises. The fleet count holds too — "
+                  f"{_vf['peak_pred']} peak vehicles predicted against "
+                  f"{_vf['peak_actual']} actual at P = 0.",
+                  "What is not here is a realised saving percentage: that "
+                  "needs the θ = 0 baseline solved, and it is not yet."]
+                 if _vf else
+                 ["Every one of the four came out better than promised.",
+                  "So the model is wrong in the direction that is safe: it "
+                  "under-promises.",
+                  "What this does not prove is that the routing solver matches "
+                  "the real street."]),
              y + 0.28)
 
 
@@ -760,8 +787,15 @@ def block_carrier_full(prs):
 # reported rather than touched: it may be a photograph or a paper figure.
 
 REFRESH = {
-    # title fragment -> the renders that slide should carry, left to right
+    # title fragment -> the renders that slide should carry, left to right.
+    # The raster match handles a figure that was re-rendered at the same size;
+    # this map is for the ones whose SHAPE changed, which the raster match
+    # cannot see. fig62 is exactly that case: it went from a 4-bar single-plan
+    # figure (2137x1141) to a 6-bar two-plan one (4113x1141) when the v2
+    # validation started covering both plans, so the old render sat on the
+    # deck's "Validation" slide looking current.
     "service improves faster": ["fig31_saving_grid", "fig32_wait_grid"],
+    "validation": ["fig61_vroom_scatter", "fig62_pred_vs_actual"],
 }
 MIN_FIG_IN = 3.0
 
@@ -1167,7 +1201,37 @@ def restate_body(prs, limit):
                 "against 0.39 d for the same peak-fleet cut — which is why "
                 "the knee stays at P = 0.25.", ["§40.15", "§40.18"])
 
-    # ── the validation table has no revision counterpart yet ─────────────
+    # ── the "Validation" slide: current facts, current picture ───────────
+    # It used to carry the submission's realised-saving pairs (22.8 -> 23.7 %)
+    # with no disclosure at all, beside a stale render of fig62 that the
+    # raster match could not recognise. Both are replaced here; the picture is
+    # swapped by `refresh_figures()` through the REFRESH map above.
+    i, sl = _find(prs, "realized saving above prediction", limit)
+    if sl is not None:
+        vf = RV.validation_facts()
+        for sid, new in (
+                (6, f"+{vf['gap_lo']:.1f} … +{vf['gap_hi']:.1f} %"),
+                # The author's own label boxes are one line tall at his size,
+                # so a replacement has to stay about as short as what it
+                # replaces -- roughly 30 characters, not 47.
+                (7, "model above solver, same tours"),
+                (9, f"{vf.get('mape', float('nan')):.2f} %"),
+                (10, "cost error against the solver"),
+                (12, f"{vf['peak_pred']} vs {vf['peak_actual']}"
+                     if "peak_pred" in vf else f"{vf.get('r2', 0):.3f}"),
+                (13, "peak fleet, pred vs actual at P = 0"
+                     if "peak_pred" in vf else
+                     f"R² over {vf.get('n_clean', 0)} instances")):
+            sh = _shape_by_id(sl, sid)
+            if sh is not None and sh.has_text_frame:
+                _retext(sh.text_frame, new)
+        _RV.stamp(sl, text=_RV.VALIDATION_STAMP)
+        done.add(i)
+        RV.notes(sl, RV.validation_notes(vf), cite=RV.cites())
+        print(f"  restated the Validation slide ({i}) on "
+              f"{vf['grid']}/validation")
+
+    # ── the backup validation table has no revision counterpart yet ──────
     i, sl = _find(prs, "THE SOLVER DELIVERED", limit)
     if sl is not None:
         stamp(sl)

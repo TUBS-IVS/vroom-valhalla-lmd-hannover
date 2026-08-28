@@ -17,8 +17,10 @@ adoption and the routing gain does not. That finding has been WITHDRAWN. It was
 an artefact of the pre-revision express price -- the standard parcels of every
 non-delivering area of a hub rode ONE pooled tour, which no operator would
 dispatch and which only the scenario could ever have. Under the universal tour
-rule the cell it was built on consolidates 2.9 % of areas and saves 0.03 %
-(compendium 40.7-40.9, 40.15).
+rule the cell it was built on consolidates a small, positive share instead of
+the 41.7 % the old deck claimed -- 2.9 % of areas saving 0.03 % on the v5 grid,
+9.6 % saving 0.40 % on v6, which is why the live slide recomputes it rather
+than quoting either (compendium 40.7-40.9, 40.15; `_revision.bulge_notes`).
 
 The drawings are kept as the record of what was argued. Calling any of them
 raises unless `allow_withdrawn()` has been called first, so a deck builder

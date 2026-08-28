@@ -67,13 +67,26 @@ ALLOW_WITHDRAWN = False
 def withdrawn(name: str) -> None:
     """Stop a withdrawn figure from being rendered by accident."""
     if name in WITHDRAWN and not ALLOW_WITHDRAWN:
+        # The replacement numbers are read from the grid in use rather than
+        # frozen: they moved from 2.9 % / 0.03 % on v5 to 9.6 % / 0.40 % on
+        # v6, and a refusal message that quotes a stale pair is a refusal
+        # nobody can check.
+        try:
+            share = D.consolidating_share_v2(P_BULGE, TH_BULGE)
+            g = D.saving_grid_v2(D.PLAN_ROUTING, D.LENS_ROUTING)
+            sav = float(g[np.isclose(g.penalty, P_BULGE)
+                          & np.isclose(g.share_willing, TH_BULGE)]
+                        .saving_pct.iloc[0])
+            now = f"{share:.1f} % of areas and saves {sav:.2f} %"
+        except Exception:                                  # pragma: no cover
+            now = "almost nothing"
         raise SystemExit(
             f"{name} illustrates a WITHDRAWN finding (the theta = 10 % bump "
             f"and the P x theta reading, compendium 40.7-40.9 / 40.15) and is "
             f"not rendered. It was an artefact of the pre-revision pooled "
-            f"express price; on the revision grid the same cell consolidates "
-            f"2.9 % of areas and saves 0.03 %. Pass --withdrawn to render it "
-            f"anyway, e.g. to show the withdrawal itself.")
+            f"express price; on {D.REV.name} the same cell consolidates "
+            f"{now}. Pass --withdrawn to render it anyway, e.g. to show the "
+            f"withdrawal itself.")
 
 ORDER = ["DHL", "Amazon", "Hermes", "UPS", "DPD", "GLS", "FedEx"]
 

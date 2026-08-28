@@ -568,9 +568,11 @@ def discount_optima(f: Facts) -> dict:
 
 # Below this the winner is not distinguishable from its runner-up at the
 # precision this model has, and the slide has to say "a tie" instead of naming
-# a winner. v6 puts the routing lens at 0.021 pp between P = 0.5 and P = 0.25,
-# which is exactly the case this guard exists for
-# (results/revision_2026_08_v6/DEEP_DIVE_V6_PAPER_IMPACT.md 3).
+# a winner. On v6 the routing lens sits 0.009 pp apart between P = 0.25 and
+# P = 0.5 in `_peek/discount_scenarios_v6.csv`, which is exactly the case this
+# guard exists for. (DEEP_DIVE_V6_PAPER_IMPACT.md 3 quotes 0.021 pp for the
+# same gap and calls it "practically a tie" too; the margin here is recomputed
+# from the table, so it is the table's number that decides.)
 DISCOUNT_TIE_PP = 0.20
 
 
@@ -685,6 +687,85 @@ def bulge_rows(f: Facts) -> list:
         row = g[np.isclose(g.penalty, P) & np.isclose(g.share_willing, th)]
         out.append([lbl, f"{c['plan1']:.1f} %", f"{float(row.saving_pct.iloc[0]):.2f} %"])
     return out
+
+
+# ── the VROOM validation, as the slides have to state it ───────────────────
+# A realised SAVING needs a solved theta = 0 baseline. The v2 validation solves
+# the scenario points first, so until item 0 lands the only honest figures are
+# predicted-against-actual COST on the same tours, and the peak-fleet count the
+# solver actually produced. `validation_facts()` reads those off whichever
+# validation directory `_data.VAL` points at, so a slide can never restate the
+# submission's realised savings by accident -- which is precisely what two
+# slides of the explainer deck did until 2026-08-28.
+VALIDATION_STAMP = "Validierung v5 · v6 mit Baseline folgt"
+
+
+def validation_facts() -> dict:
+    """What the validation in use actually supports, as numbers for a slide."""
+    sv = D.load_savings_validation()
+    dg = D.load_vroom_diagnostics()
+    allrow = dg[dg.penalty.astype(str) == "ALL"]
+    out = dict(
+        grid=D.VAL.parent.name,
+        has_baseline=D.vroom_actual_baseline_available(),
+        n=int(sv.n.sum()),
+        gap_lo=float(sv.gap_pct.min()), gap_hi=float(sv.gap_pct.max()),
+        points=sorted({float(x) for x in sv.penalty}),
+        plans=sorted({str(x) for x in sv.plan}) if "plan" in sv else [],
+    )
+    if len(allrow):
+        out.update(mape=float(allrow.MAPE_pct.iloc[0]),
+                   bias=float(allrow.bias_pct.iloc[0]),
+                   r2=float(allrow.R2.iloc[0]),
+                   n_clean=int(allrow.n.iloc[0]))
+    try:
+        v = D.load_vroom_v2()
+        sub = v[np.isclose(v.penalty, 0.0) & np.isclose(v.share_willing, 1.0)
+                & (v.plan.astype(str) == "balanced")]
+
+        def _peak(col):
+            per = sub.groupby(["hub_name", "day"])[col].sum().reset_index()
+            return int(per.groupby("hub_name")[col].max().sum())
+
+        out.update(peak_pred=_peak("predicted_n_routes"),
+                   peak_actual=_peak("vroom_n_routes"))
+    except Exception:                                       # pragma: no cover
+        pass
+    return out
+
+
+def validation_rows(vf: dict) -> list:
+    """Per validated point: what the surrogate priced against what VROOM cost."""
+    sv = D.load_savings_validation().sort_values(["plan", "penalty"])
+    return [[f"P = {r.penalty:g}",
+             (str(r.plan).replace("balanced", "operator-polished")
+              .replace("stage1", "routing-optimal")
+              if "plan" in sv.columns else "-"),
+             f"{r.surrogate_total_eur / 1e6:.3f} M EUR",
+             f"{r.vroom_actual_total_eur / 1e6:.3f} M EUR",
+             f"+{r.gap_pct:.1f} %"] for r in sv.itertuples()]
+
+
+def validation_notes(vf: dict) -> str:
+    """The speaker note for any slide showing the validation."""
+    peak = ""
+    if "peak_pred" in vf:
+        peak = (f" The peak-fleet count survives contact with the solver: "
+                f"{vf['peak_pred']} predicted against {vf['peak_actual']} "
+                f"actual at (P = 0, theta = 1) on the operator-polished plan, "
+                f"which is the number the operator lens is built on.")
+    return (
+        f"VROOM re-validation on {vf['grid']}, {vf['n']} solved instances "
+        f"across both plans at theta = 1. The surrogate prices the SAME tours "
+        f"{vf['gap_lo']:.1f}-{vf['gap_hi']:.1f} % ABOVE the solver at every "
+        f"point, i.e. it under-promises -- MAPE {vf.get('mape', float('nan')):.2f} %, "
+        f"bias +{vf.get('bias', float('nan')):.2f} %, "
+        f"R2 {vf.get('r2', float('nan')):.3f} over {vf.get('n_clean', 0)} "
+        f"clean instances.{peak} What is NOT shown is a realised SAVING "
+        f"percentage: that needs a solved theta = 0 baseline, and the "
+        f"validation solves the scenario points first. The submission's "
+        f"22.8 -> 23.7 % pairs are a different grid AND a different quantity "
+        f"and have been removed from this deck.")
 
 
 BULGE_OLD_SHARE = 41.7     # what the submission-era deck claimed at (10, 0.1)
