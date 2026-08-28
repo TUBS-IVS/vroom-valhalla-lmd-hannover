@@ -32,11 +32,32 @@ Output (results/revision_2026_07/validation/):
     tab_ml_vs_vroom_smoothed.csv  weekly aggregate + ML dd_cost (assemble step)
     tab_diagnostics_smoothed.csv  per-cell MAPE / bias / R2
     fig_vroom_vs_ml_smoothed.{png,pdf}
+
+DEPRECATED (2026-08 revision): superseded by scripts/revision/61_grid_run_v2.py,
+67_validate_vroom_v2.py, 70_figs_tables_v2.py and 73_tables_ops_v2.py.
 """
 from __future__ import annotations
 import os
 import sys
 import time
+
+# --- DEPRECATED ENTRY POINT (2026-08 revision) -----------------------------
+import warnings as _deprecation_warnings
+
+_deprecation_warnings.warn(
+    "20_validate_vroom_smoothed.py is a STALE entry point: it recomputes totals WITHOUT the pool "
+    "term and predates the universal tour rule, the two cost lenses and the "
+    "operator polish. Its numbers are NOT comparable with the 2026-08 "
+    "revision. Use scripts/revision/61_grid_run_v2.py for the grid, "
+    "scripts/revision/67_validate_vroom_v2.py for VROOM validation, "
+    "scripts/revision/70_figs_tables_v2.py for figures and tables, and "
+    "scripts/revision/73_tables_ops_v2.py for the v2 ops/knee/value-of-"
+    "stage-2 tables.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+# ---------------------------------------------------------------------------
+
 import warnings
 from pathlib import Path
 

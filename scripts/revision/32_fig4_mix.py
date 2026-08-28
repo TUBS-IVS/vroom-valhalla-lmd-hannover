@@ -18,9 +18,30 @@ reproduces the submitted revision figure when run with no environment set).
 grid.  NOTE: this builder reads the 2026-07 STAGE-3 schema
 (``tab_costs_smoothed.csv`` etc.); pointing ``REV_DIR`` at a v5-schema grid
 gives it no inputs -- ``70_`` renders the v5 figures itself.
+
+DEPRECATED (2026-08 revision): superseded by scripts/revision/61_grid_run_v2.py,
+67_validate_vroom_v2.py, 70_figs_tables_v2.py and 73_tables_ops_v2.py.
 """
 from __future__ import annotations
 import sys
+
+# --- DEPRECATED ENTRY POINT (2026-08 revision) -----------------------------
+import warnings as _deprecation_warnings
+
+_deprecation_warnings.warn(
+    "32_fig4_mix.py is a STALE entry point: it recomputes totals WITHOUT the pool "
+    "term and predates the universal tour rule, the two cost lenses and the "
+    "operator polish. Its numbers are NOT comparable with the 2026-08 "
+    "revision. Use scripts/revision/61_grid_run_v2.py for the grid, "
+    "scripts/revision/67_validate_vroom_v2.py for VROOM validation, "
+    "scripts/revision/70_figs_tables_v2.py for figures and tables, and "
+    "scripts/revision/73_tables_ops_v2.py for the v2 ops/knee/value-of-"
+    "stage-2 tables.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+# ---------------------------------------------------------------------------
+
 import warnings
 from pathlib import Path
 
