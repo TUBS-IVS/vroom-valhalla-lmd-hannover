@@ -1016,10 +1016,60 @@ def grid_delta(full_a: pd.DataFrame, full_b: pd.DataFrame,
 #: numbers are comparable with it.
 CO2_KG_PER_KM = 0.25
 VALIDATION_NAME = "tab_vroom_v2.csv"
+#: the full list of instances the validation set out to solve.  A
+#: kilometre total is only a weekly mileage if every one of them is in
+#: the result -- a validation still running looks exactly like a
+#: finished one otherwise, and understates the week.
+VALIDATION_QUEUE_NAME = "instance_queue.csv"
 
 
 class Co2Unavailable(RuntimeError):
     """No validated route kilometres for this grid -- refuse, never carry."""
+
+
+def _assert_validation_complete(val_dir: Path, v: pd.DataFrame) -> None:
+    """Refuse a validation whose solved points are not finished.
+
+    ``tab_vroom_v2.csv`` is appended as instances are solved, so a run in
+    progress is indistinguishable from a finished one by shape alone -- and
+    summing its kilometres gives a weekly mileage that is simply too small
+    (measured on the v6 grid mid-run: 123 685 km against 224 678 km for the
+    same operating point on a complete validation, a 45 % understatement no
+    other check would have caught). ``instance_queue.csv`` is the full list
+    the validation set out to solve, so compare against it.
+
+    Only points that ARE in the result are compared. A queued (plan, P,
+    theta) with no solved instance at all is simply a point this validation
+    never ran; it does not appear in the CO2 table and is not a defect --
+    v5, for instance, queued two such points and completed the six it did
+    run. A point that is PARTLY solved is the dangerous one.
+    """
+    q_path = Path(val_dir) / VALIDATION_QUEUE_NAME
+    if not q_path.exists():
+        return                      # nothing to compare against
+    q = pd.read_csv(q_path)
+    key = ["plan", "penalty", "share_willing"]
+    if not set(key) <= set(q.columns):
+        return
+    got = v.groupby(key).size().rename("solved")
+    want = q.groupby(key).size().rename("queued")
+    cmp = pd.concat([want, got], axis=1)
+    cmp = cmp[cmp.solved.notna()]        # only points this run produced
+    short = cmp[cmp.solved < cmp.queued]
+    if short.empty:
+        return
+    rows = "; ".join(
+        f"{k}: {int(r.solved)}/{int(r.queued)}"
+        for k, r in short.iterrows())
+    raise Co2Unavailable(
+        f"{val_dir / VALIDATION_NAME} is INCOMPLETE -- "
+        f"{int(short.solved.sum()):,d} of {int(short.queued.sum()):,d} "
+        f"queued instance(s) are solved in {len(short)} of {len(cmp)} "
+        "validated point(s). A kilometre sum over a validation that is "
+        "still running is not the plan's weekly mileage, it is a fraction "
+        "of it, and nothing in the file says so. Short: "
+        f"{rows}. Wait for the validation to finish, then re-run."
+    )
 
 
 def co2_table(rev_dir: Path, factor: float = CO2_KG_PER_KM) -> pd.DataFrame:
@@ -1061,6 +1111,8 @@ def co2_table(rev_dir: Path, factor: float = CO2_KG_PER_KM) -> pd.DataFrame:
             f"{path}: {int((~sel).sum())} of {len(v)} row(s) are not "
             "g6_selected -- this validation is a SAMPLE, so its kilometre "
             "sum is not the plan's weekly mileage")
+    _assert_validation_complete(path.parent, v)
+
     status = v.vroom_status.astype(str).str.upper()
     flagged = ~status.isin(["OK", "CACHED"])
     g = (v.assign(_flag=flagged.astype(int))

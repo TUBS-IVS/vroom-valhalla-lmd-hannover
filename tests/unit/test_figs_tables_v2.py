@@ -1126,3 +1126,56 @@ def test_region_types_cover_the_grids_plz_universe():
     rt = H.region_types(ROOT)
     assert set(rt.raumtyp_3.unique()) <= set(H.RAUMTYP_ORDER)
     assert rt.plz.is_unique
+
+
+# ---------------------------------------------------------------------
+# a validation that is still running must not become a CO2 table
+# ---------------------------------------------------------------------
+def _queue(tmp_path, per_point):
+    """Write instance_queue.csv with *per_point* rows per (plan, P, theta)."""
+    rows = []
+    for plan in ("balanced",):
+        for P in (0.0, 0.5):
+            for i in range(per_point):
+                rows.append(dict(instance_id=f"{plan}{P}q{i}", plan=plan,
+                                 penalty=P, share_willing=1.0))
+    d = tmp_path / "validation"
+    d.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(d / H.VALIDATION_QUEUE_NAME, index=False)
+    return tmp_path
+
+
+def test_co2_refuses_a_validation_that_is_still_running(tmp_path):
+    """The v6 case: every point present, none of them finished. Summing it
+    understated the week by 45 % and nothing else would have caught it."""
+    _vroom(tmp_path)                 # 2 solved instances per point
+    _queue(tmp_path, per_point=4)    # 4 were queued
+    with pytest.raises(H.Co2Unavailable, match="INCOMPLETE"):
+        H.co2_table(tmp_path)
+    msg = H.co2_decision(tmp_path)
+    assert msg.startswith("REFUSED") and "2/4" in msg
+
+
+def test_co2_accepts_a_point_that_was_never_queued_to_run(tmp_path):
+    """The v5 case: the queue lists points this run never started. Those are
+    simply not validated points -- they are absent from the table and are
+    not a defect. Only a PARTLY solved point is."""
+    _vroom(tmp_path)
+    d = tmp_path / "validation"
+    q = pd.read_csv(d / H.VALIDATION_QUEUE_NAME) if (
+        d / H.VALIDATION_QUEUE_NAME).exists() else None
+    _queue(tmp_path, per_point=2)                     # the two solved points
+    q = pd.read_csv(d / H.VALIDATION_QUEUE_NAME)
+    extra = pd.DataFrame([dict(instance_id="never", plan="balanced",
+                               penalty=0.75, share_willing=1.0)])
+    pd.concat([q, extra]).to_csv(d / H.VALIDATION_QUEUE_NAME, index=False)
+    t = H.co2_table(tmp_path)
+    assert len(t) == 2, "only the points that were actually solved"
+    assert 0.75 not in set(t.penalty)
+
+
+def test_co2_without_a_queue_file_still_works(tmp_path):
+    """A validation directory with no instance_queue.csv has nothing to be
+    compared against; that is a missing check, not a failure."""
+    _vroom(tmp_path)
+    assert len(H.co2_table(tmp_path)) == 2
