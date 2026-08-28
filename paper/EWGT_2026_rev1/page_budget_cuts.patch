@@ -1,52 +1,54 @@
-From d010c9c456483114345b9505cfc0ce48b9346967 Mon Sep 17 00:00:00 2001
+From 47a587ee4fe9e3e72eb7e71bc5ed93ad9454a93a Mon Sep 17 00:00:00 2001
 From: Lasse Bienzeisler <LasseBienzeisler@users.noreply.github.com>
-Date: Fri, 28 Aug 2026 19:59:16 +0200
+Date: Fri, 28 Aug 2026 20:42:56 +0200
 Subject: [PATCH 1/2] page budget: cuts 1-13 (16 -> 15 pages, supplementary 7
  -> 9)
 
-Blocks 1-13 of task-14b-review.md section 6.3, in order. Ten of the thirteen
-MOVE material into the supplementary rather than deleting it; three (8, 9, 11)
-are pure duplication.
+Blocks 1-13 of task-14b-review.md section 6.3, in order, regenerated on top of
+the fix-round-2 manuscript. Ten of the thirteen MOVE material into the
+supplementary; three are pure duplication.
 
   1  labour double count            -> Supplementary S2 (already there)
   2  bundle-head certification      -> new Supplementary S3
   3  tour-rule percentile evidence  -> new Supplementary S3
-  4  restarts + G1a audit + shadow-price clause + provider independence
+  4  restart stability + the shadow-price clause + provider independence
                                     -> new Supplementary S4
+     (the G1a TOLERANCE sentence STAYS in section 2.4: it is a part-C brief
+      requirement and answers a reviewer point, so it is not moved)
   5  the two-consequences elaboration and the dropped stage 3
                                     -> Supplementary S4
   6  three-stage progression + banding -> new Supplementary S5
   7  partial-adoption mechanism     -> new Supplementary S6
-  8  the (5,1) elaboration          -> deleted (Table 1's caption has it)
+  8  DROPPED. Its premise was false: Table 1's caption carries the 0.6 % clause
+     about the routing-optimal plan, not the polish's 4.8 % / f-bar = 5.95 at
+     (5,1), which is a distinctive two-plan finding.
   9  baseline-denominator sentence  -> deleted (Table 1's caption has it)
  10  CV series, flat-bound gap, break-even -> Supplementary S6
- 11  rotation-mechanism paragraph   -> deleted (stated in limitation (i), in
-                                       the structural paragraph, in the
-                                       Conclusion and now in S6)
+ 11  rotation-mechanism paragraph   -> deleted (stated in limitation (i), in the
+                                       structural paragraph, in the Conclusion
+                                       and now in S6)
  12  the five quartile series as prose -> new Supplementary Table S2
  13  the five-number bias series    -> new Supplementary Table S3
 
-Nothing on the review's protected list is touched: the two-lens table and its
-three findings, the P* lens statement, the retraction paragraph, the
-limitations, the tour rule itself, both lens definitions, the stage-2 accept
-rule, the cost-model sentence and the feature-skew caveat all stand, and every
-number Figs. 4-6 and Table 1 need is still in the main text.
+Nothing on the review's protected list is touched, and the three passages that
+fix round 2 restored stay live: the equity sentence, the code-availability
+footnote, both section-2 figure references, the shadow-price definition and the
+(P, theta) grid definition.
 
-6,559 characters out of the body. Both documents compile clean, no undefined
-references; the main text's Supplementary Section pointers S1-S6 and Table
-pointers S2-S3 all resolve.
+5,472 characters out of the body. Both documents compile clean, 23 bibitems,
+no undefined references, and no comment line hides a control sequence.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
- paper/EWGT_2026_rev1/supplementary.tex     | 129 +++++++++++++++++++++
- paper/EWGT_2026_rev1/tbc_preprint_main.tex |  27 ++---
- 2 files changed, 141 insertions(+), 15 deletions(-)
+ paper/EWGT_2026_rev1/supplementary.tex     | 123 +++++++++++++++++++++
+ paper/EWGT_2026_rev1/tbc_preprint_main.tex |  25 ++---
+ 2 files changed, 135 insertions(+), 13 deletions(-)
 
 diff --git a/paper/EWGT_2026_rev1/supplementary.tex b/paper/EWGT_2026_rev1/supplementary.tex
-index 9f52055..4157593 100644
+index 9f52055..348b5f0 100644
 --- a/paper/EWGT_2026_rev1/supplementary.tex
 +++ b/paper/EWGT_2026_rev1/supplementary.tex
-@@ -147,6 +147,135 @@ lens, is this double-counted term. Re-labelling the training pool with the
+@@ -147,6 +147,129 @@ lens, is this double-counted term. Re-labelling the training pool with the
  per-hour rate set to zero, and re-training on it, is left to future work; it
  would lower the levels without materially changing the comparisons made here.
  
@@ -74,17 +76,11 @@ index 9f52055..4157593 100644
 +
 +Across five random restarts the coordinate-descent objective agreed to within a
 +relative $10^{-12}$, so the optimum is stable at the reported operating points,
-+although global optimality is not guaranteed. As an audit of the residual
-+coupling we re-derived, for every cell that exceeds the tour minimum on all six
-+weekdays and is therefore priced standalone under any pattern, the pattern plain
-+enumeration selects. Of $1{,}656$ cell--penalty pairs, $1{,}651$ agree exactly;
-+the remaining five are accepted only because they satisfy a stated tolerance --- a
-+single-day change of the pattern whose objective differs by at most $20$~\euro\ or
-+$0.5\%$ of the cell's weekly objective, whichever is larger --- and all five arise
-+where a paired move in the local search shifted the cell together with a pooled
-+neighbour. They are near-ties, not a breach of the decoupling. No parcels, routes
-+or vehicles are shared across providers, and system-wide figures are obtained
-+solely by aggregating the independently optimized provider solutions. The
++although global optimality is not guaranteed. The identity audit of the
++decoupled cells, and the tolerance under which five of its $1{,}656$ pairs are
++accepted, are stated in Section~\ref{sec:schedule_opt} of the main text. No parcels,
++routes, or vehicles are shared across providers, and system-wide figures are
++obtained solely by aggregating the independently optimized provider solutions. The
 +provider-level smoothing stage of the submitted version is dropped from the
 +production path: vehicles do not move between depots, so the depot peaks already
 +are the fleet, and redistributing weekdays across a provider's depots cannot
@@ -183,10 +179,10 @@ index 9f52055..4157593 100644
  \label{sec:supp_figures}
  
 diff --git a/paper/EWGT_2026_rev1/tbc_preprint_main.tex b/paper/EWGT_2026_rev1/tbc_preprint_main.tex
-index bfd1e6f..7780222 100644
+index ed3f104..4ce1c6b 100644
 --- a/paper/EWGT_2026_rev1/tbc_preprint_main.tex
 +++ b/paper/EWGT_2026_rev1/tbc_preprint_main.tex
-@@ -316,18 +316,18 @@ Such approximations reproduce the first-order scaling but are point-inaccurate,
+@@ -317,18 +317,18 @@ Such approximations reproduce the first-order scaling but are point-inaccurate,
  \end{equation}
  where $\alpha$ is a global calibration factor and the structured residual $g(\cdot)$ is a LightGBM ensemble \citep{NIPS20176449f44a}, chosen because gradient-boosted trees handle tabular nonlinearities and feature interactions well, and expose feature importance for interpretation \citep{10.5555/3600270.3600307}. The scalar $\alpha$ was calibrated once as the median ratio of solver cost to the raw Daganzo prediction across the training pool, and $g(\cdot)$ then learned the structured remainder.
  
@@ -208,18 +204,20 @@ index bfd1e6f..7780222 100644
  
  
  
-@@ -359,9 +359,7 @@ For each \emph{cell} (each LSP, postal-code area pair), we enumerated all weekly
+@@ -360,10 +360,10 @@ For each \emph{cell} (each LSP, postal-code area pair), we enumerated all weekly
  \sigma_z^{\star} = \arg\min_{\sigma \in \mathcal{S}} \left[ \underbrace{F_{h(z)}(\sigma \mid \sigma_{-z})}_{\text{hub cost, routing lens}} + \underbrace{P \, \theta_z \, p_z \, \bar{w}(\sigma)}_{\text{penalty on waiting}} \right],
  \end{equation}
  
 -where $F_{h(z)}$ is the weekly routing-lens cost, Equation~\eqref{eq:lens_routing}, of the hub serving cell $z$, summed over the priced instances that the tour rule forms at that hub on each of the six weekdays. The sum is separable over cells wherever the tour rule leaves them standalone; it is not separable inside a pooling group, because the group's membership --- and hence the cost of every tour in it --- depends on which of its cells deliver on that day. Changing $\sigma_z$ therefore moves the focal cell's own tours and the tours of the groups it joins or leaves, while all other tours at the hub stay fixed. Retaining the hub objective rather than a per-cell one keeps this residual coupling priced. $\mathcal{S}$ is the set of feasible patterns, $\sigma_{-z}$ the fixed patterns of the other cells at the hub, $p_z$ the weekly parcel volume, and $\theta_z$ the share of parcels eligible for consolidation in the cell. Under a business-prioritized power law of the system-wide adoption $\theta$, business recipients opt in earlier than private ones, so each cell's $\theta_z$ reflects its own composition while the volume-weighted regional average equals $\theta$; only that fraction is consolidated. Coordinate descent iterates with multiple random restarts until no single-cell update improves the hub objective. The procedure is coordinate descent on a common hub objective, not a game between self-interested cells, so its fixed point is a coordinate-wise local optimum. Across five random restarts the objective agreed to within a relative $10^{-12}$, so the optimum is stable at the reported operating points, although global optimality is not guaranteed. As an audit of the residual coupling we re-derived, for every cell that exceeds the tour minimum on all six weekdays and is therefore priced standalone under any pattern, the pattern plain enumeration selects. Of $1{,}656$ cell--penalty pairs, $1{,}651$ agree exactly; the remaining five are accepted only because they satisfy a stated tolerance --- a single-day change of the pattern whose objective differs by at most $20$~\euro\ or $0.5\%$ of the cell's weekly objective, whichever is larger --- and all five arise where a paired move in the local search shifted the cell together with a pooled neighbour. They are near-ties, not a breach of the decoupling.
--% src: results/revision_2026_08_v6/gates_report.md (G1a PASS: 1,656 checked, 0 hard,
--%      5 tolerated); tolerances G1A_TOLERANCE_FLAT_EUR = 20.0, G1A_TOLERANCE_REL = 0.005 No parcels, routes, or vehicles are shared across providers, and system-wide figures are obtained solely by aggregating the independently optimized provider solutions. The service penalty $P$ is a shadow price \citep{BoydVandenberghe2004} of waiting --- the marginal cost the operator trades for one parcel-day of delay --- and enters \eqref{eq:schedule_objective} as a steering term only, which keeps the cost-service trade-off continuous. We swept $(P, \theta)$ over eight $P$ levels from $0$ to $10$~\euro/p/d and eleven $\theta$ levels from $0$ to $1$ in steps of $0.1$.
-+where $F_{h(z)}$ is the weekly routing-lens cost, Equation~\eqref{eq:lens_routing}, of the hub serving cell $z$, summed over the priced instances that the tour rule forms at that hub on each of the six weekdays. The sum is separable over cells wherever the tour rule leaves them standalone; it is not separable inside a pooling group, because the group's membership --- and hence the cost of every tour in it --- depends on which of its cells deliver on that day. Changing $\sigma_z$ therefore moves the focal cell's own tours and the tours of the groups it joins or leaves, while all other tours at the hub stay fixed. Retaining the hub objective rather than a per-cell one keeps this residual coupling priced. $\mathcal{S}$ is the set of feasible patterns, $\sigma_{-z}$ the fixed patterns of the other cells at the hub, $p_z$ the weekly parcel volume, and $\theta_z$ the share of parcels eligible for consolidation in the cell. Under a business-prioritized power law of the system-wide adoption $\theta$, business recipients opt in earlier than private ones, so each cell's $\theta_z$ reflects its own composition while the volume-weighted regional average equals $\theta$; only that fraction is consolidated. Coordinate descent iterates with multiple random restarts until no single-cell update improves the hub objective. The procedure is coordinate descent on a common hub objective, not a game between self-interested cells, so its fixed point is a coordinate-wise local optimum. Restart stability and an identity audit of the decoupled cells are reported in Supplementary Section~S4. The service penalty $P$ is a shadow price of waiting \citep{BoydVandenberghe2004} and enters \eqref{eq:schedule_objective} as a steering term only. We swept $(P, \theta)$ over eight $P$ levels from $0$ to $10$~\euro/p/d and eleven $\theta$ levels from $0$ to $1$ in steps of $0.1$.
++where $F_{h(z)}$ is the weekly routing-lens cost, Equation~\eqref{eq:lens_routing}, of the hub serving cell $z$, summed over the priced instances that the tour rule forms at that hub on each of the six weekdays. The sum is separable over cells wherever the tour rule leaves them standalone; it is not separable inside a pooling group, because the group's membership --- and hence the cost of every tour in it --- depends on which of its cells deliver on that day. Changing $\sigma_z$ therefore moves the focal cell's own tours and the tours of the groups it joins or leaves, while all other tours at the hub stay fixed. Retaining the hub objective rather than a per-cell one keeps this residual coupling priced. $\mathcal{S}$ is the set of feasible patterns, $\sigma_{-z}$ the fixed patterns of the other cells at the hub, $p_z$ the weekly parcel volume, and $\theta_z$ the share of parcels eligible for consolidation in the cell. Under a business-prioritized power law of the system-wide adoption $\theta$, business recipients opt in earlier than private ones, so each cell's $\theta_z$ reflects its own composition while the volume-weighted regional average equals $\theta$; only that fraction is consolidated. Coordinate descent iterates with multiple random restarts until no single-cell update improves the hub objective. The procedure is coordinate descent on a common hub objective, not a game between self-interested cells, so its fixed point is a coordinate-wise local optimum. As an audit of the residual coupling we re-derived, for every cell that exceeds the tour minimum on all six weekdays and is therefore priced standalone under any pattern, the pattern plain enumeration selects. Of $1{,}656$ cell--penalty pairs, $1{,}651$ agree exactly; the remaining five are accepted only because they satisfy a stated tolerance --- a single-day change of the pattern whose objective differs by at most $20$~\euro\ or $0.5\%$ of the cell's weekly objective, whichever is larger --- and all five arise where a paired move in the local search shifted the cell together with a pooled neighbour. They are near-ties, not a breach of the decoupling.
+ % src: results/revision_2026_08_v6/gates_report.md (G1a PASS: 1,656 checked, 0 hard,
+ %      5 tolerated); tolerances G1A_TOLERANCE_FLAT_EUR = 20.0, G1A_TOLERANCE_REL = 0.005
+-No parcels, routes, or vehicles are shared across providers, and system-wide figures are obtained solely by aggregating the independently optimized provider solutions. The service penalty $P$ is a shadow price \citep{BoydVandenberghe2004} of waiting --- the marginal cost the operator trades for one parcel-day of delay --- and enters \eqref{eq:schedule_objective} as a steering term only, which keeps the cost-service trade-off continuous. We swept $(P, \theta)$ over eight $P$ levels from $0$ to $10$~\euro/p/d and eleven $\theta$ levels from $0$ to $1$ in steps of $0.1$.
++ The service penalty $P$ is a shadow price of waiting \citep{BoydVandenberghe2004} and enters \eqref{eq:schedule_objective} as a steering term only. We swept $(P, \theta)$ over eight $P$ levels from $0$ to $10$~\euro/p/d and eleven $\theta$ levels from $0$ to $1$ in steps of $0.1$.
  
  
  The coordinate-descent solution is the \emph{routing-optimal plan}, which we call stage~1. It minimizes per-day routing cost and is therefore free to concentrate deliveries on a few weekdays, which multiplies the depot peaks that the operator lens charges. A second stage polishes it in the operator's own currency. Stage~2 is a local search over (cell, pattern) moves that accepts a move if and only if
-@@ -371,7 +369,7 @@ The coordinate-descent solution is the \emph{routing-optimal plan}, which we cal
+@@ -373,7 +373,7 @@ The coordinate-descent solution is the \emph{routing-optimal plan}, which we cal
  \end{equation}
  that is, if the change in variable cost, plus $6 c_f$ times the change in the touched depot's peak, plus the change in the service penalty, is strictly negative. There is no cost budget and no separate spread objective; every consequence of a move is priced. For $\theta > 0$ the search is \emph{frequency-free}: a cell may gain or lose delivery days, because Equation~\eqref{eq:polish} prices exactly what such a change touches --- distance and time, the depot peak, and waiting. At $\theta = 0$ nobody is willing to wait, the penalty vanishes for every $P$, and stage~2 is pinned to the daily plan so that the baseline is recovered exactly. The search is started three times, from the routing-optimal plan, from a range-balanced plan, and from a frequency-preserving polish, and the lowest operator cost is kept; this makes the result at least as good as the frequency-preserving variant by construction.
  
@@ -228,7 +226,7 @@ index bfd1e6f..7780222 100644
  
  
  
-@@ -407,7 +405,7 @@ Two consequences must be stated plainly. First, stage~2 is a local search, not a
+@@ -409,7 +409,7 @@ Two consequences must be stated plainly. First, stage~2 is a local search, not a
  
  
  
@@ -237,19 +235,16 @@ index bfd1e6f..7780222 100644
  
  \begin{figure}[h]
    \centering
-@@ -429,9 +427,9 @@ Under group $k$-fold cross-validation with folds grouped by postal-code area, so
+@@ -433,7 +433,7 @@ Under group $k$-fold cross-validation with folds grouped by postal-code area, so
  
- \autoref{fig:mix_init_vs_balanced} traces the optimized delivery-day distribution across the $312$ cells as $\theta$ rises; we summarize each scenario by the mean delivery frequency $\bar{f}$, the unweighted average number of weekly delivery days across cells. At $\theta = 0$ every cell is served daily at any penalty, recovering the baseline exactly: nobody is willing to wait, and stage~2 is pinned there by construction. As $\theta$ rises, $P$ sets the pace. In the routing-optimal plan at $(P, \theta) = (0, 1)$, $97.4\%$ of cells adopt the minimum two-day pattern ($\bar{f} = 2.03$); the remaining $2.6\%$ are high-volume urban cells whose two-day demand would breach vehicle capacity, so the Daganzo capacity term forces an extra day. The mode then shifts upward with $P$ ($\bar{f} = 4.12$ at $P = 0.5$, $\bar{f} = 5.01$ at $P = 1$); for $P \geq 5$ the routing-optimal plan is daily for all but $0.6\%$ of cells at full adoption, though not at low adoption, where $15.4\%$ remain non-daily at $(5, 0.1)$.
- 
--The operator-polished plan is a different schedule, not a re-timing of the same one, and the direction of the difference depends on the operating point. At low penalties it is markedly \emph{less} consolidated: at $(0, 1)$ the two-day share falls from $97.4$ to $72.4\%$ ($\bar{f} = 2.39$), because at depots that cannot rotate delivery days across cells more frequent delivery is the only way to lower a peak. At high penalties, where stage~1 delivers daily almost everywhere, the only available moves remove days, and the polish takes them wherever one removed peak vehicle ($1{,}134.90$~\euro\ per week) outweighs the penalty on the few parcels affected: at $(5, 1)$ it takes $4.8\%$ of cells off daily delivery ($\bar{f} = 5.95$) against $0.6\%$ in stage~1. Average waiting time consequently moves in both directions between the two plans --- down at $(0, 1)$ ($0.97$ to $0.77$~d), up at $(0.5, 1)$ ($0.20$ to $0.22$~d) --- and we make no directional claim about it; the wait of the operator plan is an outcome of cost minimization, not a service decision. Only at $\theta = 0$ is the question moot: the product $P \cdot \theta$ vanishes for every $P$, the polish is pinned, and the daily baseline is reproduced exactly.
-+The operator-polished plan is a different schedule, not a re-timing of the same one, and the direction of the difference depends on the operating point. At low penalties it is markedly \emph{less} consolidated: at $(0, 1)$ the two-day share falls from $97.4$ to $72.4\%$ ($\bar{f} = 2.39$), because at depots that cannot rotate delivery days across cells more frequent delivery is the only way to lower a peak. Average waiting time consequently moves in both directions between the two plans --- down at $(0, 1)$ ($0.97$ to $0.77$~d), up at $(0.5, 1)$ ($0.20$ to $0.22$~d) --- and we make no directional claim about it; the wait of the operator plan is an outcome of cost minimization, not a service decision. Only at $\theta = 0$ is the question moot: the product $P \cdot \theta$ vanishes for every $P$, the polish is pinned, and the daily baseline is reproduced exactly.
+ The operator-polished plan is a different schedule, not a re-timing of the same one, and the direction of the difference depends on the operating point. At low penalties it is markedly \emph{less} consolidated: at $(0, 1)$ the two-day share falls from $97.4$ to $72.4\%$ ($\bar{f} = 2.39$), because at depots that cannot rotate delivery days across cells more frequent delivery is the only way to lower a peak. At high penalties, where stage~1 delivers daily almost everywhere, the only available moves remove days, and the polish takes them wherever one removed peak vehicle ($1{,}134.90$~\euro\ per week) outweighs the penalty on the few parcels affected: at $(5, 1)$ it takes $4.8\%$ of cells off daily delivery ($\bar{f} = 5.95$) against $0.6\%$ in stage~1. Average waiting time consequently moves in both directions between the two plans --- down at $(0, 1)$ ($0.97$ to $0.77$~d), up at $(0.5, 1)$ ($0.20$ to $0.22$~d) --- and we make no directional claim about it; the wait of the operator plan is an outcome of cost minimization, not a service decision. Only at $\theta = 0$ is the question moot: the product $P \cdot \theta$ vanishes for every $P$, the polish is pinned, and the daily baseline is reproduced exactly.
  
 -Between these extremes the mix is not monotone in $\theta$, and the non-monotonicity is economic rather than numerical. At $P = 0.25$ the mean frequency \emph{rises} again from $\theta = 0.8$ to $0.9$, from $4.93$ to $5.16$ days in the routing-optimal plan and $4.68$ to $4.89$ in the operator plan, for two reasons: the penalty scales with $\theta$, so each dropped delivery day costs more as adoption grows; and the express residual thins out, from $9.6$ to $7.4\%$ of routing cost, until in small depots it no longer fills a vehicle and the residual tour of a skipped day costs nearly as much as the regular tour it replaces. At $\theta = 1$ the residual disappears altogether and the mean frequency drops to $3.10$ and $3.27$ days. The step from $\theta = 0.9$ to $1$ is therefore not a threshold in the willingness distribution but the price of the last non-willing customers, who must be served whatever the schedule and are disproportionately expensive to reach alone.
 +Between these extremes the mix is not monotone in $\theta$: at $P = 0.25$ the mean frequency rises again from $\theta = 0.8$ to $0.9$ before dropping to $3.10$ days at full adoption, because the penalty scales with $\theta$ while the express residual becomes too thin to fill a vehicle. Supplementary Section~S6 gives the mechanism and its numbers.
  
  
  
-@@ -468,11 +466,10 @@ The submitted version reported a persistent saving in the high-penalty, low-adop
+@@ -470,11 +470,10 @@ The submitted version reported a persistent saving in the high-penalty, low-adop
  
  \input{tab_two_lens}
  
@@ -263,53 +258,50 @@ index bfd1e6f..7780222 100644
  
  
  
-@@ -492,7 +489,7 @@ The mechanism behind the operator-lens result is depot structure rather than con
+@@ -494,7 +493,7 @@ The mechanism behind the operator-lens result is depot structure rather than con
  
  The per-LSP operating point $P^\star$ is identified as the chord-distance knee of each carrier's (saving, wait) Pareto front at $\theta = 1$ (\autoref{fig:structural_grid_6}, a), i.e.\ the point with the largest orthogonal distance to the chord between the cost-minimum and wait-minimum extremes, beyond which the saving lost per further day of wait reduction grows sharply. In the routing lens, and evaluated on the routing-optimal plan, this groups the seven operators into service-bound (Amazon, DHL) at $P^\star = 0.25$, hybrid (FedEx, Hermes, UPS) at $P^\star = 0.5$, and cost-aggressive (DPD, GLS) at $P^\star = 0.75$, unchanged from the submitted version. The classification is, however, lens-dependent, and this is the strongest qualification the revision puts on the submitted result. Applied to the operator plan under the operator lens, three carriers move up: Amazon from $0.25$ to $0.5$ (service-bound to hybrid) and Hermes from $0.5$ to $0.75$ (hybrid to cost-aggressive), while GLS moves from $0.75$ to $1.0$ and thereby leaves the $[0.25, 0.75]$ band altogether, so that under the operator lens it is not classified at all; DHL, FedEx, UPS, and DPD keep their $P^\star$. Peak smoothing begins to pay only at a higher penalty, so the knee of the operator-lens front sits further to the right. The three-class taxonomy is therefore a routing-lens statement, and no carrier class may be quoted without naming the lens it was derived in.
  
 -Which cells can consolidate is governed by local routing geometry, and re-deriving the per-cell costs on the revised grid reproduces the ordering the submitted version reported, at somewhat lower levels. At each LSP's $P^\star$ and full adoption, the median cell saving rises from $2.0\%$ in the nearest hub-distance quartile to $25.8\%$ in the farthest (\autoref{fig:structural_grid_6}, d) and from $8.8$ to $24.6\%$ with postal-code area size (e), and falls from $24.2$ to $2.3\%$ as parcels per drop-site rise between quartiles (f): dense cells with short stems and many parcels per stop gain little from waiting, sparse cells with long stems gain most. The same mechanism caps the service-bound class at a $6.5\%$ median while the hybrid and cost-aggressive classes reach $20.3$ and $17.3\%$ at their $P^\star$ (b), and at low adoption it pushes $21$ to $41\%$ of service-bound cells into negative saving, since the parallel conventional tour for the non-willing parcels exceeds the batching gain for cells near the capacity floor. Rural areas save a median of $23.7\%$ against $7.9\%$ for urban ones (c). Below full adoption the medians stay in low single digits and every series jumps only at $\theta = 1$; the service-bound class, urban cells and the nearest hub-distance quartile are flat at exactly zero throughout. This is a property of the median, not a rendering fault: below full adoption the non-willing parcels of a cell still require their own tour on every weekday, so at each carrier's own $P^\star$ the median cell in those groups keeps delivering daily and saves nothing, and the gains sit in the minority of cells that consolidate at all.
 +Which cells can consolidate is governed by local routing geometry, and re-deriving the per-cell costs on the revised grid reproduces the ordering the submitted version reported, at somewhat lower levels: the median cell saving rises with hub distance and with area size and falls with parcels per drop-site (\autoref{fig:structural_grid_6}, d--f), and the service-bound class is capped at a $6.5\%$ median while the hybrid and cost-aggressive classes reach $20.3$ and $17.3\%$ at their $P^\star$ (b). Supplementary Table~S2 gives every quartile endpoint. Rural areas save a median of $23.7\%$ against $7.9\%$ for urban ones (c). Below full adoption the medians stay in low single digits and every series jumps only at $\theta = 1$; the service-bound class, urban cells and the nearest hub-distance quartile are flat at exactly zero throughout. This is a property of the median, not a rendering fault: below full adoption the non-willing parcels of a cell still require their own tour on every weekday, so at each carrier's own $P^\star$ the median cell in those groups keeps delivering daily and saves nothing, and the gains sit in the minority of cells that consolidate at all.
  % src: tab_per_cell_structural_v2.csv, level=cell lens='routing lens' plan=balanced
- %      value=saving_pct, medians over share_willing <= 0.9 This efficiency pattern creates an equity concern: service quality between urban and rural areas should be maintained \citep{Pereira04032017}, especially since rural and suburban deliveries account for a substantial share of LMD activity \citep{BIENZEISLER2026104682}. The depot-structure mechanism runs alongside it and is visible per depot rather than per area: depots serving a single cell stay at six delivery days across the entire adoption range while those serving thirteen or more fall to two, although only DHL operates a multi-depot network here, so that half of the mechanism is evidenced within one carrier (Supplementary Fig.~S6).
- 
-@@ -506,7 +503,7 @@ Which cells can consolidate is governed by local routing geometry, and re-derivi
+ %      value=saving_pct, medians over share_willing <= 0.9
+ This efficiency pattern creates an equity concern: service quality between urban and rural areas should be maintained \citep{Pereira04032017}, especially since rural and suburban deliveries account for a substantial share of LMD activity \citep{BIENZEISLER2026104682}. The depot-structure mechanism runs alongside it and is visible per depot rather than per area: depots serving a single cell stay at six delivery days across the entire adoption range while those serving thirteen or more fall to two, although only DHL operates a multi-depot network here, so that half of the mechanism is evidenced within one carrier (Supplementary Fig.~S6).
+@@ -509,7 +508,7 @@ This efficiency pattern creates an equity concern: service quality between urban
  
  Three levels of evidence bear on whether the surrogate can be trusted at the operating points reported above, and they must not be merged.
  
--At the instance level we re-routed $7{,}610$ instances with the solver: the complete daily baseline, and at full adoption the operator-polished plan at $P \in \{0, 0.25, 0.5, 0.75\}$ together with the routing-optimal plan at $P \in \{0, 0.25\}$. One instance returned a partial solution --- a DHL depot with a single unassigned job --- and is excluded from the error statistics while remaining in the cost totals. Over the $7{,}609$ clean instances the surrogate's error is $3.51\%$ MAPE at a bias of $+3.05\%$, and the bias is positive in every group we can form: the model over-prices. It over-prices most where tours are thinnest, that is in the daily baseline ($5.80\%$ MAPE at $+5.39\%$ bias; $+4.88\%$ on single-cell tours and $+14.50\%$ on pooled ones), and least at the consolidated points ($2.85\%$ MAPE at $+2.39\%$ bias, between $2.3$ and $3.7\%$ MAPE per point). The second level is the bundle head's out-of-fold certification of Section~\ref{sec:tour_rule}, which bounds the pricing error where the head is deployed but is a cross-validation result rather than a re-routing.
-+At the instance level we re-routed $7{,}610$ instances with the solver: the complete daily baseline, and at full adoption the operator-polished plan at $P \in \{0, 0.25, 0.5, 0.75\}$ together with the routing-optimal plan at $P \in \{0, 0.25\}$. One instance returned a partial solution --- a DHL depot with a single unassigned job --- and is excluded from the error statistics while remaining in the cost totals. Over the $7{,}609$ clean instances the surrogate's error is $3.51\%$ MAPE at a bias of $+3.05\%$, and the bias is positive in every group we can form: the model over-prices. It over-prices most where tours are thinnest --- the daily baseline, at $+5.39\%$ bias --- and least at the consolidated points, at $+2.39\%$ (Supplementary Table~S3). The second level is the bundle head's out-of-fold certification of Section~\ref{sec:tour_rule}, which bounds the pricing error where the head is deployed but is a cross-validation result rather than a re-routing.
+-At the instance level we re-routed $7{,}610$ instances with the solver: the complete daily baseline, and at full adoption the operator-polished plan at $P \in \{0, 0.25, 0.5, 0.75\}$ together with the routing-optimal plan at $P \in \{0, 0.25\}$. One instance returned a partial solution --- a DHL depot with a single unassigned job --- and every figure below is reported on the \emph{clean} basis, which drops that instance from the error statistics and from the cost totals alike; keeping it lowers the one saving it touches from $20.6$ to $19.9\%$ and changes nothing else. Over the $7{,}609$ clean instances the surrogate's error is $3.51\%$ MAPE at a bias of $+3.05\%$, and the bias is positive in every group we report: the model over-prices. It over-prices most where tours are thinnest, that is in the daily baseline ($5.80\%$ MAPE at $+5.39\%$ mean per-tour bias; $+4.88\%$ on single-cell tours and $+14.50\%$ on pooled ones), and least at the consolidated points ($2.85\%$ MAPE at $+2.39\%$, between $2.3$ and $3.7\%$ MAPE per point). The second level is the bundle head's out-of-fold certification of Section~\ref{sec:tour_rule}, which bounds the pricing error where the head is deployed but is a cross-validation result rather than a re-routing.
++At the instance level we re-routed $7{,}610$ instances with the solver: the complete daily baseline, and at full adoption the operator-polished plan at $P \in \{0, 0.25, 0.5, 0.75\}$ together with the routing-optimal plan at $P \in \{0, 0.25\}$. One instance returned a partial solution --- a DHL depot with a single unassigned job --- and every figure below is reported on the \emph{clean} basis, which drops that instance from the error statistics and from the cost totals alike; keeping it lowers the one saving it touches from $20.6$ to $19.9\%$ and changes nothing else. Over the $7{,}609$ clean instances the surrogate's error is $3.51\%$ MAPE at a bias of $+3.05\%$, and the bias is positive in every group we report: the model over-prices. It over-prices most where tours are thinnest --- the daily baseline, at $+5.39\%$ mean per-tour bias --- and least at the consolidated points, at $+2.39\%$ (Supplementary Table~S3). The second level is the bundle head's out-of-fold certification of Section~\ref{sec:tour_rule}, which bounds the pricing error where the head is deployed but is a cross-validation result rather than a re-routing.
  
- The third level is what those errors do to the savings, and here the revision corrects the submitted version rather than confirming it. Because the baseline is over-priced by $4.4\%$ in the routing lens and $4.0\%$ in the operator lens while the consolidated points are over-priced by only $0.9$ to $2.9\%$, the denominator falls faster than the numerator, and every predicted saving is an \emph{upper bound}. At full adoption the operator-polished plan realizes $17.5$, $14.5$, $10.6$ and $7.7\%$ of routing saving at $P = 0$, $0.25$, $0.5$ and $0.75$ against $20.0$, $16.7$, $12.3$ and $9.0\%$ predicted, and $22.1$, $20.7$, $16.3$ and $12.8\%$ of operator saving against $24.3$, $22.6$, $17.8$ and $14.1\%$; the routing-optimal plan realizes $20.6$ and $16.4\%$ of routing saving against $22.6$ and $18.7\%$. The shortfall is $1.3$ to $2.5$~pp at every point, and it changes no sign and no ordering. The submitted version reported the opposite direction --- a realized $23.7\%$ against $22.8\%$ predicted --- on the pipeline that predates the universal tour rule; this is the first validation to re-route the daily baseline itself, and the baseline's own over-pricing is what reverses the sign of the correction.
+ The third level is what those errors do to the savings, and here the revision corrects the submitted version rather than confirming it. Because the baseline is over-priced by $4.4\%$ in the routing lens and $4.0\%$ in the operator lens while the consolidated points are over-priced by only $1.2$ to $2.9\%$ and $0.5$ to $2.5\%$ respectively --- these are total-cost gaps, not the mean per-tour biases above --- the denominator falls faster than the numerator, and every predicted saving is an \emph{upper bound}. At full adoption the operator-polished plan realizes $17.5$, $14.5$, $10.6$ and $7.7\%$ of routing saving at $P = 0$, $0.25$, $0.5$ and $0.75$ against $20.0$, $16.7$, $12.3$ and $9.0\%$ predicted, and $22.1$, $20.7$, $16.3$ and $12.8\%$ of operator saving against $24.3$, $22.6$, $17.8$ and $14.1\%$; the routing-optimal plan realizes $20.6$ and $16.4\%$ of routing saving against $22.6$ and $18.7\%$. The shortfall is $1.3$ to $2.5$~pp for the operator-polished plan and $2.1$ to $3.7$~pp for the routing-optimal one, and it changes no sign and no ordering. The submitted version reported the opposite direction --- a realized $24.3\%$ against $22.8\%$ predicted at $P = 0$, and called the surrogate conservative --- on the pipeline that predates the universal tour rule; this is the first validation to re-route the daily baseline itself, and the baseline's own over-pricing is what reverses the sign of the correction.
  
 -- 
 2.51.2.windows.1
 
 
-From 1c6d23708fe1a6b11c0e03c7702f15d3ec617dd3 Mon Sep 17 00:00:00 2001
+From 14bdc633194d24901e81f941e55ad596a56d632c Mon Sep 17 00:00:00 2001
 From: Lasse Bienzeisler <LasseBienzeisler@users.noreply.github.com>
-Date: Fri, 28 Aug 2026 20:02:25 +0200
-Subject: [PATCH 2/2] page budget: cuts 14-18 (pure duplication and density)
+Date: Fri, 28 Aug 2026 20:43:10 +0200
+Subject: [PATCH 2/2] page budget: cuts 14-18 (duplication and density)
 
 Blocks 14-18 of task-14b-review.md section 6.3. Nothing moves to the
-supplementary and no claim is lost; these are the passages that say a thing a
-second or third time.
+supplementary and no claim is lost.
 
- 14  limitation (vi): the CV cross-version warning stated once, the labour
-     clause dropped (Supplementary S2 carries it)
+ 14  limitation (vi): the cross-version warning compressed. Its LABOUR clause
+     and the 0.139 vs 0.135 numbers are KEPT (the review's casualty 4).
  15  Conclusion: one number per claim instead of a third recitation of the
-     Section 3.2 series
+     section 3.2 series; the upper-bound caveat added by fix round 2 is kept
  16  abstract: the two-lens result in three sentences instead of six
  17  Introduction: the four-contribution list, which restates the abstract
- 18  density pass on Section 2 / 2.1 text unchanged since submission, plus
+ 18  density pass on section 2 / 2.1 text unchanged since submission, plus
      three Introduction sentences
 
-2,135 further characters out of the body, 8,694 in total over blocks 1-18.
-Compiles clean, no undefined references.
+2,011 further characters, 7,483 over blocks 1-18. Compiles clean, 23 bibitems,
+no undefined references, guard passes.
 
-Measured page count: 16 before any cut, 15 after blocks 1-13, 15 after all 18.
-The review's 14/13-page estimate assumed roughly 13,400 characters; these
-blocks, cut without losing a claim, yield 8,694. Figure scaling was re-tested
-at this length and still buys nothing -- the document remains text-bound.
+Measured page count: 17 as committed (fix round 2), 15 after blocks 1-13,
+15 after all 18. Figure scaling was re-tested and still buys nothing.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
@@ -317,7 +309,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  1 file changed, 12 insertions(+), 12 deletions(-)
 
 diff --git a/paper/EWGT_2026_rev1/tbc_preprint_main.tex b/paper/EWGT_2026_rev1/tbc_preprint_main.tex
-index 7780222..ee696b5 100644
+index 4ce1c6b..bc9ef7c 100644
 --- a/paper/EWGT_2026_rev1/tbc_preprint_main.tex
 +++ b/paper/EWGT_2026_rev1/tbc_preprint_main.tex
 @@ -204,7 +204,7 @@
@@ -343,12 +335,12 @@ index 7780222..ee696b5 100644
  
  
  
-@@ -287,10 +287,10 @@ This paper investigates TBC as an operational response to the tension between cu
- \label{methods}
+@@ -288,10 +288,10 @@ This paper investigates TBC as an operational response to the tension between cu
  
- Our framework used weekly parcel-demand patterns generated with our own HAGRID demand model \citep{BIENZEISLER2026104682}, covering seven LSPs in the Hanover Region (about $1.26$~million parcels and $1.90$~M\euro\ of baseline operating cost per week)
--% src: tab_grid_full_v2.csv, row penalty=0 share_willing=0, routing_cost_plan1_eur = 1,898,091. As \autoref{fig:input_data} shows, demand varies strongly between dense urban and sparse rural postal-code areas, peaks midweek, and is lowest on Saturday. To make repeated routing evaluations tractable, we decomposed the study area into postal-code-level routing subproblems while preserving the demand, spatial, and depot-access characteristics relevant for delivery cost. The pipeline structure is summarized in \autoref{fig:framework}.\footnote{The implementation of the proposed framework is available at: \url{https://github.com/TUBS-IVS/vroom-valhalla-lmd-hannover}}
-+% src: tab_grid_full_v2.csv, row penalty=0 share_willing=0, routing_cost_plan1_eur = 1,898,091. As \autoref{fig:input_data} shows, demand varies strongly between dense urban and sparse rural postal-code areas, peaks midweek and is lowest on Saturday. To keep repeated routing evaluations tractable we decomposed the study area into postal-code-level routing subproblems, preserving the demand, spatial and depot-access characteristics relevant for delivery cost. \autoref{fig:framework} summarizes the pipeline.\footnote{The implementation of the proposed framework is available at: \url{https://github.com/TUBS-IVS/vroom-valhalla-lmd-hannover}}
+ Our framework used weekly parcel-demand patterns generated with our own HAGRID demand model \citep{BIENZEISLER2026104682}, covering seven LSPs in the Hanover Region (about $1.26$~million parcels and $1.90$~M\euro\ of baseline operating cost per week).
+ % src: tab_grid_full_v2.csv, row penalty=0 share_willing=0, routing_cost_plan1_eur = 1,898,091
+-As \autoref{fig:input_data} shows, demand varies strongly between dense urban and sparse rural postal-code areas, peaks midweek, and is lowest on Saturday. To make repeated routing evaluations tractable, we decomposed the study area into postal-code-level routing subproblems while preserving the demand, spatial, and depot-access characteristics relevant for delivery cost. The pipeline structure is summarized in \autoref{fig:framework}.\footnote{The implementation of the proposed framework is available at: \url{https://github.com/TUBS-IVS/vroom-valhalla-lmd-hannover}}
++As \autoref{fig:input_data} shows, demand varies strongly between dense urban and sparse rural postal-code areas, peaks midweek and is lowest on Saturday. To keep repeated routing evaluations tractable we decomposed the study area into postal-code-level routing subproblems, preserving the demand, spatial and depot-access characteristics relevant for delivery cost. \autoref{fig:framework} summarizes the pipeline.\footnote{The implementation of the proposed framework is available at: \url{https://github.com/TUBS-IVS/vroom-valhalla-lmd-hannover}}
  
  
 -The unit of analysis is a \emph{cell}, defined as an LSP--postal-code-area pair assigned to the provider's serving hub and described by daily demand, area size, stop structure, and depot-access distance. The case study comprises $312$ such cells over $48$ postal-code areas, each area served by up to seven LSPs; all distributional statements below are per cell unless stated otherwise. The decision variable is the weekly \emph{delivery pattern}, i.e., the service weekdays for that cell; parcels from non-service days are held until the next scheduled service day. LSP operating costs are route-dependent. Following open-data-based LMD modeling \citep{HORL2025104893}, we generated routing-cost labels with VROOM \citep{vroom_v1.14} based on Valhalla-derived travel times and distances on OpenStreetMap road geometry.\footnote{\url{https://github.com/valhalla/valhalla}} Recurrent congestion was approximated by applying an empirically derived correction factor to free-flow travel times. The current daily-delivery operation served as the baseline for all consolidation scenarios.
@@ -356,7 +348,7 @@ index 7780222..ee696b5 100644
  
  \input{fig2_framework}
  
-@@ -301,7 +301,7 @@ The unit of analysis is a \emph{cell}, defined as an LSP--postal-code-area pair
+@@ -302,7 +302,7 @@ The unit of analysis is a \emph{cell}, defined as an LSP--postal-code-area pair
  \subsection{Cost approximation and machine-learning surrogate}
  \label{sec:cost_model}
  
@@ -365,7 +357,7 @@ index 7780222..ee696b5 100644
  \begin{equation}
  \label{eq:daganzo}
  \hat{D}_{z,d} = m_{z,d}\!\left( 2 r_z + \beta\sqrt{\tfrac{n_{z,d}}{m_{z,d}}\, A_z} \right), \qquad
-@@ -309,7 +309,7 @@ Solving a full VRP for every candidate schedule is computationally too costly, s
+@@ -310,7 +310,7 @@ Solving a full VRP for every candidate schedule is computationally too costly, s
  \end{equation}
  with $m_{z,d}=\lceil p_{z,d}/Q\rceil$ tours (parcel volume $p_{z,d}$, vehicle capacity $Q = 230$), average depot distance $r_z$, $n_{z,d}$ stops over area $A_z$, and network/shape factor $\beta$: each of the $m_{z,d}$ tours travels to the area and back ($2r_z$) and serves its $n_{z,d}/m_{z,d}$ stops across the service area. The rate $c_d$ prices distance and $c_f$ is the fixed daily cost per vehicle. Consolidation lowers cost by raising delivery density while the capacity term penalizes over-consolidation.
  
@@ -374,7 +366,7 @@ index 7780222..ee696b5 100644
  \begin{equation}
  \label{eq:surrogate}
  \tilde{C}_{z,d} = \alpha\,\hat{C}_{z,d} + g(\mathbf{x}_{z,d}),
-@@ -318,7 +318,7 @@ where $\alpha$ is a global calibration factor and the structured residual $g(\cd
+@@ -319,7 +319,7 @@ where $\alpha$ is a global calibration factor and the structured residual $g(\cd
  
  The quantity $\tilde{C}$ predicts is fixed by what the solver labels contain, and it is worth stating exactly. Every label --- and therefore every predicted, baseline, and validated cost reported in this paper --- follows the effective cost model $189.15$~\euro\ per vehicle and day, $0.3864$~\euro\ per kilometre, and $36$~\euro\ per route-hour, the last because VROOM's default per-hour rate was active in all labels; the three terms contribute $72.2$, $6.0$, and $21.7\%$ of label cost. The Daganzo backbone in Equation~\eqref{eq:daganzo} carries only the vehicle and distance terms, so $\alpha$ and the learned residual absorb the route-time component. Driver labour is therefore charged twice, once inside $c_f$ and once through the route-time term. Relative savings are unaffected, because the term sits in baseline and scenario alike; absolute levels are not (Supplementary Section~S2).
  
@@ -383,16 +375,16 @@ index 7780222..ee696b5 100644
  
  \subsection{Tour geometry and the validity domain of the surrogate}
  \label{sec:tour_rule}
-@@ -516,7 +516,7 @@ One regime remains outside this evidence: at partial adoption the express residu
+@@ -521,7 +521,7 @@ One regime remains outside this evidence: at partial adoption the express residu
  \subsection{Limitations}
  \label{sec:limitations}
  
 -Six limitations and one methodological caveat bound these results. (i) The operator-lens outcome is shaped by depot structure, and one carrier dominates it: eight of DHL's sixteen depots serve a single cell, and DHL operates the only multi-depot network in the case study. The rotation mechanism is therefore evidenced within a single carrier's network, and neither its magnitude nor its generality can be established from these data. (ii) Pooling is strictly within a depot, since every tour starts and ends at the depot of its cells, so the model cannot exploit cooperation between neighbouring depots or between providers; lifting that restriction is the most promising direction for future work and would raise the achievable savings. (iii) Stage~2 is a local search, and we report its gap to the flat-profile bound rather than claiming optimality. (iv) All optimization is surrogate-based. The full-adoption plans are now solver-validated and their savings are reported both as predicted and as realized, but the partial-adoption regime --- where pooled tours are most frequent --- is not yet, so its figures remain predictions (Section~\ref{sec:results_validation}). (v) The bundle head prices $53.9\%$ of the pooled tours that occur and $27.2\%$ of the pooled cost; elsewhere a pooled tour is charged as the sum of its members' single-cell prices, which is conservative but coarse, and the certification is specific to this region's cell geometry. (vi) Fleet accounting changed with the tour rule: the baseline Monday--Saturday coefficient of variation is $0.139$ here against $0.135$ in the submitted version, so fleet-smoothness figures are comparable within a grid version but not across versions. All levels, in both lenses, additionally inherit the labour double count of the label cost model, which leaves savings unaffected; Supplementary Section~S2 states its size. The methodological caveat concerns feature construction: for six of the seven providers the per-stop demand array falls back to one parcel per demand point, so two of the $25$ features are populated differently at run time than during training. The deployed model was validated end-to-end in exactly this state ($3.51\%$ MAPE at $+3.05\%$ bias over $7{,}609$ solver-routed instances, Section~\ref{sec:results_validation}), so the reported numbers stand, but the skew costs accuracy that a re-trained model would recover.
-+Six limitations and one methodological caveat bound these results. (i) The operator-lens outcome is shaped by depot structure, and one carrier dominates it: eight of DHL's sixteen depots serve a single cell, and DHL operates the only multi-depot network in the case study. The rotation mechanism is therefore evidenced within a single carrier's network, and neither its magnitude nor its generality can be established from these data. (ii) Pooling is strictly within a depot, since every tour starts and ends at the depot of its cells, so the model cannot exploit cooperation between neighbouring depots or between providers; lifting that restriction is the most promising direction for future work and would raise the achievable savings. (iii) Stage~2 is a local search, and we report its gap to the flat-profile bound rather than claiming optimality. (iv) All optimization is surrogate-based. The full-adoption plans are now solver-validated and their savings are reported both as predicted and as realized, but the partial-adoption regime --- where pooled tours are most frequent --- is not yet, so its figures remain predictions (Section~\ref{sec:results_validation}). (v) The bundle head prices $53.9\%$ of the pooled tours that occur and $27.2\%$ of the pooled cost; elsewhere a pooled tour is charged as the sum of its members' single-cell prices, which is conservative but coarse, and the certification is specific to this region's cell geometry. (vi) Fleet accounting changed with the tour rule, so fleet-smoothness figures are comparable within a grid version but not across versions. The methodological caveat concerns feature construction: for six of the seven providers the per-stop demand array falls back to one parcel per demand point, so two of the $25$ features are populated differently at run time than during training. The deployed model was validated end-to-end in exactly this state ($3.51\%$ MAPE at $+3.05\%$ bias over $7{,}609$ solver-routed instances, Section~\ref{sec:results_validation}), so the reported numbers stand, but the skew costs accuracy that a re-trained model would recover.
++Six limitations and one methodological caveat bound these results. (i) The operator-lens outcome is shaped by depot structure, and one carrier dominates it: eight of DHL's sixteen depots serve a single cell, and DHL operates the only multi-depot network in the case study. The rotation mechanism is therefore evidenced within a single carrier's network, and neither its magnitude nor its generality can be established from these data. (ii) Pooling is strictly within a depot, since every tour starts and ends at the depot of its cells, so the model cannot exploit cooperation between neighbouring depots or between providers; lifting that restriction is the most promising direction for future work and would raise the achievable savings. (iii) Stage~2 is a local search, and we report its gap to the flat-profile bound rather than claiming optimality. (iv) All optimization is surrogate-based. The full-adoption plans are now solver-validated and their savings are reported both as predicted and as realized, but the partial-adoption regime --- where pooled tours are most frequent --- is not yet, so its figures remain predictions (Section~\ref{sec:results_validation}). (v) The bundle head prices $53.9\%$ of the pooled tours that occur and $27.2\%$ of the pooled cost; elsewhere a pooled tour is charged as the sum of its members' single-cell prices, which is conservative but coarse, and the certification is specific to this region's cell geometry. (vi) Fleet accounting changed with the tour rule: the baseline Monday--Saturday coefficient of variation is $0.139$ here against $0.135$ in the submitted version, so fleet-smoothness figures are not comparable across grid versions. All levels, in both lenses, also inherit the label cost model's labour double count, which leaves savings unaffected (Supplementary Section~S2). The methodological caveat concerns feature construction: for six of the seven providers the per-stop demand array falls back to one parcel per demand point, so two of the $25$ features are populated differently at run time than during training. The deployed model was validated end-to-end in exactly this state ($3.51\%$ MAPE at $+3.05\%$ bias over $7{,}609$ solver-routed instances, Section~\ref{sec:results_validation}), so the reported numbers stand, but the skew costs accuracy that a re-trained model would recover.
  
  
  
-@@ -527,11 +527,11 @@ Six limitations and one methodological caveat bound these results. (i) The opera
+@@ -532,11 +532,11 @@ Six limitations and one methodological caveat bound these results. (i) The opera
  \section{Conclusion}
  \label{concl}
  
@@ -402,8 +394,8 @@ index 7780222..ee696b5 100644
 -The central result of this revision is that the answer depends on the cost lens. Under a routing lens that charges every vehicle-day in full, the cost-optimal plan saves $22.6\%$ at full adoption. Under an operator lens, in which drivers are employed for the week and only the depot peak carries the fixed bill, the very same plan is $8.4\%$ worse than daily delivery, because its two-day patterns raise the summed depot peak by $34.5\%$. Re-optimizing the second stage in the operator's own currency --- a frequency-free local search that accepts a move only if variable cost, peak cost, and waiting penalty jointly fall --- turns this into $24.3\%$ of operator saving at a $16.9\%$ lower summed depot peak, for $2.7$~pp of forgone routing saving. Consolidation pays in the operator lens where a depot can rotate delivery days across several cells; where a depot serves a single cell it returns to near-daily delivery, because there consolidation saves kilometres but no fleet.
 +The central result of this revision is that the answer depends on the cost lens. Under a routing lens that charges every vehicle-day in full, the cost-optimal plan saves $22.6\%$ at full adoption; under an operator lens, in which drivers are employed for the week and only the depot peak carries the fixed bill, the very same plan is $8.4\%$ worse than daily delivery, because its two-day patterns raise the summed depot peak by a third. Re-optimizing the second stage in the operator's own currency --- a frequency-free local search that accepts a move only if variable cost, peak cost and waiting penalty jointly fall --- turns this into $24.3\%$ of operator saving at a $16.9\%$ lower summed depot peak, for $2.7$~pp of forgone routing saving.
  
--On cost alone each lens, read on its own plan, prefers the cost-optimal extreme, by $3.9$~pp in the routing lens and $1.7$~pp in the operator lens. We nevertheless recommend $P = 0.25$~\euro/p/d, which retains $22.6\%$ of operator saving at half the additional wait and a slightly deeper peak reduction, and which a flat $0.50$~\euro\ discount per delayed parcel turns into the best point on the grid outright in the operator lens, by $0.8$~pp, with the routing lens rating it level with $P = 0.5$. Per-LSP chord-distance optima still sort the operators into service-bound, hybrid, and cost-aggressive classes in the routing lens, but the sorting is itself lens-dependent: under the operator lens two carriers move up one class and a third leaves the class band entirely. Where consolidation is worth having is set by geography and by depot structure together: it pays most in sparse cells far from the depot, and it pays in the operator lens where a depot can rotate delivery days across several cells, while in the one multi-depot network of the case study a depot serving a single cell saves kilometres but no fleet. For practice this suggests differentiating the service by provider and depot rather than offering it uniformly, and --- decisively --- planning the weekly roster together with the schedule, because a plan that is cost-optimal per day can be loss-making per week. Validation relies on VROOM as a routing benchmark rather than on ground truth, and the partial-adoption regime with pooled tours is not yet solver-validated. Pooling also remains within a depot, so inter-depot and inter-provider cooperation, which could amplify the gains, is left to future work.
-+On cost alone each lens, read on its own plan, prefers the cost-optimal extreme. We nevertheless recommend $P = 0.25$~\euro/p/d, which retains $22.6\%$ of operator saving at half the additional wait and a slightly deeper peak reduction, and which a flat $0.50$~\euro\ discount per delayed parcel turns into the best point on the grid outright in the operator lens. Per-LSP chord-distance optima still sort the operators into service-bound, hybrid and cost-aggressive classes in the routing lens, but the sorting is itself lens-dependent: under the operator lens two carriers move up one class and a third leaves the class band entirely. Where consolidation is worth having is set by geography and by depot structure together: it pays most in sparse cells far from the depot, and in the operator lens where a depot can rotate delivery days across several cells. For practice this suggests differentiating the service by provider and depot rather than offering it uniformly and --- decisively --- planning the weekly roster together with the schedule, because a plan that is cost-optimal per day can be loss-making per week. Validation rests on VROOM rather than ground truth, the partial-adoption regime is not yet solver-validated, and pooling remains within a depot, so inter-depot and inter-provider cooperation is left to future work.
+-On cost alone each lens, read on its own plan, prefers the cost-optimal extreme, by $3.9$~pp in the routing lens and $1.7$~pp in the operator lens. We nevertheless recommend $P = 0.25$~\euro/p/d, which retains $22.6\%$ of operator saving at half the additional wait and a slightly deeper peak reduction, and which a flat $0.50$~\euro\ discount per delayed parcel turns into the best point on the grid outright in the operator lens, by $0.8$~pp, with the routing lens rating it level with $P = 0.5$. Per-LSP chord-distance optima still sort the operators into service-bound, hybrid, and cost-aggressive classes in the routing lens, but the sorting is itself lens-dependent: under the operator lens two carriers move up one class and a third leaves the class band entirely. Where consolidation is worth having is set by geography and by depot structure together: it pays most in sparse cells far from the depot, and it pays in the operator lens where a depot can rotate delivery days across several cells, while in the one multi-depot network of the case study a depot serving a single cell saves kilometres but no fleet. For practice this suggests differentiating the service by provider and depot rather than offering it uniformly, and --- decisively --- planning the weekly roster together with the schedule, because a plan that is cost-optimal per day can be loss-making per week. All figures above are the surrogate's; re-routing them puts the realized savings $1.3$ to $3.7$~pp lower (Section~\ref{sec:results_validation}). Validation relies on VROOM as a routing benchmark rather than on ground truth, and the partial-adoption regime with pooled tours is not yet solver-validated. Pooling also remains within a depot, so inter-depot and inter-provider cooperation, which could amplify the gains, is left to future work.
++On cost alone each lens, read on its own plan, prefers the cost-optimal extreme. We nevertheless recommend $P = 0.25$~\euro/p/d, which retains $22.6\%$ of operator saving at half the additional wait and a slightly deeper peak reduction, and which a flat $0.50$~\euro\ discount per delayed parcel turns into the best point on the grid outright in the operator lens. Per-LSP chord-distance optima still sort the operators into service-bound, hybrid and cost-aggressive classes in the routing lens, but the sorting is itself lens-dependent: under the operator lens two carriers move up one class and a third leaves the class band entirely. Where consolidation is worth having is set by geography and by depot structure together: it pays most in sparse cells far from the depot, and in the operator lens where a depot can rotate delivery days across several cells. For practice this suggests differentiating the service by provider and depot rather than offering it uniformly and --- decisively --- planning the weekly roster together with the schedule, because a plan that is cost-optimal per day can be loss-making per week. All figures above are the surrogate's; re-routing them puts the realized savings $1.3$ to $3.7$~pp lower (Section~\ref{sec:results_validation}). Pooling remains within a depot, so inter-depot and inter-provider cooperation is left to future work.
  
  
  
