@@ -55,6 +55,10 @@ MISSING = "#e6e6e6"        # areas outside the model, as in the paper's maps
 
 # Colormaps, per quantity, exactly as the paper uses them.
 CMAP_SAVING = "viridis"    # fig 5 (a), (b): cost saving
+CMAP_SAVING_MAP = "YlGn"   # per-area saving CHOROPLETHS (76_maps_v2): the
+                           # legacy fig71 ramp, light yellow -> dark green, so
+                           # "no saving" reads as pale, not as a dark colour,
+                           # and white polygon edges stay visible everywhere
 CMAP_WAIT = "YlOrRd"       # fig 5 (c): additional customer wait
 CMAP_FLEET = "magma"       # fig 5 (d), (e): peak-fleet and CV reduction
 CMAP_CHANGE = "RdBu_r"     # fig 5 (f): signed total fleet change
