@@ -84,6 +84,16 @@ rcParams.update({
     "savefig.bbox": "tight", "savefig.dpi": 300, "pdf.fonttype": 42,
 })
 
+# Matplotlib stamps a /CreationDate into every PDF and a timestamp into
+# every PNG, so two renders of identical content get different md5s. This
+# builder is invoked by 74_v2_to_legacy_tables.py's render() (in turn
+# called from 70_figs_tables_v2.py), whose manifest and gate G7
+# (71_sync_paper_figs.py) are md5-based, so both are suppressed here
+# exactly as 70_figs_tables_v2.py suppresses them: a re-render of
+# unchanged inputs must be byte-identical, not merely content-identical.
+_PDF_META = {"CreationDate": None}
+_PNG_META = {"Software": None}
+
 RAUMTYP_PAL = {
     "urban":    "#1d3557",
     "suburban": "#2a9d8f",
@@ -371,9 +381,9 @@ def main():
 
     fig.tight_layout(pad=0.8, w_pad=1.6, h_pad=1.6)
 
-    for ext in ("png", "pdf"):
+    for ext, meta in (("png", _PNG_META), ("pdf", _PDF_META)):
         fig.savefig(OUT / f"fig6_structural_grid_6_smoothed.{ext}",
-                     bbox_inches="tight")
+                     bbox_inches="tight", metadata=meta)
     plt.close(fig)
     print(f"saved {OUT/'fig6_structural_grid_6_smoothed.png'}")
 

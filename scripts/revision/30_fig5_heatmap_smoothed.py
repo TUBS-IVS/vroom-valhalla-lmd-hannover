@@ -81,6 +81,16 @@ rcParams.update({
     "savefig.bbox": "tight", "savefig.dpi": 300, "pdf.fonttype": 42,
 })
 
+# Matplotlib stamps a /CreationDate into every PDF and a timestamp into
+# every PNG, so two renders of identical content get different md5s. This
+# builder is invoked by 74_v2_to_legacy_tables.py's render() (in turn
+# called from 70_figs_tables_v2.py), whose manifest and gate G7
+# (71_sync_paper_figs.py) are md5-based, so both are suppressed here
+# exactly as 70_figs_tables_v2.py suppresses them: a re-render of
+# unchanged inputs must be byte-identical, not merely content-identical.
+_PDF_META = {"CreationDate": None}
+_PNG_META = {"Software": None}
+
 BASE_TOTAL = C.BASE_TOTAL  # daily-delivery weekly cost across all providers
 SUFFIX = "(operator plan)"
 
@@ -267,9 +277,9 @@ def main():
              f" (weekly cost {BASE_TOTAL:,.0f} EUR, Mo-Sa fleet CV {base_cv:.3f}).",
              ha="center", va="bottom", fontsize=11)
 
-    for ext in ("png", "pdf"):
+    for ext, meta in (("png", _PNG_META), ("pdf", _PDF_META)):
         fig.savefig(OUT / f"fig5_grid_heatmap_6_smoothed.{ext}",
-                     bbox_inches="tight")
+                     bbox_inches="tight", metadata=meta)
     plt.close(fig)
     print(f"saved {OUT/'fig5_grid_heatmap_6_smoothed.png'}")
 

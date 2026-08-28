@@ -512,6 +512,39 @@ def test_frozen_builder_warning_fires_before_any_filterwarnings(relpath):
 
 
 # ═════════════════════════════════════════════════════════════════════════
+# Task 13F: matplotlib stamps a /CreationDate into every PDF and a
+# timestamp into every PNG, so two renders of BYTE-IDENTICAL content used
+# to get different md5s -- gate G7 (71_sync_paper_figs.py) then FAILed a
+# re-render of unchanged inputs even though content, size and pdftotext
+# output all matched. 70_figs_tables_v2.py already suppresses both stamps
+# for its own figures via module-level ``_PDF_META``/``_PNG_META`` dicts
+# passed as ``metadata=`` to ``fig.savefig``; these three frozen builders
+# now mirror that exactly. Static source checks only, same reasoning as
+# test_frozen_builder_script_py_compiles above: rendering them for real
+# needs the Stage-3 checkpoints/CSVs, not a synthetic frame, and the
+# geometry/text/DPI/bbox/font pins are unaffected (proved by the unchanged
+# label/geometry tests below and by py_compile).
+# ═════════════════════════════════════════════════════════════════════════
+@pytest.mark.parametrize("relpath", FROZEN_BUILDER_SCRIPTS)
+def test_frozen_builder_pins_pdf_and_png_metadata_for_byte_stable_renders(
+        relpath):
+    src = (ROOT / relpath).read_text(encoding="utf-8")
+    assert '_PDF_META = {"CreationDate": None}' in src, (
+        f"{relpath}: missing the _PDF_META CreationDate suppression")
+    assert '_PNG_META = {"Software": None}' in src, (
+        f"{relpath}: missing the _PNG_META Software suppression")
+    assert src.count(".savefig(") == 1, (
+        f"{relpath}: expected exactly one savefig call site")
+    assert "metadata=meta" in src, (
+        f"{relpath}: the savefig call does not pass metadata=meta")
+    # PNG must be handed the PNG metadata and PDF the PDF metadata -- not
+    # swapped, which would silently defeat the suppression for both exts.
+    assert '(("png", _PNG_META), ("pdf", _PDF_META))' in src, (
+        f"{relpath}: savefig loop does not pair each ext with its own "
+        "metadata dict")
+
+
+# ═════════════════════════════════════════════════════════════════════════
 # 30_/31_/32_: in-figure LABEL STRINGS follow the revised pipeline (2026-08
 # revision, Task 13D). The paper is accepted, so geometry/colour/size/panel
 # order of these frozen builders must not move -- that is proven separately
