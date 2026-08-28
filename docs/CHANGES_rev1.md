@@ -6,7 +6,7 @@ Scope: the changes the 2026-08 model revision forces on
 reviewer-response round (11 reviewer points, mirrored into the preprint on
 2026-08-18). Nothing there is retracted; everything here is on top of it.
 
-**Status: PART C done.** Sections A-D record part A (v5 grid), section F
+**Status: PART C done, fix round 2 applied.** Sections A-D record part A (v5 grid), section F
 part B (grid v6), section G part C (the v6 VROOM validation and the part-B
 review fixes). **Later sections win**: where A-D, F and G disagree, G is
 authoritative, then F. No `\provisional{}` marker remains; the macro is
@@ -909,3 +909,82 @@ Not applied. The review's §6.3 cut list is prepared as
    supplementary reaches them through its relative path.
 4. HAGRID acronym, the Elsevier 8-page check, the stale `%TODO` headers, the
    human read-through.
+
+---
+
+## G7 — Fix round 2 (`task-14c-review.md`, verdict SPEC FAIL)
+
+### The blocker: three paragraphs were commented out of the printed paper
+
+Part C added five `% src:` provenance comments. **Three of them were placed at
+the start of a line that still carried body text**, and a LaTeX `%` swallows the
+rest of its line, so the printed manuscript silently lost:
+
+| site | what print lost |
+|---|---|
+| `:290` | the only in-text references to Fig. 1 and Fig. 2, the code-availability footnote, the postal-code-decomposition sentence, and the full stop ending the preceding sentence |
+| `:364` | the cross-provider independence statement, the shadow-price definition of $P$, and the definition of the entire $(P, \theta)$ grid |
+| `:497` | the equity sentence (a protected item), the per-depot mechanism sentence and its Fig. S6 pointer |
+
+Consequences measured: the bibliography fell from **23 to 21** entries
+(`BoydVandenberghe2004` and `Pereira04032017` uncited), and the "16 pages,
+unchanged" of the part-C report was an artefact — with the text live the
+document is **17 pages**. LaTeX cannot warn about this: no `\ref` breaks and
+unused `\label`s are silent.
+
+**Fixed.** Every `% src:` comment now sits on its own line; all three passages
+are restored and verified string-for-string against `32cd104`. A guard now runs
+before commit and checks four things: no comment line hides a control sequence
+(`\section|caption|label|ref|autoref|cite|citep|footnote|url|includegraphics|item|begin|end`),
+the PDF page count, `\bibitem` count = 23, and that every cited key resolves.
+Current state: **17 pages, 23 bibitems, 0 hidden control sequences, 0 unresolved
+citations.**
+
+### Number bases in the validation subsection
+
+Part C mixed two bases in one paragraph and disclosed neither. The subsection now
+states **one** basis — the *clean* basis, in which the single PARTIAL instance is
+dropped from the error statistics **and** from the cost totals — and says so, with
+the alternative given: keeping it lowers the one saving it touches from
+$20.6$ to $19.9\%$.
+
+| ID | Old | New | Recomputed value |
+|---|---|---|---|
+| **I2** | "excluded from the error statistics while remaining in the cost totals", beside a clean-basis $20.6\%$ | one named basis + the $19.9\%$ alternative | 20.580 clean / 19.930 incl. PARTIAL |
+| **I2/M3** | point gaps "$0.9$ to $2.9\%$" (PARTIAL-inclusive, routing lens only, presented after a both-lens sentence) | "$1.2$ to $2.9\%$ and $0.5$ to $2.5\%$ respectively", clean basis, both lenses named | routing +1.246…+2.855, operator +0.49…+2.54 |
+| **I3** | "The shortfall is $1.3$ to $2.5$~pp **at every point**" — contradicted four lines later by $-12.1$ vs $-8.4\%$ | "$1.3$ to $2.5$~pp for the operator-polished plan and $2.1$ to $3.7$~pp for the routing-optimal one" | operator plan 1.264–2.481; routing plan 2.057–3.726 |
+| **I4** | "never differ by more than five vehicles in a thousand" — false at the baseline | "…at the six consolidated settings, or by ten in the baseline's $1{,}239$" | baseline 1,239/1,249 = 10; max elsewhere 5 of 1,091 |
+| **I5** | "a realized $23.7\%$ against $22.8\%$ predicted" | "a realized $24.3\%$ against $22.8\%$ predicted at $P = 0$, and called the surrogate conservative" | `paper/EWGT_2026/tbc_preprint_main.tex:387`, verbatim; 23.7 % was revision 1's re-derivation |
+| **M1** | "positive in every group we can form" | "positive in every group we report" | DHL at (item 2, P = 0) is −0.29 % |
+| **M2** | the abstract's biases and §3.3's gaps are different quantities, undisclosed | "mean per-tour bias" in one, "total-cost gaps, not the mean per-tour biases above" in the other | — |
+| **M5** | the Conclusion restated the predicted figures with no upper-bound caveat | "All figures above are the surrogate's; re-routing them puts the realized savings $1.3$ to $3.7$~pp lower" | — |
+
+The same four defects were corrected in `RESPONSE_TO_REVIEWERS_skeleton.md`.
+
+### The page-budget patch, regenerated
+
+Regenerated on top of the I1 fix (the old patch would have silently locked the
+`:290` and `:497` deletions in). Four casualties from the review's §5 are
+repaired:
+
+1. **The G1a tolerance sentence stays in §2.4** — it is an explicit part-C brief
+   requirement and answers a reviewer point, so block 4 now moves only the
+   restart-stability sentence.
+2. **Block 8 is dropped.** Its premise was false: Table 1's caption carries
+   "from $P = 5$ on **it** delivers daily in all but $0.6\%$ of cells" about the
+   *routing-optimal* plan, not the operator polish's $4.8\%$ / $\bar f = 5.95$ at
+   $(5, 1)$ — a distinctive two-plan finding that would have vanished from both
+   documents.
+3. **The cross-provider independence statement is kept verbatim** in
+   Supplementary S4 (the previous version repunctuated it, which is why a search
+   found no hits).
+4. **Limitation (vi) keeps its labour clause** and the $0.139$ vs $0.135$
+   cross-version numbers; block 14 now only removes the duplicated warning.
+
+### Not fixed here
+
+`M4` — five supplementary figures (`supp_fig7_*` and the four `supp_map_*` /
+`supp_penalty_*`) still resolve through `../../results/`, so a standalone build
+of the paper folder hard-fails. They are registered in the 70_ manifest but have
+**not** appeared in `paper/EWGT_2026_rev1/figures/`; the six that 71_ does carry
+are already referenced by their destination names.

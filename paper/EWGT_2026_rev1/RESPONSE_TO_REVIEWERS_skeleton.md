@@ -234,18 +234,22 @@ routing-optimal plan at P = 0/0.25; 1 PARTIAL) changes the direction of the
 paper's accuracy statement, and the response letter must say so before a
 reviewer notices:
 
-1. **The surrogate is not conservative; it over-prices.** Bias is positive in
-   every group: +5.4 % on the daily baseline (+4.9 % single-cell, +14.5 %
-   pooled) against +2.4 % at the consolidated points. Overall 3.51 % MAPE at
-   +3.05 % bias over the 7,609 clean instances.
-2. **Predicted savings are therefore an upper bound, by 1.3 to 2.5 pp.** The
+1. **The surrogate is not conservative; it over-prices.** Mean per-tour bias is
+   positive in every group we report: +5.4 % on the daily baseline (+4.9 %
+   single-cell, +14.5 % pooled) against +2.4 % at the consolidated points.
+   Overall 3.51 % MAPE at +3.05 % bias over the 7,609 clean instances, the
+   basis used throughout (the one PARTIAL instance is dropped from the error
+   statistics and from the totals alike).
+2. **Predicted savings are therefore an upper bound** --- by 1.3 to 2.5 pp
+   for the operator-polished plan and 2.1 to 3.7 pp for the routing-optimal
+   one. The
    over-priced baseline is the denominator. Realised against predicted:
    operator plan 17.5 / 14.5 / 10.6 / 7.7 % routing saving (predicted 20.0 /
    16.7 / 12.3 / 9.0) and 22.1 / 20.7 / 16.3 / 12.8 % operator saving
    (predicted 24.3 / 22.6 / 17.8 / 14.1); routing-optimal plan 20.6 and
    16.4 % routing saving (predicted 22.6 and 18.7).
 3. **The submitted claim of conservatism is withdrawn.** The submitted version
-   reported 23.7 % realised against 22.8 % predicted. That comparison predates
+   reported 24.3 % realised against 22.8 % predicted at P = 0. That comparison predates
    the universal tour rule, and this is the first validation in which the daily
    baseline is itself solver-routed — the baseline's own over-pricing is what
    reverses the sign.
@@ -253,7 +257,7 @@ reviewer notices:
    The operator-lens penalty of the routing-optimal plan is worse in reality:
    −12.1 % against −8.4 % predicted at (0, 1). The fleet counting rule is
    near-exact: summed depot peaks never differ by more than five vehicles in a
-   thousand.
+   thousand at the consolidated points, and by ten in the baseline's 1,239.
 
 Still open: validation item 3, the partial-adoption point (P, theta) =
 (0.25, 0.5) on the operator plan.
