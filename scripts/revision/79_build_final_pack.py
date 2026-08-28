@@ -4,7 +4,7 @@ Copies (never moves, never edits) the v6 grid's figures, tables, validation
 outputs and controller analyses into a single pack, adds the paper-side
 provenance (the real 71_ sync table, the CHANGES snapshot, the compendium
 excerpt), records the presentation decks by path + md5 instead of copying
-40 MB of PowerPoint, and writes a README that lists every file with its
+48 MB of PowerPoint, and writes a README that lists every file with its
 producing script, md5, size and grid.
 
 Rules this script enforces rather than assumes:
@@ -221,7 +221,7 @@ def deck_pointers() -> tuple[str, list[dict]]:
             rows.append(dict(name=name, path=str(p), md5="MISSING", bytes=0,
                              mtime="-", locked=False))
     body = ["# Presentation decks (pointers, not copies)", "",
-            "The three revision decks are ~40 MB together, so the pack records",
+            "The three revision decks are 47.9 MB together, so the pack records",
             "where they are and what they hashed to, not the files themselves.",
             "", "| deck | md5 | MB | modified | note |", "|---|---|---:|---|---|"]
     for r in rows:
@@ -506,7 +506,7 @@ the frozen submission), the `docs/CHANGES_rev1.md` snapshot, and a verbatim
 excerpt of compendium sections 40.14-40.28, which is where every number in
 this README comes from."""),
     ("decks", """Pointers only -- paths, md5 and size of the three
-`_rev2026-08` decks, which are about 40 MB together. Per task 17 the TBC
+`_rev2026-08` decks, which are 47.9 MB together. Per task 17 the TBC
 deck and the house deck are still to be rebuilt once PowerPoint is closed;
 `DECKS.md` says which of them was locked at pack time."""),
 )
