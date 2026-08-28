@@ -146,8 +146,9 @@ GRID_TABLES = [
     "tables/tab_pstar_knees_v2.csv",
     "tables/tab_grid_full_v2.csv",
     "tables/tab_fleet_diagnostics_v2.csv",
-    "_peek/results_overview_v5.csv",
-    "_peek/discount_scenarios.csv",
+    "_peek/results_overview*.csv",
+    "_peek/discount_scenarios*.csv",
+    "tables/tab_per_cell_costs_v2.csv",
 ]
 
 
@@ -164,6 +165,16 @@ def _deck_provenance() -> list[str]:
     L = ["## Talk decks", ""]
     L.append(f"Revision grid: `{D.REV.name}` (schema {D.SCHEMA}), read via "
              f"`$PRES_REV_DIR` / `--rev-dir`.")
+    L.append("")
+    L.append(f"VROOM validation: `{D.VAL.parent.name}/validation` "
+             f"(schema {D.val_schema()}), chosen SEPARATELY via "
+             f"`$PRES_VAL_DIR` because a validation run is much longer than "
+             f"the grid it validates and the two are not in step. Realised "
+             f"saving available: "
+             f"`{D.vroom_actual_baseline_available()}` -- when False, the "
+             f"validation figures show predicted against actual COST on the "
+             f"same tours, never a saving formed from an actual numerator and "
+             f"a predicted denominator.")
     L.append("")
     L.append(f"Repository commit at manifest time: `{D._git_head()}`.")
     L.append("")
@@ -193,12 +204,17 @@ def _deck_provenance() -> list[str]:
     L.append("| Table | Bytes | md5 |")
     L.append("|---|---|---|")
     for rel in GRID_TABLES:
-        f = D.REV / rel
-        if not f.exists():
+        # a pattern, because the peek files carry their grid version in the
+        # name (results_overview_v5.csv, results_overview_v6.csv, ...)
+        hits = sorted(D.REV.glob(rel)) if "*" in rel else (
+            [D.REV / rel] if (D.REV / rel).exists() else [])
+        if not hits:
             L.append(f"| `{rel}` | missing | - |")
             continue
-        size = f"{f.stat().st_size:,}".replace(",", " ")
-        L.append(f"| `{rel}` | {size} | `{_md5(f)}` |")
+        for f in hits:
+            rel_name = f.relative_to(D.REV).as_posix()
+            size = f"{f.stat().st_size:,}".replace(",", " ")
+            L.append(f"| `{rel_name}` | {size} | `{_md5(f)}` |")
     L.append("")
     L.append("Pinned to the submission grid on purpose, whatever `PRES_REV_DIR` "
              "says: `load_alpha_sensitivity()`, `load_cd_restart_spread()`, "

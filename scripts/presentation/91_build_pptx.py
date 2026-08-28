@@ -653,7 +653,7 @@ def part_revision(prs, f, RV, *, tag: bool = True):
               (f"{_fl.loc[0.5]:.2f}%", "at θ = 50 %", False),
               (f"{_fl.loc[1.0]:.2f}%", "at full adoption", True)],
           BODY_T + 3.70, h=1.00, sz=36)
-    mark(s, RV.TOUR_RULE_NOTES, ["§40.7", "§40.8", "§40.9"])
+    mark(s, RV.TOUR_RULE_NOTES, RV.cites("§40.7", "§40.8", "§40.9"))
 
     # ── 2 · two cost lenses ───────────────────────────────────────────────
     s = new_slide(prs, "Revision · 2", "One euro is not one euro",
@@ -667,7 +667,7 @@ def part_revision(prs, f, RV, *, tag: bool = True):
                 "the peak only the kilometres are a real outlay.",
                 "A vehicle taken out of a hub's peak is worth 1 134.90 € a "
                 "week."], _y + 0.28, h=2.0)
-    mark(s, RV.LENS_NOTES, ["§40.11", "§40.12"])
+    mark(s, RV.LENS_NOTES, RV.cites("§40.11", "§40.12"))
 
     # ── 3 · two plans ─────────────────────────────────────────────────────
     h0 = f.headline[0.0]
@@ -688,9 +688,10 @@ def part_revision(prs, f, RV, *, tag: bool = True):
                 SZ_LEAD, True, RED)], line_col=RED)
     bullets(s, ["Stage 2 may now change how OFTEN an area is served, not "
                 "only on which days.",
-                "That is what turns −7.8 % into 24.7 % — and it shortens the "
-                "wait at the same time."], _y + 1.38, h=1.18)
-    mark(s, RV.PLAN_NOTES, ["§40.14", "§40.15"])
+                f"That is what turns {h0['op1']:.1f} % into "
+                f"{h0['op2']:.1f} % — and it shortens the wait at the same "
+                f"time."], _y + 1.38, h=1.18)
+    mark(s, RV.plan_notes(f), RV.cites("§40.14"))
 
     # ── 4 · the one-cell depot ────────────────────────────────────────────
     s = new_slide(prs, "Revision · 4",
@@ -724,7 +725,7 @@ def part_revision(prs, f, RV, *, tag: bool = True):
                 "Consolidation buys fleet where a depot rotates days across "
                 "areas; elsewhere it buys kilometres."],
              BODY_T + 2 * ROW + 0.10, h=1.45)
-    mark(s, RV.ONE_CELL_NOTES, ["§40.14", "§40.18"])
+    mark(s, RV.ONE_CELL_NOTES, RV.cites("§40.14"))
 
     # ── 5 · the operator headline ─────────────────────────────────────────
     s = new_slide(prs, "Revision · 5",
@@ -741,8 +742,10 @@ def part_revision(prs, f, RV, *, tag: bool = True):
                 f"{h0['rout1']:.1f} % at the routing optimum.",
                 f"That same plan costs an operator {abs(h0['op1']):.1f} % MORE "
                 f"than delivering daily.",
-                "The polished plan gives up 2.7 points of routing saving and "
-                "buys 32 points of operator saving."],
+                f"The polished plan gives up "
+                f"{h0['rout1'] - h0['rout2']:.1f} points of routing saving "
+                f"and buys {h0['op2'] - h0['op1']:.1f} points of operator "
+                f"saving."],
              BODY_T + 1.85, h=2.4)
     mark(s, "The revision's headline number. The routing lens is the one "
             "comparable with the submission; the operator lens is the one an "
@@ -772,10 +775,12 @@ def part_revision(prs, f, RV, *, tag: bool = True):
                 "is one plan family, not two.",
                 "P = 0 wins on paper; P = 0.25 is the point to defend in "
                 "front of a customer."], _y + 1.38, h=1.18)
-    mark(s, "At P = 0 the operator lens is 24.7 % against 22.8 % at P = 0.25, "
-            "but the wait is 0.77 d against 0.39 d and the peak cut is the "
-            "same. The knee of the front stays at P = 0.25.",
-         ["§40.15", "§40.18"])
+    mark(s, f"At P = 0 the operator lens is {h0['op2']:.1f} % against "
+            f"{r['op2']:.1f} % at P = 0.25, but the wait is "
+            f"{h0['wait2']:.2f} d against {r['wait2']:.2f} d "
+            f"({(1 - r['wait2'] / h0['wait2']) * 100:.0f} % less) and the peak "
+            f"cut is the same. The knee of the front stays at P = 0.25.",
+         RV.cites())
 
     # ── 7 · the knee is lens-dependent ────────────────────────────────────
     s = new_slide(prs, "Revision · 7", "The knee depends on which lens you use",
@@ -789,11 +794,9 @@ def part_revision(prs, f, RV, *, tag: bool = True):
             (r0[4], "num" if r0[3] != r0[4] else "body")]
            for r0 in RV.pstar_rows(f)],
           BODY_T, widths=[1.9, 2.5, 2.6, 2.6, 2.6], reserve=1.15)
-    txt(s, L, BODY_B - 0.90, W, 0.80,
-        "Three LSPs move up one class in the operator lens: peak smoothing "
-        "only starts to pay at a higher penalty.", SZ_LEAD, bold=True,
-        color=RED, line=1.25)
-    mark(s, RV.PSTAR_NOTES, "§40.18")
+    txt(s, L, BODY_B - 1.28, W, 1.22, RV.pstar_headline(f), SZ_LEAD,
+        bold=True, color=RED, line=1.25)
+    mark(s, RV.pstar_notes(f), RV.cites())
 
     # ── 8 · partial adoption ──────────────────────────────────────────────
     rows = {th: (a, b) for th, a, b in f.partial_adoption(0.0)}
@@ -812,10 +815,12 @@ def part_revision(prs, f, RV, *, tag: bool = True):
                 "that is what an operator staffs for.",
                 "Nowhere in the grid is the operator lens negative at P = 0."],
              _y + 0.26, h=1.70)
-    mark(s, "Partial adoption is positive only in the operator lens: routing "
-            "saving 0.4-4.6 % against operator saving 3.9 % at θ = 0.1 rising "
-            "to 11.0 % at θ = 0.8, and never negative (the previous grid "
-            "reached −2.1 % at θ = 0.9).", "§40.15")
+    _rv = [v[0] for v in rows.values()]
+    _ov = [v[1] for v in rows.values()]
+    mark(s, f"Partial adoption is positive only in the operator lens: routing "
+            f"saving {min(_rv):.1f}-{max(_rv):.1f} % against operator saving "
+            f"{min(_ov):.1f}-{max(_ov):.1f} % across theta, and never negative "
+            f"at P = 0.", RV.cites())
 
     # ── 9 · the penalty as a real payout ──────────────────────────────────
     s = new_slide(prs, "Revision · 9",
@@ -823,20 +828,15 @@ def part_revision(prs, f, RV, *, tag: bool = True):
                   "θ = 100 %, operator-polished plan. Flat discount = 0.50 € "
                   "per delayed willing parcel; delayed parcels are demand on "
                   "non-delivery days times the willing share.")
-    _opt = RV.discount_optima(f)
     table(s, ["Operating point", "Delayed parcels/wk", "Saving, shadow price",
               "Net after 0.50 €, operator lens",
               "Net after 0.50 €, routing lens", "Break-even discount"],
           [[(r0[0], "key"), r0[1], r0[2], (r0[3], "num"), (r0[4], "num"),
             r0[5]] for r0 in RV.discount_rows(f)],
           BODY_T, widths=[1.9, 2.1, 2.1, 2.2, 2.2, 2.0], reserve=1.15)
-    txt(s, L, BODY_B - 0.90, W, 0.80,
-        f"Read as a payout the penalty halves the saving — and the optimum is "
-        f"lens-specific: P = {_opt['operator'][0]:g} in the operator lens "
-        f"({_opt['operator'][1]:.1f} %), P = {_opt['routing'][0]:g} in the "
-        f"routing lens ({_opt['routing'][1]:.1f} %).", SZ_LEAD, bold=True,
-        color=RED, line=1.25)
-    mark(s, RV.DISCOUNT_NOTES, "§40.17")
+    txt(s, L, BODY_B - 1.28, W, 1.22, RV.discount_optimum_line(f), SZ_LEAD,
+        bold=True, color=RED, line=1.25)
+    mark(s, RV.discount_notes(f), RV.cites("§40.17"))
     return prs
 
 
@@ -866,7 +866,7 @@ def slide_bulge_replacement(prs, f, RV, *, tag: bool = True):
                 "operator would dispatch.",
                 "The P · θ reading of that slide is withdrawn."],
              _y + 1.34, h=1.05)
-    RV.notes(s, RV.BULGE_NOTES, cite=["§40.7", "§40.8", "§40.15"])
+    RV.notes(s, RV.bulge_notes(f), cite=RV.cites("§40.7", "§40.8"))
     RV.provisional(s, enabled=tag)
     return s
 
@@ -2150,7 +2150,7 @@ def build(out: Path, keep_template_slides: bool, *, facts=None,
                     f"{_k.loc['DHL', 'saving_pct_routing']:.1f} % — against "
                     f"{_k.loc['GLS', 'saving_pct_routing']:.1f} % for GLS."],
                 BODY_T + 2.90, h=2.2)
-        revision.notes(s, revision.PSTAR_NOTES, cite="§40.18")
+        revision.notes(s, revision.pstar_notes(facts), cite=revision.cites())
         revision.provisional(s, enabled=tag)
     else:
         bullets(s, ["Tolerance for waiting tracks how much a network gains.",
@@ -2350,6 +2350,9 @@ def build(out: Path, keep_template_slides: bool, *, facts=None,
                  "below."),
                 ("fig93_mean_days", "Mean delivery days per area",
                  "Revision grid, both plans."),
+                ("fig95_operator_lens", "The operator lens on its own",
+                 "Revision grid: the operator-cost view without the routing "
+                 "lens beside it."),
                 ("fig94_structural_two_lenses",
                  "Fronts, knees and structure",
                  "Revision grid. Panel (f) is a within-DHL statement: the "

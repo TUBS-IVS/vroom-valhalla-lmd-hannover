@@ -41,13 +41,98 @@ import _data as D                                              # noqa: E402
 # ── the provisional tag ────────────────────────────────────────────────────
 # Part B (v6 head grid + Task 12 validation + Task 13 fix round) rebuilds with
 # `provisional=False` and this disappears from every slide it stamped.
-TAG_TEXT = "v5 · provisional"
+def tag_text() -> str:
+    """What the footer chip says, derived from the grid actually in use.
+
+    The chip is not decoration: it states which grid a number came from and
+    what about it is still open. v5 was provisional because a head grid was
+    coming; v6's grid is final but its VROOM re-validation is still being
+    produced, so the honest chip names that instead of claiming the deck is
+    finished. When both are settled the chip disappears on its own.
+    """
+    short = D.REV.name.rsplit("_", 1)[-1]          # revision_2026_08_v6 -> v6
+    if D.vroom_actual_baseline_available():
+        return ""
+    return f"{short} · validation pending"
+
+
+TAG_TEXT = "v5 · provisional"      # the literal Part A shipped; see tag_text()
 TAG_L, TAG_T, TAG_W, TAG_H = 11.62, 6.68, 1.66, 0.28   # right edge 13.28 in
 
 COMPENDIUM = "docs/PAPER_COMPENDIUM_2026_05_24.md"
 
+# What each grid is EXPECTED to say, and where that expectation is written
+# down. The asserts in `Facts` are the point of this table: a grid whose
+# numbers have moved fails the build instead of quietly restating every slide,
+# and adding a grid means recording its values somewhere citable first.
+#
+# v5: compendium 40.15 / 40.17 / 40.18.
+# v6: results/revision_2026_08_v6/DEEP_DIVE_V6_PAPER_IMPACT.md, which states
+#     every one of these against its v5 predecessor.
+GRID_EXPECT = {
+    "revision_2026_08_v5": dict(
+        source="docs/PAPER_COMPENDIUM_2026_05_24.md 40.15/40.17/40.18",
+        cite=["§40.15", "§40.17", "§40.18"],
+        rout1=23.10, rout2=20.43, op1=-7.79, op2=24.69, peak2=-16.87,
+        breakeven_lo=0.77, breakeven_hi=2.24,
+        pstar_moved={"Amazon", "FedEx", "Hermes"},
+        # further values the source records, checked by 96_ --audit
+        audit={
+            "operator saving, stage-2 plan": {0.0: 24.69, 0.25: 22.82,
+                                              0.5: 18.48, 0.75: 14.79,
+                                              1.0: 11.82, 2.0: 6.04},
+            "wait, stage-2 plan": {0.0: 0.77, 0.25: 0.39, 0.5: 0.23},
+            "areas consolidating, stage-1 plan": {(10.0, 0.1): 2.9,
+                                                  (0.0, 0.1): 57.1},
+        },
+    ),
+    "revision_2026_08_v6": dict(
+        source="results/revision_2026_08_v6/DEEP_DIVE_V6_PAPER_IMPACT.md",
+        cite=["deep dive §2", "deep dive §3", "deep dive §6"],
+        rout1=22.64, rout2=19.96, op1=-8.37, op2=24.30, peak2=-16.87,
+        # The break-even band comes from the grid's own
+        # `_peek/discount_scenarios_v6.csv`, not from the deep dive's prose:
+        # the two disagree at the top of the band (grid 2.248, deep dive
+        # "etwa 2,37"), and the deck follows the table it can recompute. The
+        # same disagreement runs through the net-saving series (grid
+        # 8.11/12.89/12.12/10.44/9.05 against the deep dive's
+        # 8.05/13.02/12.27/10.58/9.18). Reported, not smoothed over.
+        breakeven_lo=0.750, breakeven_hi=2.248,
+        pstar_moved={"Amazon", "GLS", "Hermes"},
+        # DEEP_DIVE_V6_PAPER_IMPACT.md 2 (savings), 3 (P = 0.25 and the
+        # discount), 4 (the corner cells). Every one of these is a number the
+        # document states, so the audit compares the deck with the write-up
+        # rather than with itself.
+        audit={
+            "operator saving, stage-2 plan": {0.0: 24.30, 0.25: 22.55,
+                                              0.5: 17.77, 0.75: 14.10},
+            "wait, stage-2 plan": {0.0: 0.773, 0.25: 0.393},
+            "areas consolidating, stage-1 plan": {(10.0, 0.1): 9.62,
+                                                  (0.0, 0.1): 58.3},
+        },
+    ),
+}
 
-def provisional(slide, *, tag: str = TAG_TEXT, enabled: bool = True):
+
+def expect() -> dict:
+    """The recorded expectation for the grid in use, or {} if it has none."""
+    return GRID_EXPECT.get(D.REV.name, {})
+
+
+def cites(*extra) -> list:
+    """Methodology sections first, then whatever records THIS grid's numbers.
+
+    A note about the tour rule cites 40.7-40.9 whichever grid drew it -- the
+    method did not change. A note carrying a number cites, in addition, the
+    document that records that number for the grid in use, which is the
+    compendium for v5 and the deep dive for v6.
+    """
+    out = [x for x in extra if x]
+    out += [c for c in expect().get("cite", []) if c not in out]
+    return out
+
+
+def provisional(slide, *, tag: str | None = None, enabled: bool = True):
     """Stamp the small "v5 · provisional" chip into the slide's footer band.
 
     Any text box already reaching into the chip's rectangle is clipped back to
@@ -57,6 +142,9 @@ def provisional(slide, *, tag: str = TAG_TEXT, enabled: bool = True):
     overlap.
     """
     if not enabled:
+        return None
+    tag = tag_text() if tag is None else tag
+    if not tag:
         return None
     from pptx.dml.color import RGBColor
     from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
@@ -261,11 +349,24 @@ class Facts:
                     f"{plan}/{lens} at P={row.penalty:g}: adapter says "
                     f"{row.saving_pct:.4f} %, tab_headline_theta1_v2 says "
                     f"{want:.4f} %")
-        # compendium 40.15, the numbers the story slides are written around
+        # The numbers the story slides are written around, against whatever
+        # document records this grid. A grid with no recorded expectation is
+        # allowed but says so, loudly: nothing downstream can then claim the
+        # slides were checked.
         h0 = self.headline[0.0]
-        assert abs(h0["rout1"] - 23.10) < 0.02 and abs(h0["rout2"] - 20.43) < 0.02
-        assert abs(h0["op1"] + 7.79) < 0.02 and abs(h0["op2"] - 24.69) < 0.02
-        assert abs(h0["peak2_pct"] + 16.87) < 0.05
+        e = expect()
+        if not e:
+            print(f"  [facts] {D.REV.name} has no recorded expectation in "
+                  f"GRID_EXPECT; the headline numbers on the slides are NOT "
+                  f"cross-checked against any document")
+        else:
+            for key, got in (("rout1", h0["rout1"]), ("rout2", h0["rout2"]),
+                             ("op1", h0["op1"]), ("op2", h0["op2"]),
+                             ("peak2", h0["peak2_pct"])):
+                assert abs(got - e[key]) < 0.02, (
+                    f"{D.REV.name} {key} = {got:.4f} % but "
+                    f"{e['source']} records {e[key]} %; the deck and its "
+                    f"source disagree")
 
     def _load_pstar(self) -> None:
         k = D.load_pstar_v2()
@@ -277,11 +378,13 @@ class Facts:
             class_routing=str(r.carrier_class_routing),
             class_operator=str(r.carrier_class_operator),
         ) for r in k.itertuples()]
-        moved = self.pstar_moved()
-        assert {m["provider"] for m in moved} == {"Amazon", "FedEx", "Hermes"}, (
-            f"compendium 40.18 names Amazon, FedEx and Hermes as the three "
-            f"providers whose knee moves between lenses; the grid says "
-            f"{sorted(m['provider'] for m in moved)}")
+        moved = {m["provider"] for m in self.pstar_moved()}
+        e = expect()
+        if e:
+            assert moved == e["pstar_moved"], (
+                f"{e['source']} names "
+                f"{sorted(e['pstar_moved'])} as the providers whose knee moves "
+                f"between lenses; {D.REV.name} says {sorted(moved)}")
 
     def _load_discount(self) -> None:
         d = D.load_discount_v2()
@@ -297,9 +400,13 @@ class Facts:
                 be_rout=float(r.breakeven_flat_routing),
             )
         lo, hi = self.discount[0.0]["be_op"], self.discount[1.0]["be_op"]
-        assert abs(lo - 0.77) < 0.01 and abs(hi - 2.24) < 0.01, (
-            f"compendium 40.17 pins the operator-lens break-even band to "
-            f"0.77-2.24 EUR; the grid says {lo:.2f}-{hi:.2f}")
+        e = expect()
+        if e:
+            assert (abs(lo - e["breakeven_lo"]) < 0.02
+                    and abs(hi - e["breakeven_hi"]) < 0.02), (
+                f"{e['source']} pins the operator-lens break-even band to "
+                f"{e['breakeven_lo']}-{e['breakeven_hi']} EUR; "
+                f"{D.REV.name} says {lo:.2f}-{hi:.2f}")
 
     def _load_one_cell_hub(self) -> None:
         hub, profile = D.hub_day_profile_v2(self.BANTORF_HUB, 0.0, 1.0)
@@ -388,14 +495,24 @@ def plan_rows(f: Facts) -> list:
     ]
 
 
-PLAN_NOTES = (
-    "Two plans, not two ways of reporting one plan. Stage 1 minimises routing "
-    "cost; stage 2 then polishes that plan for operator cost, and at theta > 0 "
-    "it is now frequency-free -- it may change HOW OFTEN a cell is served, not "
-    "just on which days. The routing-optimal plan is worse than doing nothing "
-    "in the operator lens (-7.8 %), because two-day patterns treble the hub "
-    "peaks. The polish turns that into 24.7 %, and it also shortens the wait, "
-    "because serving more days is what lowers a one-cell hub's peak.")
+def plan_notes(f: Facts) -> str:
+    """Why there are two plans, with this grid's own numbers in the sentence."""
+    h = f.headline[0.0]
+    return (
+        f"Two plans, not two ways of reporting one plan. Stage 1 minimises "
+        f"routing cost; stage 2 then polishes that plan for operator cost, "
+        f"and at theta > 0 it is frequency-free -- it may change HOW OFTEN a "
+        f"cell is served, not just on which days. The routing-optimal plan is "
+        f"worse than doing nothing in the operator lens "
+        f"({h['op1']:.1f} %), because two-day patterns treble the hub peaks. "
+        f"The polish turns that into {h['op2']:.1f} % -- "
+        f"{h['op2'] - h['op1']:.1f} points -- for "
+        f"{h['rout1'] - h['rout2']:.1f} points of routing saving, and it also "
+        f"shortens the wait ({h['wait1']:.2f} d to {h['wait2']:.2f} d), "
+        f"because serving more days is what lowers a one-cell hub's peak.")
+
+
+PLAN_NOTES = None      # superseded by plan_notes(f); kept out of use on purpose
 
 
 def one_cell_rows(f: Facts) -> list:
@@ -442,25 +559,59 @@ def discount_optima(f: Facts) -> dict:
     """Where the flat-0.50-EUR discount peaks, per lens: {lens: (P, net %)}."""
     best = {}
     for lens, key in (("operator", "op_flat"), ("routing", "rout_flat")):
-        P = max(f.discount, key=lambda p: f.discount[p][key])
-        best[lens] = (P, f.discount[P][key])
-    assert best["operator"][0] == 0.25 and best["routing"][0] == 0.5, (
-        f"compendium 40.17 puts the flat-discount optimum at P = 0.25 in the "
-        f"operator lens and P = 0.5 in the routing lens; the grid says {best}")
+        ranked = sorted(f.discount, key=lambda p: -f.discount[p][key])
+        P, runner = ranked[0], ranked[1]
+        margin = f.discount[P][key] - f.discount[runner][key]
+        best[lens] = (P, f.discount[P][key], runner, margin)
     return best
 
 
-DISCOUNT_NOTES = (
-    "What if the service penalty is not a shadow price but money actually paid "
-    "to the waiting customer? At a flat 0.50 EUR per delayed parcel, P = 0 is "
-    "no longer the best point -- it delays 680 000 parcels a week -- and the "
-    "optimum moves off the corner. WHERE it moves to is lens-specific: the "
-    "operator lens peaks at P = 0.25 with 13.2 % net, the routing lens at "
-    "P = 0.5 with 6.7 % net (2.6 / 6.5 / 6.7 / 5.4 / 4.3 % at P = 0 ... 1). "
-    "The break-even discount, what the operator could pay per delayed parcel "
-    "and still be at zero, runs 0.77 EUR at P = 0 to 2.24 EUR at P = 1 in the "
-    "operator lens and 0.57-1.24 EUR in the routing lens. Interpreted as a "
-    "payout the penalty halves the saving; it does not remove it.")
+# Below this the winner is not distinguishable from its runner-up at the
+# precision this model has, and the slide has to say "a tie" instead of naming
+# a winner. v6 puts the routing lens at 0.021 pp between P = 0.5 and P = 0.25,
+# which is exactly the case this guard exists for
+# (results/revision_2026_08_v6/DEEP_DIVE_V6_PAPER_IMPACT.md 3).
+DISCOUNT_TIE_PP = 0.20
+
+
+def discount_optimum_line(f: Facts) -> str:
+    """One sentence naming each lens's flat-discount optimum, or calling it."""
+    o = discount_optima(f)
+    parts = []
+    for lens in ("operator", "routing"):
+        P, net, runner, margin = o[lens]
+        if margin < DISCOUNT_TIE_PP:
+            parts.append(f"P = {P:g} and P = {runner:g} are level in the "
+                         f"{lens} lens ({net:.1f} % vs "
+                         f"{net - margin:.1f} %)")
+        else:
+            parts.append(f"P = {P:g} in the {lens} lens ({net:.1f} %)")
+    return ("Read as a payout the penalty halves the saving — and the optimum "
+            "is lens-specific: " + "; ".join(parts) + ".")
+
+
+def discount_notes(f: Facts) -> str:
+    """The discount scenario, read off this grid rather than remembered."""
+    d = f.discount
+    rout = " / ".join(f"{d[P]['rout_flat']:.1f}" for P in
+                      (0.0, 0.25, 0.5, 0.75, 1.0))
+    return (
+        f"What if the service penalty is not a shadow price but money actually "
+        f"paid to the waiting customer? At a flat 0.50 EUR per delayed parcel, "
+        f"P = 0 is no longer the best point -- it delays "
+        f"{d[0.0]['delayed'] / 1000:.0f} thousand parcels a week -- and the "
+        f"optimum moves off the corner. "
+        + discount_optimum_line(f)
+        + f" The routing-lens series is {rout} % at P = 0 ... 1. The "
+        f"break-even discount, what the operator could pay per delayed parcel "
+        f"and still be at zero, runs {d[0.0]['be_op']:.2f} EUR at P = 0 to "
+        f"{d[1.0]['be_op']:.2f} EUR at P = 1 in the operator lens and "
+        f"{d[0.0]['be_rout']:.2f}-{d[1.0]['be_rout']:.2f} EUR in the routing "
+        f"lens. Interpreted as a payout the penalty roughly halves the saving; "
+        f"it does not remove it.")
+
+
+DISCOUNT_NOTES = None  # superseded by discount_notes(f)
 
 
 def pstar_rows(f: Facts) -> list:
@@ -468,13 +619,46 @@ def pstar_rows(f: Facts) -> list:
              p["class_routing"], p["class_operator"]] for p in f.pstar]
 
 
-PSTAR_NOTES = (
-    "The knee of the cost/wait front is lens-dependent. In the routing lens "
-    "every provider's P* is unchanged from the submission. In the operator "
-    "lens three move up one class -- Amazon 0.25 -> 0.5, FedEx and Hermes 0.5 "
-    "-> 0.75 -- because peak smoothing only starts to bite at a higher "
-    "penalty. The carrier classes in the paper therefore need a lens "
-    "qualifier; they are not a property of the carrier alone.")
+def pstar_headline(f: Facts) -> str:
+    """The one-line reading under the knee table, true for THIS grid.
+
+    v5's "three LSPs move up one class" stopped being accurate on v6, where
+    GLS lands at P* = 1.0 and outside the paper's class band altogether -- so
+    the line is built from the moved set rather than written down.
+    """
+    moved = f.pstar_moved()
+    out_of_band = [m for m in moved if m["p_operator"] > 0.75]
+    line = (f"{len(moved)} of {len(f.pstar)} LSPs sit at a different knee in "
+            f"the operator lens: peak smoothing only starts to pay at a "
+            f"higher penalty.")
+    if out_of_band:
+        line += ("  " + ", ".join(m["provider"] for m in out_of_band)
+                 + " lands outside the paper's [0.25, 0.75] class band, so the "
+                   "three-class statement holds in the routing lens only.")
+    return line
+
+
+def pstar_notes(f: Facts) -> str:
+    """Which LSPs' knees move between the lenses, on the grid in use."""
+    moved = f.pstar_moved()
+    who = "; ".join(f"{m['provider']} {m['p_routing']:g} -> "
+                    f"{m['p_operator']:g}" for m in moved)
+    out = (f"The knee of the cost/wait front is lens-dependent. In the routing "
+           f"lens every provider's P* is unchanged from the submission. In the "
+           f"operator lens {len(moved)} move -- {who} -- because peak "
+           f"smoothing only starts to bite at a higher penalty. The carrier "
+           f"classes in the paper therefore need a lens qualifier; they are "
+           f"not a property of the carrier alone.")
+    outside = [m for m in moved if m["p_operator"] > 0.75]
+    if outside:
+        out += (" " + ", ".join(m["provider"] for m in outside)
+                + " now sits OUTSIDE the [0.25, 0.75] band the paper claims, "
+                  "so the three-class statement holds in the routing lens "
+                  "only.")
+    return out
+
+
+PSTAR_NOTES = None     # superseded by pstar_notes(f)
 
 
 TOUR_RULE_NOTES = (
@@ -503,13 +687,36 @@ def bulge_rows(f: Facts) -> list:
     return out
 
 
-BULGE_NOTES = (
-    "This slide replaces the old 'the bump at theta = 10 % survives even a "
-    "punitive penalty' slide, which is no longer true. Under the pre-revision "
-    "pooling, 41.7 % of areas still gave up daily delivery at P = 10, "
-    "theta = 0.1 and the grid showed a saving there; the bump was priced by a "
-    "hub-pooled express tour that no operator would run. With the universal "
-    "tour rule the same cell consolidates 2.9 % of areas and saves 0.03 % of "
-    "routing cost -- i.e. nothing. The P-times-theta reading of that slide "
-    "was a description of the artefact, not of the mechanism, and it is "
-    "withdrawn.")
+BULGE_OLD_SHARE = 41.7     # what the submission-era deck claimed at (10, 0.1)
+
+
+def bulge_notes(f: Facts) -> str:
+    """Why the theta = 10 % bump was withdrawn, in this grid's numbers.
+
+    The honest form of the statement changed between grids and the note has to
+    change with it: on v5 the corner was practically zero, on v6 (where the
+    certified bundle head prices supported pools) it is small but clearly
+    positive. What is withdrawn either way is the ARTEFACT -- the 3.6-point
+    bump produced by an unbounded hub-pooled express tour -- and the reading
+    that the effective knob is the product of penalty and adoption.
+    """
+    c = f.consolidating[(10.0, 0.1)]
+    g = D.saving_grid_v2(D.PLAN_ROUTING, D.LENS_ROUTING)
+    row = g[np.isclose(g.penalty, 10.0) & np.isclose(g.share_willing, 0.1)]
+    sav = float(row.saving_pct.iloc[0])
+    return (
+        f"This slide replaces the old 'the bump at theta = 10 % survives even "
+        f"a punitive penalty' slide. Under the pre-revision pooling, "
+        f"{BULGE_OLD_SHARE:.1f} % of areas still gave up daily delivery at "
+        f"P = 10, theta = 0.1 and the grid showed a real saving there; that "
+        f"bump was priced by a hub-pooled express tour no operator would run. "
+        f"With one universal tour rule the same cell consolidates "
+        f"{c['plan1']:.1f} % of areas in the routing-optimal plan "
+        f"({c['plan2']:.1f} % after the operator polish) and saves "
+        f"{sav:.2f} % of routing cost. The asymmetry-driven bump is refuted; "
+        f"what remains is small, positive and plan-dependent, and the "
+        f"P-times-theta reading of the old slide -- a description of the "
+        f"artefact rather than of the mechanism -- is withdrawn.")
+
+
+BULGE_NOTES = None     # superseded by bulge_notes(f)

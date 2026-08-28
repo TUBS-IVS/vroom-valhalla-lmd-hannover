@@ -8,6 +8,22 @@ Everything is drawn from native shapes so it stays editable, and the only
 numbers on them are the two rows of the measured table.
 
 Imported by 96_explainers.py; not meant to be run on its own.
+
+WITHDRAWN NOTICE (2026-08-28)
+-----------------------------
+Every slide in this module illustrates the same finding: that bundling survives
+a punitive fee when few customers take part, because the fee scales with
+adoption and the routing gain does not. That finding has been WITHDRAWN. It was
+an artefact of the pre-revision express price -- the standard parcels of every
+non-delivering area of a hub rode ONE pooled tour, which no operator would
+dispatch and which only the scenario could ever have. Under the universal tour
+rule the cell it was built on consolidates 2.9 % of areas and saves 0.03 %
+(compendium 40.7-40.9, 40.15).
+
+The drawings are kept as the record of what was argued. Calling any of them
+raises unless `allow_withdrawn()` has been called first, so a deck builder
+cannot put them back on a slide by accident; `96_explainers.py --no-revision`
+is the one caller that legitimately does.
 """
 from __future__ import annotations
 
@@ -18,6 +34,24 @@ from _house import (BODY_T, DIM, GREEN, INK, INK2, L, LINE, PANEL, RED, S6,
                     W, WHITE, hrule, label_box, rect, txt)
 
 B = H.B
+
+
+_ALLOW_WITHDRAWN = False
+
+
+def allow_withdrawn(on: bool = True) -> None:
+    """Permit the withdrawn illustrations, for the submission-era rebuild."""
+    global _ALLOW_WITHDRAWN
+    _ALLOW_WITHDRAWN = on
+
+
+def _withdrawn(name: str) -> None:
+    if not _ALLOW_WITHDRAWN:
+        raise SystemExit(
+            f"_dummies.{name} illustrates the WITHDRAWN theta = 10 % finding "
+            f"(compendium 40.7-40.9 / 40.15) and is not drawn. Call "
+            f"_dummies.allow_withdrawn() first if you are deliberately "
+            f"rebuilding the submission-era deck.")
 
 
 def _van(slide, x, y, w, h, *, skipped: bool, day: str):
@@ -58,6 +92,7 @@ def slide_two_price_tags(prs, xslide):
     24 of 6 397 vehicle-days are ever saved. The saving side now shows the
     measured figure instead of a picture that is true only at the far end.
     """
+    _withdrawn("slide_two_price_tags")
     s = xslide(prs, "mix", "Backup: The frequency mix",
                "Ten times the people, but not ten times the saving",
                "Weekly cost saving of the whole region against daily delivery, "
@@ -116,6 +151,7 @@ def slide_two_price_tags(prs, xslide):
 
 def slide_the_proof(prs, xslide):
     """The same table, two rows, opposite directions — the fee is the cause."""
+    _withdrawn("slide_the_proof")
     s = xslide(prs, "mix", "Backup: The frequency mix",
                "The proof: two rows of the same table",
                "Share of the 312 delivery areas that give up daily delivery, "
@@ -170,6 +206,7 @@ def _option(slide, x, y, w, name, drive, fee, total, *, wins):
 
 def slide_worked_example(prs, xslide):
     """The same area under both scenarios, with the arithmetic written out."""
+    _withdrawn("slide_worked_example")
     s = xslide(prs, "mix", "Part 1 · The odd thing",
                "The same area, two scenarios — with the arithmetic",
                "Illustrative figures for one area of 2 000 parcels a week at a "

@@ -67,7 +67,8 @@ ADOPT = [
 ADOPT_REV = [
     dict(
         name="fig90_grid_two_lenses",
-        src="fig5_grid_heatmap_v2",
+        src=["supp_fig5_grid_heatmap_v2", "fig5_grid_heatmap_v2",
+             "fig5_grid_heatmap_6_smoothed"],
         slide_tier=S.TIER_B,
         script="scripts/revision/70_figs_tables_v2.py",
         title="The (P, theta) grid in both lenses",
@@ -84,7 +85,7 @@ ADOPT_REV = [
     ),
     dict(
         name="fig91_offdiagonal",
-        src="fig5b_offdiagonal_v2",
+        src=["supp_fig5b_offdiagonal_v2", "fig5b_offdiagonal_v2"],
         slide_tier=S.TIER_B,
         script="scripts/revision/70_figs_tables_v2.py",
         title="Each plan priced in the other lens",
@@ -97,7 +98,7 @@ ADOPT_REV = [
     ),
     dict(
         name="fig92_freq_mix_two_plans",
-        src="fig4_freq_mix_two_plans",
+        src=["supp_fig4_freq_mix_two_plans", "fig4_freq_mix_two_plans"],
         slide_tier=S.TIER_B,
         script="scripts/revision/70_figs_tables_v2.py",
         title="Delivery-frequency mix, both plans",
@@ -110,7 +111,7 @@ ADOPT_REV = [
     ),
     dict(
         name="fig93_mean_days",
-        src="fig4b_mean_days",
+        src=["supp_fig4b_mean_days", "fig4b_mean_days"],
         slide_tier=S.TIER_B,
         script="scripts/revision/70_figs_tables_v2.py",
         title="Mean delivery days per area",
@@ -121,7 +122,8 @@ ADOPT_REV = [
     ),
     dict(
         name="fig94_structural_two_lenses",
-        src="fig6_structural_v2",
+        src=["supp_fig6_structural_v2", "fig6_structural_v2",
+             "fig6_structural_grid_6_smoothed"],
         slide_tier=S.TIER_B,
         script="scripts/revision/70_figs_tables_v2.py",
         title="Fronts, knees and structure, in both lenses",
@@ -137,6 +139,19 @@ ADOPT_REV = [
                 "only multi-depot network in the case study. Adopted "
                 "verbatim; backup tier.",
     ),
+    dict(
+        name="fig95_operator_lens",
+        src=["supp_fig6b_operator_lens_v2"],
+        slide_tier=S.TIER_B,
+        script="scripts/revision/70_figs_tables_v2.py",
+        title="The operator lens on its own",
+        act="8 - Adopted paper figures",
+        basis="revision grid, operator-polished plan",
+        claim="The operator-cost view of the grid as a standalone figure, so "
+              "the operator lens can be shown without the routing lens beside "
+              "it inviting a like-for-like reading.",
+        caveats="Adopted verbatim; backup tier. Only rendered from v6 onwards.",
+    ),
 ]
 
 
@@ -149,8 +164,16 @@ def _adopt_rev():
     paper = S.outdir("paper", S.TIER_A)
     for spec in ADOPT_REV:
         wrote = []
+        stems = ([spec["src"]] if isinstance(spec["src"], str)
+                 else list(spec["src"]))
+        stem = next((st for st in stems
+                     if (src_dir / f"{st}.png").exists()), None)
+        if stem is None:
+            print(f"  {spec['name']}: none of {stems} in {src_dir.name} "
+                  f"-- skipped")
+            continue
         for ext in ("pdf", "png"):
-            src = src_dir / f"{spec['src']}.{ext}"
+            src = src_dir / f"{stem}.{ext}"
             if not src.exists():
                 print(f"  MISSING {src} -- skipped")
                 continue
@@ -167,7 +190,7 @@ def _adopt_rev():
         D.prov.sources.setdefault(spec["script"], {"bytes": 0, "mtime": "n/a"})
         D.prov.write(spec["name"], title=spec["title"], tier=S.TIER_B,
                      act=spec["act"],
-                     basis=f"{spec['basis']} ({D.REV.name})",
+                     basis=f"{spec['basis']} ({D.REV.name}, {stem})",
                      claim=spec["claim"], caveats=spec["caveats"])
         D.prov.sources.clear()
 

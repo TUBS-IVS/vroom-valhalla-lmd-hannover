@@ -59,10 +59,13 @@ PROV_DIR = OUT_ROOT / "_prov"
 # ── which grid the figures and decks read ──────────────────────────────────
 # The submission-era grid. Frozen: three analyses below read it by name.
 REV_LEGACY = ROOT / "results" / "revision_2026_07"
-# The revision grid. Provisional until the v6 head grid replaces it; that is
-# the whole reason PRES_REV_DIR exists, so Part B is an environment variable
-# rather than an edit.
-REV_V2_DEFAULT = ROOT / "results" / "revision_2026_08_v5"
+# The revision grid. `REV_V2_NAME` is the one line Part B moves from "v5" to
+# "v6" once the head grid is finished -- everything else, including the decks'
+# provisional tag, is derived from it, so switching grids is a one-token edit
+# and not a hunt through the figure scripts. `$PRES_REV_DIR` overrides it
+# entirely, which is how a grid outside `results/` is used.
+REV_V2_NAME = "revision_2026_08_v6"
+REV_V2_DEFAULT = ROOT / "results" / REV_V2_NAME
 
 SCHEMA_V2 = "v2"
 SCHEMA_LEGACY = "legacy"
@@ -79,6 +82,22 @@ def _detect_schema(rev: Path) -> str:
         f"(tab_costs_smoothed.csv)")
 
 
+# The VROOM validation is a much longer run than the grid it validates, so the
+# two are not in step: v6's validation is being produced while v6's tables are
+# already final. `VAL` therefore follows its OWN setting -- $PRES_VAL_DIR, else
+# the last grid whose validation is FINISHED -- and never points at a directory
+# that is still being written. Part B moves this name when v6's validation
+# completes; every figure drawn from it states which grid it is on.
+VAL_GRID_NAME = "revision_2026_08_v5"
+
+
+def _resolve_val() -> Path:
+    env = os.environ.get("PRES_VAL_DIR")
+    if env:
+        return Path(env).resolve()
+    return (ROOT / "results" / VAL_GRID_NAME / "validation").resolve()
+
+
 def set_rev_dir(path) -> Path:
     """Point the revision loaders at another grid directory.
 
@@ -86,17 +105,24 @@ def set_rev_dir(path) -> Path:
     globals rather than threading a handle through every loader, because the
     figure scripts read `D.REV` directly; call it before the first load.
     """
-    global REV, VAL, SCHEMA
+    global REV, SCHEMA
     REV = Path(path).resolve()
-    VAL = REV / "validation"
     SCHEMA = _detect_schema(REV)
     _CACHE.clear()
     return REV
 
 
+def set_val_dir(path) -> Path:
+    """Point the VROOM-validation loaders at a finished validation output."""
+    global VAL
+    VAL = Path(path).resolve()
+    _CACHE.clear()
+    return VAL
+
+
 REV = Path(os.environ.get("PRES_REV_DIR") or REV_V2_DEFAULT).resolve()
 SCHEMA = _detect_schema(REV)
-VAL = REV / "validation"
+VAL = _resolve_val()
 _CACHE: dict = {}
 RUN = ROOT / "results" / "runs" / "path2_2026_05_29"
 SUPP = ROOT / "results" / "supplementary"
@@ -149,10 +175,18 @@ COST_MODEL_SENTENCE = (
 # Pinned v5 baselines (P = 0, theta = 0: every area served daily). Asserted
 # against the grid in `baseline_v2()`, so a re-run that moves them fails the
 # build instead of quietly restating every saving on the slides.
-BASE_ROUTING_V2 = 1_909_432.42
-BASE_OPERATOR_V2 = 2_109_742.27
-BASE_HUB_PEAK_V2 = 1239
-BASE_VEHICLE_DAYS_V2 = 6375
+# The daily-delivery reference of each grid, pinned PER GRID: a saving is only
+# ever formed against the baseline of the grid it was computed on. v5's is the
+# compendium's (40.12); v6's is stated in
+# results/revision_2026_08_v6/DEEP_DIVE_V6_PAPER_IMPACT.md 2, which also warns
+# that v6 scenarios must NOT be normalised against v5's baseline -- they differ
+# by 11 341.62 EUR, 0.594 %.
+BASELINE_PINS = {
+    "revision_2026_08_v5": dict(routing=1_909_432.42, operator=2_109_742.27,
+                                hub_peak=1239, vehicle_days=6375, cv=0.139),
+    "revision_2026_08_v6": dict(routing=1_898_090.80, operator=2_098_400.65,
+                                hub_peak=1239, vehicle_days=6375, cv=0.138998),
+}
 BASE_FLEET_CV_V2 = 0.139                # 40.18; 0.135 in the submission
 
 # Cells for which real VROOM routes were re-solved on the Stage-3 schedules.
@@ -342,11 +376,20 @@ def load_fleet_diagnostics_v2() -> pd.DataFrame:
         REV / "tables" / "tab_fleet_diagnostics_v2.csv"))
 
 
+def _peek(stem: str) -> Path:
+    """A `_peek/<stem>*.csv`, whose exact name carries the grid version."""
+    hits = sorted((REV / "_peek").glob(stem + "*.csv"))
+    hits = [h for h in hits if "partial" not in h.name.lower()] or hits
+    if not hits:
+        raise FileNotFoundError(
+            "no " + stem + "*.csv under " + str(REV / "_peek"))
+    return hits[-1]
+
+
 def load_overview_v2() -> pd.DataFrame:
-    """The both-plans overview peek: the series compendium 40.15 quotes."""
+    """The both-plans overview peek: the series the deep dive quotes."""
     _v2_only("load_overview_v2()")
-    return _cached("overview_v2", lambda: _read(
-        REV / "_peek" / "results_overview_v5.csv"))
+    return _cached("overview_v2", lambda: _read(_peek("results_overview")))
 
 
 def load_discount_v2() -> pd.DataFrame:
@@ -358,8 +401,7 @@ def load_discount_v2() -> pd.DataFrame:
     still break even.
     """
     _v2_only("load_discount_v2()")
-    return _cached("discount_v2", lambda: _read(
-        REV / "_peek" / "discount_scenarios.csv"))
+    return _cached("discount_v2", lambda: _read(_peek("discount_scenarios")))
 
 
 # --------------------------------------------------------------------------
@@ -416,13 +458,20 @@ def baseline_v2() -> dict:
             hub_peak=int(b.sum_hub_peak.sum()),
             vehicle_days=int(b.vehicle_days.sum()),
         )
-        for key, pin, tol in (("routing_eur", BASE_ROUTING_V2, 1.0),
-                              ("operator_eur", BASE_OPERATOR_V2, 1.0),
-                              ("hub_peak", BASE_HUB_PEAK_V2, 0),
-                              ("vehicle_days", BASE_VEHICLE_DAYS_V2, 0)):
-            assert abs(out[key] - pin) <= tol, (
-                f"v2 baseline {key} = {out[key]} but the deck is pinned to "
-                f"{pin}; every saving on every slide would be restated")
+        pins = BASELINE_PINS.get(REV.name)
+        if pins is None:
+            print(f"  [baseline] {REV.name} has no pinned reference; using "
+                  f"the grid's own: routing {out['routing_eur']:.2f}, "
+                  f"operator {out['operator_eur']:.2f}, peak {out['hub_peak']}")
+        else:
+            for key, pin, tol in (("routing_eur", pins["routing"], 1.0),
+                                  ("operator_eur", pins["operator"], 1.0),
+                                  ("hub_peak", pins["hub_peak"], 0),
+                                  ("vehicle_days", pins["vehicle_days"], 0)):
+                assert abs(out[key] - pin) <= tol, (
+                    f"{REV.name} baseline {key} = {out[key]} but the deck is "
+                    f"pinned to {pin}; every saving on every slide would be "
+                    f"restated")
         # theta = 0 must be untouched by stage 2, or "baseline" is ambiguous
         assert np.allclose(b.cost_stage1_eur, b.routing_total_eur), (
             "stage 2 moved the theta = 0 plan; the baseline is not unique")
@@ -536,18 +585,51 @@ def hub_day_profile_v2(hub_fragment: str, penalty: float, share_willing: float
     return hits[0], [float(x) for x in sub.fleet]
 
 
-def per_plz_eur_available() -> bool:
-    """True once the Task-11 runner writes per-cell plan costs into the grid.
+def per_cell_costs_path():
+    """The grid's per-cell plan-cost table, if it has one."""
+    if SCHEMA != SCHEMA_V2:
+        return None
+    p = REV / "tables" / "tab_per_cell_costs_v2.csv"
+    return p if p.exists() else None
 
-    Until then a per-area EURO map cannot be drawn on the v2 grid at all, and
+
+def per_plz_eur_available() -> bool:
+    """True once the runner writes per-cell plan costs for this grid.
+
+    Without them a per-area EURO map cannot be drawn on a v2 grid at all, and
     the honest substitute is the frequency-based structural view -- which the
-    slide has to label as such.
+    figure then has to label as such. v6 ships `tab_per_cell_costs_v2.csv`;
+    v5 did not.
     """
     if SCHEMA != SCHEMA_V2:
         return False
+    if per_cell_costs_path() is not None:
+        return True
     cols = set(load_chosen_v2().columns)
     return bool(cols & {"plan_cost_stage1_eur", "plan_cost_eur",
                         "cell_cost_stage1_eur", "cell_cost_eur"})
+
+
+def load_per_cell_costs_v2(plan: str = PLAN_OPERATOR) -> pd.DataFrame:
+    """Per (P, theta, provider, plz) plan cost, for one plan.
+
+    `cell_cost_eur` is that cell's own tour plus its packet-proportional share
+    of any pooled tour it rides on, so the column sums to the plan's routing
+    total and a per-area map built on it is exact rather than allocated by
+    hand. The grid stores both plans in one long table; `plan` picks one.
+    """
+    p = per_cell_costs_path()
+    if p is None:
+        raise FileNotFoundError(
+            str(REV.name) + " has no per-cell plan costs; "
+            "per_plz_eur_available() is False and the caller must fall back "
+            "to the frequency view AND say so on the figure")
+    _check(plan)
+    df = _read(p, dtype={"plz": str})
+    have = set(df.plan.astype(str).unique())
+    want = "stage1" if plan == PLAN_ROUTING else "balanced"
+    key = want if want in have else sorted(have)[0]
+    return df[df.plan.astype(str) == key].copy()
 
 
 # --------------------------------------------------------------------------
@@ -738,20 +820,86 @@ def load_cd_restart_spread() -> pd.DataFrame:
 # --------------------------------------------------------------------------
 # stage-3 VROOM validation
 # --------------------------------------------------------------------------
-def load_vroom() -> pd.DataFrame:
-    """Per (P, theta=1, provider, plz, day): real VROOM routes on Stage-3
-    schedules.
+# A VROOM solve that came out of the cache is as real as one solved now -- the
+# cache stores solutions, not estimates -- so "solved" is OK or CACHED. Only
+# PARTIAL (VROOM returned a route plan that does not serve every job) and rows
+# with unassigned jobs are incomplete.
+VROOM_OK = ("OK", "CACHED")
 
-    Non-OK rows are KEPT. Two rows (DHL, PLZ 30855, days 0 and 3 at P = 0) come
-    back PARTIAL: VROOM returned a solution that does not serve every job, so
-    the recorded cost is real but understates that cell-day. The published
-    validation total (1 457 294.20 € at P = 0, i.e. the 23.69 % realised saving)
-    includes them, so dropping them would silently disagree with the paper --
-    it lifts the P = 0 saving to 24.92 % and removes 2 058 km. They are flagged
-    here instead, for figures to disclose.
+VAL_SCHEMA_V2 = "v2"
+VAL_SCHEMA_LEGACY = "legacy"
+
+
+def val_schema() -> str:
+    """Which validation output `REV` carries, if any."""
+    if (VAL / "tab_vroom_v2.csv").exists():
+        return VAL_SCHEMA_V2
+    if (VAL / "tab_vroom_smoothed.csv").exists():
+        return VAL_SCHEMA_LEGACY
+    raise FileNotFoundError(
+        f"no VROOM validation under {VAL}: neither tab_vroom_v2.csv nor "
+        f"tab_vroom_smoothed.csv. Point PRES_REV_DIR at a grid whose "
+        f"validation has been produced.")
+
+
+def load_vroom_v2() -> pd.DataFrame:
+    """`validation/tab_vroom_v2.csv` verbatim: one row per solved INSTANCE.
+
+    An instance is a hub-day-plan-kind routing problem, not a cell: a
+    `*_group` row is one tour serving several cells at once, which is the whole
+    point of the bundled pricing. `members` holds the cells it covers.
     """
-    df = _read(VAL / "tab_vroom_smoothed.csv", dtype={"plz": str})
-    bad = df[df.vroom_status != "OK"]
+    return _cached("vroom_v2", lambda: _read(VAL / "tab_vroom_v2.csv"))
+
+
+def _vroom_v2_cells() -> pd.DataFrame:
+    """The single-cell instances of the v2 validation, keyed like the old table.
+
+    Only `*_single` instances map onto one cell. Group instances are a pooled
+    tour over several cells and cannot be split per cell without inventing an
+    allocation, so they are excluded here and reported by
+    `vroom_group_note()`.
+    """
+    def _make():
+        df = load_vroom_v2()
+        single = df[df.instance_kind.astype(str).str.endswith("_single")].copy()
+        single["plz"] = (single.members.astype(str)
+                         .str.strip('[]"\' ').str.strip('"'))
+        single["mode"] = np.where(
+            single.instance_kind.astype(str).str.startswith("express"),
+            "express", "batched")
+        out = single.rename(columns={
+            "predicted_cost_eur": "ml_dd_cost_system_smoothed_eur"})
+        out["ml_dd_cost_eur"] = out.ml_dd_cost_system_smoothed_eur
+        out["n_routes"] = out.vroom_n_routes
+        out["n_parcels"] = out.vroom_n_parcels
+        return out
+    return _cached("vroom_v2_cells", _make)
+
+
+def load_vroom() -> pd.DataFrame:
+    """Per (P, theta, provider, plz, day): real VROOM routes on the plan.
+
+    LEGACY grid: `tab_vroom_smoothed.csv`. Non-OK rows are KEPT. Two rows
+    (DHL, PLZ 30855, days 0 and 3 at P = 0) come back PARTIAL: VROOM returned a
+    solution that does not serve every job, so the recorded cost is real but
+    understates that cell-day. The published validation total (1 457 294.20 EUR
+    at P = 0, i.e. the 23.69 % realised saving) includes them, so dropping them
+    would silently disagree with the paper -- it lifts the P = 0 saving to
+    24.92 % and removes 2 058 km. They are flagged here instead.
+
+    v2 grid: the single-cell instances of `tab_vroom_v2.csv`, with the legacy
+    column names, plus `plan` -- the v2 validation covers BOTH plans, so a
+    caller that wants one must say which.
+    """
+    if val_schema() == VAL_SCHEMA_LEGACY:
+        df = _read(VAL / "tab_vroom_smoothed.csv", dtype={"plz": str})
+    else:
+        df = _vroom_v2_cells()
+        note = vroom_group_note()
+        if note:
+            print(f"  [vroom] {note}")
+    bad = df[~df.vroom_status.isin(VROOM_OK)]
     if len(bad):
         cells = ", ".join(
             f"{r.provider}/{r.plz} d{int(r.day)} at P={r.penalty:g}"
@@ -761,9 +909,21 @@ def load_vroom() -> pd.DataFrame:
     return df
 
 
+def vroom_group_note() -> str:
+    """One clause on the pooled-tour instances a per-cell view cannot show."""
+    if val_schema() != VAL_SCHEMA_V2:
+        return ""
+    df = load_vroom_v2()
+    n = int((~df.instance_kind.astype(str).str.endswith("_single")).sum())
+    if not n:
+        return ""
+    return (f"{n} of {len(df)} validated instances are pooled tours over "
+            f"several cells and are excluded from per-cell views")
+
+
 def vroom_partial_note(df: pd.DataFrame) -> str:
     """One-clause disclosure of incompletely solved routing cells, or ''."""
-    bad = df[df.vroom_status != "OK"]
+    bad = df[~df.vroom_status.isin(VROOM_OK)]
     if not len(bad):
         return ""
     return (f"{len(bad)} of {len(df)} routing cells returned a partial solve "
@@ -771,16 +931,105 @@ def vroom_partial_note(df: pd.DataFrame) -> str:
 
 
 def load_ml_vs_vroom() -> pd.DataFrame:
-    return _read(VAL / "tab_ml_vs_vroom_smoothed.csv", dtype={"plz": str})
+    """Per (P, theta, provider, plz): surrogate price against the solver's."""
+    if val_schema() == VAL_SCHEMA_LEGACY:
+        return _read(VAL / "tab_ml_vs_vroom_smoothed.csv", dtype={"plz": str})
+    c = _vroom_v2_cells()
+    return (c.groupby(["penalty", "share_willing", "plan", "provider", "plz"],
+                      as_index=False)
+            .agg(vroom_cost_eur=("vroom_cost_eur", "sum"),
+                 ml_dd_cost_eur=("ml_dd_cost_eur", "sum"),
+                 n_routes=("n_routes", "sum"),
+                 n_parcels=("n_parcels", "sum")))
 
 
 def load_vroom_diagnostics() -> pd.DataFrame:
-    return _read(VAL / "tab_diagnostics_smoothed.csv")
+    """Per (P, theta): n, MAPE, bias and R2 of the surrogate against VROOM.
+
+    On a v2 grid it is COMPUTED from the instance table rather than read: the
+    v2 validation writes its diagnostics as a markdown report, and recomputing
+    them here keeps the figure and the report from drifting. Flagged rows
+    (PARTIAL, unassigned, jobs removed) are excluded from the error statistics,
+    which is the rule `validation_report.md` states for itself.
+    """
+    if val_schema() == VAL_SCHEMA_LEGACY:
+        return _read(VAL / "tab_diagnostics_smoothed.csv")
+
+    df = load_vroom_v2()
+    ok = df[df.vroom_status.isin(VROOM_OK) & (df.n_unassigned == 0)
+            & (df.jobs_removed == 0)].copy()
+    ok["err_pct"] = ((ok.predicted_cost_eur - ok.vroom_cost_eur)
+                     / ok.vroom_cost_eur * 100.0)
+
+    def _stats(g):
+        a, b = g.predicted_cost_eur, g.vroom_cost_eur
+        ss = float(((b - b.mean()) ** 2).sum())
+        return pd.Series(dict(
+            n=int(len(g)),
+            MAPE_pct=float(g.err_pct.abs().mean()),
+            bias_pct=float(g.err_pct.mean()),
+            R2=float(1 - ((a - b) ** 2).sum() / ss) if ss else np.nan))
+
+    per = (ok.groupby(["penalty", "share_willing"]).apply(
+        _stats, include_groups=False).reset_index())
+    allrow = _stats(ok).to_frame().T
+    allrow.insert(0, "share_willing", "ALL")
+    allrow.insert(0, "penalty", "ALL")
+    per["penalty"] = per.penalty.astype(object)
+    return pd.concat([per, allrow], ignore_index=True)
+
+
+def vroom_actual_baseline_available() -> bool:
+    """Is there a SOLVED theta = 0 baseline to state a realised saving against?
+
+    The v2 validation solves the scenario points first; item 0, the daily
+    baseline, is a separate and much larger item. Until it is solved an
+    ACTUAL saving percentage does not exist -- only predicted-vs-actual TOTALS
+    do -- and a figure that shows one anyway is comparing an actual numerator
+    with a predicted denominator.
+    """
+    if val_schema() == VAL_SCHEMA_LEGACY:
+        return True
+    df = load_vroom_v2()
+    return bool((df.item == 0).any())
 
 
 def load_savings_validation() -> pd.DataFrame:
-    """Predicted vs VROOM-actual saving at the four validated operating points."""
-    return _read(VAL / "tab_savings_pred_vs_actual_smoothed.csv")
+    """Predicted vs VROOM-actual at the validated operating points.
+
+    LEGACY: the table as published, with `actual_saving_pct` and
+    `conservatism_pp`.
+
+    v2: predicted and actual TOTALS per (P, theta, plan), which are real, plus
+    `actual_saving_pct` / `conservatism_pp` -- which are NaN whenever the
+    theta = 0 baseline has not been solved, because a saving needs a baseline
+    of the same kind. `actual_available` says which case a caller is in;
+    `vroom_actual_baseline_available()` is the same fact as a scalar.
+    """
+    if val_schema() == VAL_SCHEMA_LEGACY:
+        return _read(VAL / "tab_savings_pred_vs_actual_smoothed.csv")
+
+    df = load_vroom_v2()
+    g = (df.groupby(["penalty", "share_willing", "plan"], as_index=False)
+         .agg(surrogate_total_eur=("predicted_cost_eur", "sum"),
+              vroom_actual_total_eur=("vroom_cost_eur", "sum"),
+              n=("vroom_cost_eur", "size")))
+    have = vroom_actual_baseline_available()
+    base = float(baseline_eur(LENS_ROUTING)) if SCHEMA == SCHEMA_V2 else np.nan
+    g["base_total_eur"] = base
+    g["predicted_saving_pct"] = (1 - g.surrogate_total_eur / base) * 100.0
+    if have:
+        act_base = float(df[df.item == 0].vroom_cost_eur.sum())
+        g["actual_saving_pct"] = (
+            1 - g.vroom_actual_total_eur / act_base) * 100.0
+    else:
+        g["actual_saving_pct"] = np.nan
+    g["conservatism_pp"] = g.actual_saving_pct - g.predicted_saving_pct
+    g["actual_available"] = have
+    # what IS real without a solved baseline: how far the surrogate's price of
+    # the same tours sits from the solver's
+    g["gap_pct"] = (g.surrogate_total_eur / g.vroom_actual_total_eur - 1) * 100
+    return g
 
 
 # --------------------------------------------------------------------------

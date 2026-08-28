@@ -108,12 +108,19 @@ def fig33_fleet_grid():
                 .groupby("day").fb.mean())
     base = np.array([base_day.loc[d] for d in range(D.N_DAYS)])
     base_peak, base_total = float(base.max()), float(base.sum())
+    # Every CV reduction on this figure is relative to THIS grid's own
+    # baseline, so the baseline is measured here and stated in the caption
+    # rather than asserted against another grid's value. The submission's was
+    # 0.135; the revision's partition-aware fleet count gives 0.139
+    # (compendium 40.18), and the rule that follows from that is: never quote
+    # a CV across grids, and always print the one the figure used.
     base_cv = float(base.std() / base.mean())
-    assert abs(round(base_cv, 3) - 0.135) < 1e-9, (
-        f"baseline fleet CV {base_cv:.3f} != the 0.135 carried in the paper -- "
-        "the Stage-2 fleet reference drifted, do not trust this figure")
     print(f"  baseline fleet: peak={base_peak:.0f} total={base_total:.0f} "
-          f"cv={base_cv:.3f}")
+          f"cv={base_cv:.3f}  [{D.REV.name}]")
+    assert 0.05 < base_cv < 0.30, (
+        f"baseline fleet CV {base_cv:.3f} is outside anything this system has "
+        f"produced (0.135 submitted, 0.139 in the revision) -- the fleet "
+        f"reference is broken, do not trust this figure")
 
     rows = []
     for (pen, sh), g in sys_day.groupby(["penalty", "share_willing"]):
@@ -167,8 +174,10 @@ def fig33_fleet_grid():
                        f"{cv.stack().max():.1f}% across the grid. Total weekly "
                        f"fleet changes between {tc.values.min():.1f}% and "
                        f"{tc.values.max():+.1f}%.",
-                 caveats="The theta=0 reference is a Stage-2 quantity; its CV "
-                         "of 0.135 is asserted in code against the submitted value.")
+                 caveats=f"The theta=0 reference is a Stage-2 quantity; "
+                         f"the baseline CV this figure measured on "
+                         f"{D.REV.name} is {base_cv:.3f} and is printed in "
+                         f"the caption -- a CV is never quoted across grids.")
 
 
 # ---------------------------------------------------------------- fig34

@@ -1457,7 +1457,7 @@ def part_revision(prs):
                    "and disappears with it", False)])],
                draw=floors)
     for x in sl:
-        mark(x, RV.TOUR_RULE_NOTES, ["§40.7", "§40.8", "§40.9"])
+        mark(x, RV.TOUR_RULE_NOTES, RV.cites("§40.7", "§40.8", "§40.9"))
 
     # ── two cost lenses ───────────────────────────────────────────────────
     s = hslide(prs, SEC_REV, "One euro is not one euro",
@@ -1477,7 +1477,7 @@ def part_revision(prs):
                  ("below the peak only the kilometres are real, and a vehicle "
                   "taken out of the peak is worth 1 134.90 € a week", False)])],
            y + 0.26)
-    mark(s, RV.LENS_NOTES, ["§40.11", "§40.12"])
+    mark(s, RV.LENS_NOTES, RV.cites("§40.11", "§40.12"))
 
     # ── two plans ─────────────────────────────────────────────────────────
     s = hslide(prs, SEC_REV, "Two plans, because the two lenses disagree",
@@ -1498,9 +1498,10 @@ def part_revision(prs):
     badges(s, [("Gears", RED,
                 [("Stage 2 may now change how OFTEN an area is served: ",
                   True),
-                 ("that is what turns −7.8 % into 24.7 %, and it shortens the "
-                  "wait at the same time", False)])], y + 1.24)
-    mark(s, RV.PLAN_NOTES, ["§40.14", "§40.15"])
+                 (f"that is what turns {h0['op1']:.1f} % into "
+                  f"{h0['op2']:.1f} %, and it shortens the wait at the same "
+                  f"time", False)])], y + 1.24)
+    mark(s, RV.plan_notes(f), RV.cites("§40.14"))
 
     # ── the one-area depot ────────────────────────────────────────────────
     def profiles(s):
@@ -1537,7 +1538,7 @@ def part_revision(prs):
                  "days across several areas; elsewhere it buys kilometres")],
                draw=profiles, t=BODY_T + 3.55)
     for x in sl:
-        mark(x, RV.ONE_CELL_NOTES, ["§40.14", "§40.18"])
+        mark(x, RV.ONE_CELL_NOTES, RV.cites("§40.14"))
 
     # ── the operator headline ─────────────────────────────────────────────
     def head(s):
@@ -1558,8 +1559,10 @@ def part_revision(prs):
                  f"That same plan costs an operator {abs(h0['op1']):.1f} % "
                  f"MORE than simply delivering every day"),
                 ("ThumbsUpSign", GREEN,
-                 "The polished plan gives up 2.7 points of routing saving and "
-                 "buys 32 points of operator saving")],
+                 f"The polished plan gives up "
+                 f"{h0['rout1'] - h0['rout2']:.1f} points of routing saving "
+                 f"and buys {h0['op2'] - h0['op1']:.1f} points of operator "
+                 f"saving")],
                draw=head, t=BODY_T + 1.75)
     for x in sl:
         mark(x, "The revision's headline number. Report both lenses, and "
@@ -1589,10 +1592,11 @@ def part_revision(prs):
     badges(s, [("Target", RED,
                 "P = 0 wins on paper; P = 0.25 is the point to defend in "
                 "front of a customer")], y + 1.24)
-    mark(s, "At P = 0 the operator lens gives 24.7 % against 22.8 % at "
-            "P = 0.25, but the wait is 0.77 d against 0.39 d and the "
-            "peak-fleet cut is the same. The knee stays at P = 0.25.",
-         ["§40.15", "§40.18"])
+    mark(s, f"At P = 0 the operator lens gives {h0['op2']:.1f} % against "
+            f"{r['op2']:.1f} % at P = 0.25, but the wait is "
+            f"{h0['wait2']:.2f} d against {r['wait2']:.2f} d and the "
+            f"peak-fleet cut is the same. The knee stays at P = 0.25.",
+         RV.cites())
 
     # ── the lens-dependent knee ───────────────────────────────────────────
     s = hslide(prs, SEC_REV, "The knee depends on which lens you use",
@@ -1607,11 +1611,9 @@ def part_revision(prs):
                for r0 in RV.pstar_rows(f)],
               BODY_T, widths=[1.9, 2.5, 2.6, 2.6, 2.6], sz=SZ_BODY,
               reserve=1.05)
-    txt(s, L, BODY_B - 0.88, W, 0.86,
-        "Three LSPs move up one class in the operator lens: peak smoothing "
-        "only starts to pay at a higher penalty.", SZ_LEAD, bold=True,
-        color=RED, line=1.22)
-    mark(s, RV.PSTAR_NOTES, "§40.18")
+    txt(s, L, BODY_B - 1.28, W, 1.26, RV.pstar_headline(f), SZ_LEAD,
+        bold=True, color=RED, line=1.22)
+    mark(s, RV.pstar_notes(f), RV.cites())
 
     # ── partial adoption ──────────────────────────────────────────────────
     rows = {th: (a, b) for th, a, b in f.partial_adoption(0.0)}
@@ -1630,10 +1632,12 @@ def part_revision(prs):
                 "The weekly peak does move — and that is what an operator "
                 "staffs for; nowhere in the grid is the operator lens "
                 "negative at P = 0")], y + 0.26)
-    mark(s, "Partial adoption is positive only in the operator lens: routing "
-            "saving 0.4-4.6 % against operator saving 3.9 % at θ = 0.1 rising "
-            "to 11.0 % at θ = 0.8, never negative (the previous grid reached "
-            "−2.1 % at θ = 0.9).", "§40.15")
+    _rv = [v[0] for v in rows.values()]
+    _ov = [v[1] for v in rows.values()]
+    mark(s, f"Partial adoption is positive only in the operator lens: routing "
+            f"saving {min(_rv):.1f}-{max(_rv):.1f} % against operator saving "
+            f"{min(_ov):.1f}-{max(_ov):.1f} % across theta, and never negative "
+            f"at P = 0.", RV.cites())
 
     # ── the penalty as a real payout ──────────────────────────────────────
     s = hslide(prs, SEC_REV,
@@ -1641,7 +1645,6 @@ def part_revision(prs):
                "θ = 100 %, operator-polished plan. Flat discount = 0.50 € per "
                "delayed willing parcel; delayed parcels are demand on "
                "non-delivery days times the willing share.")
-    opt = RV.discount_optima(f)
     H.B.table(s, ["Operating point", "Delayed parcels/wk",
                   "Saving, shadow price", "Net 0.50 €, operator lens",
                   "Net 0.50 €, routing lens", "Break-even discount"],
@@ -1649,13 +1652,9 @@ def part_revision(prs):
                 r0[5]] for r0 in RV.discount_rows(f)],
               BODY_T, widths=[1.9, 2.1, 2.1, 2.2, 2.2, 2.0], sz=SZ_BODY,
               reserve=1.05)
-    txt(s, L, BODY_B - 1.28, W, 1.26,
-        f"Read as a payout the penalty halves the saving — and the optimum is "
-        f"lens-specific: P = {opt['operator'][0]:g} in the operator lens "
-        f"({opt['operator'][1]:.1f} %), P = {opt['routing'][0]:g} in the "
-        f"routing lens ({opt['routing'][1]:.1f} %).", SZ_LEAD, bold=True,
-        color=RED, line=1.22)
-    mark(s, RV.DISCOUNT_NOTES, "§40.17")
+    txt(s, L, BODY_B - 1.28, W, 1.26, RV.discount_optimum_line(f), SZ_LEAD,
+        bold=True, color=RED, line=1.22)
+    mark(s, RV.discount_notes(f), RV.cites("§40.17"))
 
 
 def part_implications(prs):
@@ -1818,7 +1817,7 @@ def part_backup(prs):
                     "The bump was paid for by a hub-pooled express tour that "
                     "no operator would dispatch, so the P · θ reading of that "
                     "slide is withdrawn")], y + 1.24)
-        mark(s, _RV.BULGE_NOTES, ["§40.7", "§40.8", "§40.15"])
+        mark(s, _RV.bulge_notes(_F), _RV.cites("§40.7", "§40.8"))
 
     extras = [
         # The revision's own figures, adopted by 95_adopt_paper_figs.py from
@@ -1836,6 +1835,9 @@ def part_backup(prs):
          "Revision grid, routing-optimal above, operator-polished below."),
         (BK / "fig93_mean_days.png", "Mean delivery days per area",
          "Revision grid, both plans."),
+        (BK / "fig95_operator_lens.png", "The operator lens on its own",
+         "Revision grid: the operator-cost view without the routing lens "
+         "beside it."),
         (BK / "fig94_structural_two_lenses.png",
          "Fronts, knees and structure",
          "Revision grid. Panel (f) is a within-DHL statement: the hub-size "

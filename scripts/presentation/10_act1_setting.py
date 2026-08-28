@@ -229,8 +229,16 @@ def fig14_headline():
         (f"{best.saving_pct:.1f} %", "cost saving at the\ncost-optimal point",
          D.PALETTE["stage2"]),
         (f"{peak_cut:.1f} %", "smaller peak fleet", D.PALETTE["accent2"]),
-        (f"+{sv.conservatism_pp.min():.1f}…{sv.conservatism_pp.max():.1f} pp",
-         "surrogate is conservative\nvs real routing", D.PALETTE["accent"]),
+        # A realised SAVING needs a solved theta=0 baseline. Where the grid
+        # has one this tile is the conservatism band; where it has not it is
+        # the gap between the surrogate's price and the solver's on the SAME
+        # tours -- real either way, and never a "nan-nan pp" tile.
+        ((f"+{sv.conservatism_pp.min():.1f}…{sv.conservatism_pp.max():.1f} pp",
+          "surrogate is conservative\nvs real routing", D.PALETTE["accent"])
+         if D.vroom_actual_baseline_available() else
+         (f"+{sv.gap_pct.min():.1f}…{sv.gap_pct.max():.1f} %",
+          "surrogate prices the same\ntours above the solver",
+          D.PALETTE["accent"])),
     ]
     print(f"  efficient {eff.saving_pct:.1f}%  best {best.saving_pct:.1f}%  "
           f"peak cut {peak_cut:.1f}%")
@@ -266,10 +274,16 @@ def fig14_headline():
                        f"parcels a week cuts routing cost "
                        f"{eff.saving_pct:.1f}% at the efficient operating point "
                        f"and {best.saving_pct:.1f}% at the cost-optimal one, "
-                       f"with {peak_cut:.1f}% less peak fleet, and real routing "
-                       f"beats the prediction by "
-                       f"{sv.conservatism_pp.min():.1f}-"
-                       f"{sv.conservatism_pp.max():.1f} pp.",
+                       f"with {peak_cut:.1f}% less peak fleet, and "
+                       + (f"real routing beats the prediction by "
+                          f"{sv.conservatism_pp.min():.1f}-"
+                          f"{sv.conservatism_pp.max():.1f} pp."
+                          if D.vroom_actual_baseline_available() else
+                          f"the surrogate prices the validated tours "
+                          f"{sv.gap_pct.min():.1f}-{sv.gap_pct.max():.1f}% "
+                          f"above the solver, i.e. conservatively (no realised "
+                          f"saving yet: this grid's theta=0 baseline is "
+                          f"unsolved)."),
                  caveats="All figures at theta = 100% willingness to wait, the "
                          "upper bound of the modelled range.")
 

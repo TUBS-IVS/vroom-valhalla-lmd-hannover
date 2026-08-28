@@ -55,6 +55,26 @@ P_REF, THETA_REF = 0.25, 1.0
 # The corner the bump lives in.
 P_BULGE, TH_BULGE = 10.0, 0.1
 
+# The finding these two figures illustrate has been WITHDRAWN. See
+# `withdrawn()` below and compendium 40.7-40.9 / 40.15: the bump at
+# theta = 10 % was a pricing artefact of the old hub-pooled express tour, and
+# the P x theta reading described that artefact rather than the system. The
+# code stays as the record; rendering it needs `--withdrawn` and says why.
+WITHDRAWN = {"figB1_who_consolidates", "figB3_ptheta_collapse"}
+ALLOW_WITHDRAWN = False
+
+
+def withdrawn(name: str) -> None:
+    """Stop a withdrawn figure from being rendered by accident."""
+    if name in WITHDRAWN and not ALLOW_WITHDRAWN:
+        raise SystemExit(
+            f"{name} illustrates a WITHDRAWN finding (the theta = 10 % bump "
+            f"and the P x theta reading, compendium 40.7-40.9 / 40.15) and is "
+            f"not rendered. It was an artefact of the pre-revision pooled "
+            f"express price; on the revision grid the same cell consolidates "
+            f"2.9 % of areas and saves 0.03 %. Pass --withdrawn to render it "
+            f"anyway, e.g. to show the withdrawal itself.")
+
 ORDER = ["DHL", "Amazon", "Hermes", "UPS", "DPD", "GLS", "FedEx"]
 
 
@@ -277,6 +297,7 @@ def _bulge_frame():
 
 def figB1_who_consolidates():
     """The cells that batch are ordinary in size — there is no outlier tail."""
+    withdrawn("figB1_who_consolidates")
     m = _bulge_frame()
     yes = m[m.consolidates]
     no = m[~m.consolidates]
@@ -406,6 +427,7 @@ def figB2_where_the_money_is():
 
 def figB3_ptheta_collapse():
     """Share consolidating collapses onto the product of penalty and adoption."""
+    withdrawn("figB3_ptheta_collapse")
     s = _drop_p04(D.load_chosen_stage3())
     col = "schedule_size_system_smoothed"
     g = (s.assign(c=(s[col] < 6).astype(float))
@@ -492,8 +514,15 @@ FIGURES = {f.__name__: f for f in (
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--only", nargs="*", help="figure names to build")
+    ap.add_argument("--withdrawn", action="store_true",
+                    help="also render the figures of the withdrawn theta=10 % "
+                         "finding (see WITHDRAWN); they are refused otherwise")
     a = ap.parse_args()
-    todo = ([FIGURES[n] for n in a.only] if a.only else list(FIGURES.values()))
+    global ALLOW_WITHDRAWN
+    ALLOW_WITHDRAWN = a.withdrawn
+    todo = ([FIGURES[n] for n in a.only] if a.only else
+            [f for f in FIGURES.values()
+             if a.withdrawn or f.__name__ not in WITHDRAWN])
     for fn in todo:
         print(f"\n=== {fn.__name__} ===")
         fn()

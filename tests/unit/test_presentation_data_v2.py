@@ -149,12 +149,13 @@ def D(grid, monkeypatch):
     mod = importlib.import_module("_data")
     assert mod.SCHEMA == mod.SCHEMA_V2
     assert mod.REV == grid.resolve()
-    # the synthetic baseline is not the real one, so relax the pins that
-    # exist to catch a real grid drifting
-    monkeypatch.setattr(mod, "BASE_ROUTING_V2", 7000.0)
-    monkeypatch.setattr(mod, "BASE_OPERATOR_V2", 2800.0 + 7 * WEEK_FIXED * 10)
-    monkeypatch.setattr(mod, "BASE_HUB_PEAK_V2", 70)
-    monkeypatch.setattr(mod, "BASE_VEHICLE_DAYS_V2", 700)
+    # The synthetic grid gets its own entry in the per-grid pin table, so the
+    # assert under test is the real one -- not disabled, just told what this
+    # grid is supposed to say.
+    monkeypatch.setitem(
+        mod.BASELINE_PINS, grid.resolve().name,
+        dict(routing=7000.0, operator=2800.0 + 7 * WEEK_FIXED * 10,
+             hub_peak=70, vehicle_days=700, cv=0.0))
     mod._CACHE.clear()
     yield mod
     sys.modules.pop("_data", None)
@@ -171,10 +172,21 @@ def test_baseline_comes_from_the_grid_not_from_the_other_grid(D):
 
 
 def test_baseline_fails_loudly_when_the_grid_moves(D, monkeypatch):
-    monkeypatch.setattr(D, "BASE_ROUTING_V2", 1.0)
+    pins = dict(D.BASELINE_PINS[D.REV.name], routing=1.0)
+    monkeypatch.setitem(D.BASELINE_PINS, D.REV.name, pins)
     D._CACHE.clear()
     with pytest.raises(AssertionError, match="baseline routing_eur"):
         D.baseline_v2()
+
+
+def test_an_unpinned_grid_is_allowed_but_says_so(D, monkeypatch, capsys):
+    """A grid with no recorded reference must not fail -- and must not be
+    silent about being unchecked."""
+    monkeypatch.delitem(D.BASELINE_PINS, D.REV.name)
+    D._CACHE.clear()
+    b = D.baseline_v2()
+    assert b["routing_eur"] == pytest.approx(7000.0)
+    assert "no pinned reference" in capsys.readouterr().out
 
 
 # ── two plans x two lenses ─────────────────────────────────────────────────
@@ -256,9 +268,24 @@ def test_delivery_frequency_comes_from_the_schedule_enumeration(D):
     assert D.consolidating_share_v2(0.0, 1.0, D.PLAN_OPERATOR) == 0.0
 
 
-def test_per_area_euro_is_unavailable_until_task_11_lands(D):
-    """The decks must fall back to the frequency view AND say so."""
+def test_per_area_euro_needs_the_per_cell_table(D, tmp_path):
+    """Without per-cell costs a euro map cannot be drawn, and saying so is the
+    whole point; with them the loader picks the requested plan."""
+    assert D.per_cell_costs_path() is None
     assert D.per_plz_eur_available() is False
+    with pytest.raises(FileNotFoundError, match="no per-cell plan costs"):
+        D.load_per_cell_costs_v2()
+
+    (D.REV / "tables").mkdir(exist_ok=True)
+    pd.DataFrame([
+        dict(penalty=0.0, share_willing=1.0, provider="DHL", plz="30159",
+             plan=plan, cell_cost_eur=100.0 + i)
+        for i, plan in enumerate(("stage1", "balanced"))
+    ]).to_csv(D.REV / "tables" / "tab_per_cell_costs_v2.csv", index=False)
+    D._CACHE.clear()
+    assert D.per_plz_eur_available() is True
+    assert float(D.load_per_cell_costs_v2(D.PLAN_ROUTING).cell_cost_eur.iloc[0]) == 100.0
+    assert float(D.load_per_cell_costs_v2(D.PLAN_OPERATOR).cell_cost_eur.iloc[0]) == 101.0
 
 
 def test_hub_day_profile_is_matched_by_name_and_must_be_unique(D):
@@ -288,6 +315,23 @@ def test_saving_grid_dispatches_to_the_v2_path(D):
     a = D.saving_grid()
     b = D.saving_grid_v2(D.PLAN_ROUTING, D.LENS_ROUTING)
     assert a.saving_pct.tolist() == b.saving_pct.tolist()
+
+
+def test_the_validation_dir_is_chosen_separately_from_the_grid(D, tmp_path):
+    """A validation run lags the grid it validates, so VAL has its own setting.
+
+    This is what stops a figure being drawn from a validation directory that
+    is still being written while its grid is already final.
+    """
+    assert D.VAL.parent != D.REV, (
+        "VAL followed REV; a live validation output would be read as if it "
+        "were finished")
+    val = tmp_path / "someval"
+    val.mkdir()
+    (val / "tab_vroom_smoothed.csv").write_text("penalty\n0.0\n")
+    D.set_val_dir(val)
+    assert D.VAL == val.resolve() and D.val_schema() == D.VAL_SCHEMA_LEGACY
+    assert D.REV != val, "set_val_dir must not move the cost grid"
 
 
 def test_unchanged_analyses_stay_pinned_to_the_submission_grid(D):
@@ -364,9 +408,21 @@ def test_discount_rows_carry_both_lenses(monkeypatch):
     rows = RV.discount_rows(f)
     assert all(len(r) == 6 for r in rows), "a lens column is missing"
     opt = RV.discount_optima(f)
-    assert opt["operator"][0] == 0.25 and opt["routing"][0] == 0.5
-    assert opt["operator"][0] != opt["routing"][0], (
-        "if the two lenses ever agree, the slide's whole point is gone")
+    assert set(opt) == {"operator", "routing"}
+    for lens, (P, net, runner, margin) in opt.items():
+        assert P in (0.0, 0.25, 0.5, 0.75, 1.0), lens
+        assert margin >= 0, f"{lens}: the runner-up beats the winner"
+    # The line the slide prints must NAME a winner only where there is one.
+    # On v6 the routing lens is a statistical tie (0.009 pp between P = 0.25
+    # and P = 0.5), which is exactly the case the tie guard exists for.
+    line = RV.discount_optimum_line(f)
+    assert "lens-specific" in line
+    for lens in ("operator", "routing"):
+        P, net, runner, margin = opt[lens]
+        if margin < RV.DISCOUNT_TIE_PP:
+            assert f"level in the {lens} lens" in line, line
+        else:
+            assert f"P = {P:g} in the {lens} lens" in line, line
     # and the count the slides state is derived and correct
     assert (f.one_cell_hubs, f.dhl_hubs) == (8, 16)
     for mod in ("_data", "_revision"):

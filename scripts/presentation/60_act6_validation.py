@@ -25,7 +25,20 @@ import _plots as P
 import _style as S
 
 ACT = "6 - Validation"
-BASIS = "Stage-3 VROOM revalidation (4 operating points, theta=1)"
+# Which validation this act is drawn from is a property of the grid in use, not
+# a constant: the submission's covers one plan at four points, the revision's
+# covers both plans and states its own row count.
+def _basis() -> str:
+    import _data as _D
+    if _D.val_schema() == _D.VAL_SCHEMA_LEGACY:
+        return "Stage-3 VROOM revalidation (4 operating points, theta=1)"
+    n = len(_D.load_vroom_v2())
+    plans = ", ".join(sorted(_D.load_vroom_v2().plan.astype(str).unique()))
+    return (f"VROOM validation v2 on {_D.REV.name}: {n} solved instances, "
+            f"plans {plans}, theta=1")
+
+
+BASIS = _basis()
 
 
 # ---------------------------------------------------------------- fig61
@@ -78,60 +91,110 @@ def fig61_vroom_scatter():
 
 # ---------------------------------------------------------------- fig62
 def fig62_pred_vs_actual():
+    """Predicted against realised, in whichever form the validation supports.
+
+    A realised SAVING needs a solved baseline to be a saving against. The
+    submission's validation has one; the revision's solves the scenario points
+    first and the theta = 0 baseline is a separate, much larger item, so until
+    it lands the honest figure is predicted against realised COST at the same
+    points -- both real, both measured on the same tours -- rather than a
+    saving formed from an actual numerator and a predicted denominator.
+    """
     sv = D.load_savings_validation()
-    print(sv[["penalty", "predicted_saving_pct", "actual_saving_pct",
-              "conservatism_pp"]].to_string(index=False))
+    have = D.vroom_actual_baseline_available()
+    if not have and "plan" in sv.columns:
+        # one bar pair per (point, plan); label them so the two plans of the
+        # revision are never silently averaged into one series
+        sv = sv.sort_values(["plan", "penalty"]).reset_index(drop=True)
+        sv["label"] = [rf"$P={r.penalty:g}$" + "\n" + str(r.plan)
+                       for r in sv.itertuples()]
+    else:
+        sv = sv.reset_index(drop=True)
+        sv["label"] = [rf"$P={p:g}$" for p in sv.penalty]
+
+    if have:
+        cols = ("predicted_saving_pct", "actual_saving_pct")
+        labels = ("Predicted (surrogate)", "Realised (VROOM)")
+        ylab = "Weekly system cost saving [%]"
+        title = "Predicted vs realised saving at the validated points"
+        fmt = "{:.1f}"
+        scale = 1.0
+    else:
+        cols = ("surrogate_total_eur", "vroom_actual_total_eur")
+        labels = ("Surrogate price", "VROOM actual")
+        ylab = "Weekly routing cost of the validated tours [M€]"
+        title = "Surrogate price vs solver cost, same tours"
+        fmt = "{:.2f}"
+        scale = 1e-6
+    print(sv[["penalty", *([c for c in ("plan",) if c in sv.columns]),
+              *cols]].to_string(index=False))
 
     for style in S.styles():
         S.apply(style)
         fig, ax = plt.subplots(figsize=S.figsize(style, (7.6, 4.8), (11.0, 5.8)))
         x = np.arange(len(sv))
         w = 0.36
-        b1 = ax.bar(x - w / 2, sv.predicted_saving_pct, w,
-                    color=D.PALETTE["stage2"], label="Predicted (surrogate)")
-        b2 = ax.bar(x + w / 2, sv.actual_saving_pct, w,
-                    color=D.PALETTE["accent2"], label="Realised (VROOM)")
+        v1 = sv[cols[0]].values * scale
+        v2 = sv[cols[1]].values * scale
+        b1 = ax.bar(x - w / 2, v1, w, color=D.PALETTE["stage2"], label=labels[0])
+        b2 = ax.bar(x + w / 2, v2, w, color=D.PALETTE["accent2"], label=labels[1])
         ax.set_xticks(x)
-        ax.set_xticklabels([rf"$P={p:g}$" for p in sv.penalty])
+        ax.set_xticklabels(sv.label)
         ax.set_xlabel(r"Service penalty [€/p/d], all at $\theta = 100\%$")
-        ax.set_ylabel("Weekly system cost saving [%]")
-        ax.set_title("Predicted vs realised saving at the validated points")
+        ax.set_ylabel(ylab)
+        ax.set_title(title)
         ax.grid(alpha=0.25, axis="y")
-        ax.set_ylim(0, max(sv.actual_saving_pct.max(),
-                           sv.predicted_saving_pct.max()) * 1.22)
-        P.bar_labels(ax, b1, sv.predicted_saving_pct.values, "{:.1f}",
-                     style=style)
-        P.bar_labels(ax, b2, sv.actual_saving_pct.values, "{:.1f}",
-                     style=style)
-        for xi, row in zip(x, sv.itertuples()):
-            ax.annotate(f"+{row.conservatism_pp:.1f} pp",
-                        xy=(xi, max(row.predicted_saving_pct,
-                                    row.actual_saving_pct)),
+        ax.set_ylim(0, max(v1.max(), v2.max()) * 1.22)
+        P.bar_labels(ax, b1, v1, fmt, style=style)
+        P.bar_labels(ax, b2, v2, fmt, style=style)
+        gap = (sv.gap_pct.values if "gap_pct" in sv.columns
+               else sv.conservatism_pp.values)
+        unit = "%" if not have else " pp"
+        for xi, g, top in zip(x, gap, np.maximum(v1, v2)):
+            ax.annotate(f"+{g:.1f}{unit}", xy=(xi, top),
                         xytext=(0, 22 if style == "slides" else 15),
                         textcoords="offset points", ha="center",
                         fontsize=9 if style == "paper" else 13,
                         color=D.PALETTE["accent"])
         ax.legend(framealpha=0.9, loc="upper right")
-        P.footnote(fig, f"Realised saving exceeds the prediction at every "
-                        f"point; the surrogate is conservative by "
-                        f"{sv.conservatism_pp.min():.1f}–"
-                        f"{sv.conservatism_pp.max():.1f} pp.", style)
+        note = (f"Realised saving exceeds the prediction at every point; the "
+                f"surrogate is conservative by "
+                f"{sv.conservatism_pp.min():.1f}–"
+                f"{sv.conservatism_pp.max():.1f} pp." if have else
+                f"The surrogate prices the same tours "
+                f"{sv.gap_pct.min():.1f}–{sv.gap_pct.max():.1f} % above the "
+                f"solver, i.e. conservatively. A realised SAVING is not shown: "
+                f"the theta = 0 baseline of this grid has not been solved yet, "
+                f"so there is nothing to measure a saving against.")
+        P.footnote(fig, note, style)
         fig.tight_layout(rect=[0, 0.05, 1, 1])
         S.save(fig, "fig62_pred_vs_actual", style, S.TIER_A)
 
+    claim = (f"Across the validated operating points the realised saving "
+             f"({sv.actual_saving_pct.min():.1f}-"
+             f"{sv.actual_saving_pct.max():.1f}%) exceeds the surrogate "
+             f"prediction ({sv.predicted_saving_pct.min():.1f}-"
+             f"{sv.predicted_saving_pct.max():.1f}%) by "
+             f"{sv.conservatism_pp.min():.1f}-{sv.conservatism_pp.max():.1f} "
+             f"pp. The error points in the safe direction." if have else
+             f"On the same tours the surrogate prices "
+             f"{sv.gap_pct.min():.1f}-{sv.gap_pct.max():.1f} % above the "
+             f"solver at every validated point and in both plans, so the "
+             f"error points in the safe direction. The predicted savings are "
+             f"{sv.predicted_saving_pct.min():.1f}-"
+             f"{sv.predicted_saving_pct.max():.1f}%.")
     D.prov.write("fig62_pred_vs_actual",
-                 title="Predicted vs realised system saving",
-                 tier=S.TIER_A, act=ACT, basis=BASIS,
-                 claim=f"Across four validated operating points the realised "
-                       f"saving ({sv.actual_saving_pct.min():.1f}-"
-                       f"{sv.actual_saving_pct.max():.1f}%) exceeds the "
-                       f"surrogate prediction ({sv.predicted_saving_pct.min():.1f}"
-                       f"-{sv.predicted_saving_pct.max():.1f}%) by "
-                       f"{sv.conservatism_pp.min():.1f}-"
-                       f"{sv.conservatism_pp.max():.1f} pp. The error points in "
-                       f"the safe direction.",
-                 caveats="Four points only, all at theta=1; the conservatism "
-                         "band widens with the penalty.")
+                 title=("Predicted vs realised system saving" if have else
+                        "Surrogate price vs solver cost at the validated "
+                        "points"),
+                 tier=S.TIER_A, act=ACT, basis=BASIS, claim=claim,
+                 caveats=("Four points only, all at theta=1; the conservatism "
+                          "band widens with the penalty." if have else
+                          "No realised SAVING is stated: the theta = 0 "
+                          "baseline of this grid has not been solved, so a "
+                          "saving would pair an actual numerator with a "
+                          "predicted denominator. Both plans are shown "
+                          "separately and must not be averaged."))
 
 
 # ---------------------------------------------------------------- fig63

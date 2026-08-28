@@ -404,7 +404,7 @@ def block_mix_rev(prs):
                  "That tour was cheap because it was one tour — and no "
                  "operator would ever dispatch it."],
              y + 1.28, label="withdrawn/claim")
-    mark(s, RV.BULGE_NOTES, ["§40.7", "§40.8", "§40.15"])
+    mark(s, RV.bulge_notes(f), RV.cites("§40.7", "§40.8"))
 
     # ── 2 · what the revision grid says ──────────────────────────────────
     rows = RV.bulge_rows(f)
@@ -425,7 +425,7 @@ def block_mix_rev(prs):
                  "The theta < 1 column falls to an honest floor — and the "
                  "bump falls out of it."],
              y + 1.28, label="withdrawn/now")
-    mark(s, RV.TOUR_RULE_NOTES, ["§40.7", "§40.8", "§40.9"])
+    mark(s, RV.TOUR_RULE_NOTES, RV.cites("§40.7", "§40.8", "§40.9"))
 
     # ── 3 · what to say if asked ─────────────────────────────────────────
     s = xslide(prs, "mix", "Part 1 · Withdrawn", "What to say if you are asked",
@@ -775,13 +775,47 @@ def _current_renders():
     return out
 
 
-def refresh_figures(prs, n_inherited):
-    """Replace stale hand-placed figures with the current render."""
+def _render_index():
+    """Every current render, indexed by md5 AND by pixel size.
+
+    Pixel size is what makes the swap content-matched rather than
+    title-matched: a figure is re-rendered from the same `figsize` at the same
+    dpi, so its raster dimensions are stable across grids while its pixels are
+    not. An embedded picture whose dimensions match exactly one current render
+    IS that figure, whatever slide it sits on and whatever the title says.
+    """
     import hashlib
+    from PIL import Image
+    by_md5, by_size = {}, {}
+    for f in _current_renders().values():
+        by_md5[hashlib.md5(f.read_bytes()).hexdigest()] = f
+        with Image.open(f) as im:
+            by_size.setdefault(im.size, []).append(f)
+    return by_md5, by_size
+
+
+def refresh_figures(prs, n_inherited):
+    """Replace stale hand-placed figures with the current render.
+
+    Three ways to identify what an embedded picture is, in order of strength:
+
+    1. its md5 is already a current render -- nothing to do;
+    2. its raster dimensions match exactly ONE current render -- that is the
+       figure, swap it (content match, title-independent);
+    3. the slide's title is in `REFRESH` -- use that mapping (the old
+       behaviour, kept for figures whose dimensions are ambiguous).
+
+    Anything none of the three identifies is left untouched and LISTED, with
+    its size and slide, because silently leaving a stale figure in a deck named
+    for the new grid is the failure this whole pass exists to prevent.
+    """
+    import hashlib
+    from PIL import Image
     from pptx.util import Emu
-    known = _current_renders()
-    by_name = {f.stem: f for f in known.values()}
-    swapped = stale = 0
+    by_md5, by_size = _render_index()
+    by_name = {f.stem: f for f in _current_renders().values()}
+    swapped = stale = fresh_n = 0
+    unmatched = []
     for i, sl in enumerate(list(prs.slides)[:n_inherited], 1):
         ph = [sh for sh in sl.shapes if sh.is_placeholder
               and sh.placeholder_format.idx == 0 and sh.has_text_frame]
@@ -792,28 +826,47 @@ def refresh_figures(prs, n_inherited):
                 and Emu(sh.width).inches >= MIN_FIG_IN]
         pics.sort(key=lambda sh: Emu(sh.left).inches)
         for j, sh in enumerate(pics):
-            fresh = hashlib.md5(sh.image.blob).hexdigest() in known
-            if fresh:
+            blob = sh.image.blob
+            if hashlib.md5(blob).hexdigest() in by_md5:
+                fresh_n += 1
                 continue
-            target = (by_name.get(want[j]) if want and j < len(want) else None)
+            target, how = None, ""
+            try:
+                import io
+                with Image.open(io.BytesIO(blob)) as im:
+                    size = im.size
+                cands = by_size.get(size, [])
+                if len(cands) == 1:
+                    target, how = cands[0], "content match"
+                elif len(cands) > 1 and want and j < len(want):
+                    hit = [c for c in cands if c.stem == want[j]]
+                    if hit:
+                        target, how = hit[0], "content + title"
+            except Exception:
+                pass
+            if target is None and want and j < len(want):
+                target, how = by_name.get(want[j]), "title map"
             if target is None:
                 stale += 1
-                print(f"  ? slide {i}: a {Emu(sh.width).inches:.1f} in picture "
-                      f"matches no current render and is not mapped — left "
-                      f"alone")
+                unmatched.append(
+                    f"slide {i}: {Emu(sh.width).inches:.1f} in picture, "
+                    f"raster {size if 'size' in dir() else '?'}")
                 continue
             box = (sh.left, sh.top, sh.width, sh.height)
             el = sh._element
             parent = el.getparent()
             idx = list(parent).index(el)
             parent.remove(el)
-            new = sl.shapes.add_picture(str(target), *box)
-            parent.remove(new._element)
-            parent.insert(idx, new._element)          # keep the z-order
+            new_pic = sl.shapes.add_picture(str(target), *box)
+            parent.remove(new_pic._element)
+            parent.insert(idx, new_pic._element)      # keep the z-order
             swapped += 1
-            print(f"  ~ slide {i}: swapped in {target.stem} (was stale)")
-    if swapped or stale:
-        print(f"  {swapped} figure(s) refreshed, {stale} unmapped")
+            print(f"  ~ slide {i}: {target.stem} ({how})")
+    print(f"  figures: {swapped} swapped to the current render, "
+          f"{fresh_n} already current, {stale} unmatched")
+    for u in unmatched:
+        print(f"  ? {u} matches no current render and is not mapped "
+              f"-- left as it is")
     return swapped
 
 
@@ -982,7 +1035,7 @@ def restate_body(prs, limit):
                 f"{RV.eur(f.base_operator)} € operator per week. Figure "
                 f"rendered from the submission grid — the shape holds, the "
                 f"levels are restated here.")
-        touched(i, sl, RV.PLAN_NOTES, ["§40.12", "§40.15"])
+        touched(i, sl, RV.plan_notes(f), RV.cites("§40.12"))
 
     # ── the efficiency-range table ───────────────────────────────────────
     i, sl = _find(prs, "the cost-optimal extreme", limit)
@@ -1152,7 +1205,7 @@ def stamp_remaining(prs, limit, done):
     for i, sl in enumerate(prs.slides, 1):
         if i > limit or i in done:
             continue
-        if _has(sl, _RV.TAG_TEXT) or _RV.stamped(sl):
+        if _has(sl, _RV.tag_text()) or _RV.stamped(sl):
             continue
         text = []
         for sh in sl.shapes:
@@ -1199,6 +1252,9 @@ def build(out: Path) -> Path:
             "in the order they come up")
     block_contents(prs)
     if _F is None:
+        # --no-revision rebuilds the submission-era deck, which is the one
+        # legitimate reason to draw the withdrawn illustrations.
+        DUM.allow_withdrawn()
         block_mix(prs)     # 1 · the odd thing in the frequency picture
     else:
         block_mix_rev(prs)  # 1 · withdrawn: it explained a pricing artefact
@@ -1228,10 +1284,14 @@ def build(out: Path) -> Path:
 def audit_v5() -> int:
     """Recompute every number the RESTATED slides claim; fail if one moved.
 
-    This is the audit that has to pass for the deck this script now builds.
-    The submission-era one is still here, behind `--submission`, because it is
-    the record of what the old body asserted -- but it cannot pass on the
-    revision grid, and a check that is expected to fail is not a check.
+    The expectations are not literals in this file: they come from
+    `_revision.GRID_EXPECT[<grid>]`, whose entries record what the compendium
+    (v5) or the deep dive (v6) states. So this audit compares the deck against
+    a written-down source, not against the grid it was built from -- which
+    would be circular. `Facts.load()` runs first and carries its own asserts on
+    the headline, the knee set and the break-even band.
+
+    The submission-era audit is still here, behind `--submission`.
     """
     import _data as D
     import _revision as RV
@@ -1240,39 +1300,55 @@ def audit_v5() -> int:
               file=sys.stderr)
         return 1
     f = RV.Facts.load()          # every assert in here is part of the audit
+    e = RV.expect()
+    if not e:
+        print(f"{D.REV.name} has no recorded expectation in "
+              f"_revision.GRID_EXPECT, so there is nothing to audit the "
+              f"slides against. Record its values first.", file=sys.stderr)
+        return 1
+    print(f"  auditing {D.REV.name} against {e['source']}")
     bad = []
 
     def check(name, got, want, tol):
         ok = abs(got - want) <= tol
         print(f"  {'ok ' if ok else 'FAIL'} {name}: {got:.4g} "
-              f"(slide says {want:g})")
+              f"(source says {want:g})")
         if not ok:
             bad.append(name)
 
-    # the restated fee table and the three cards (operator lens, stage-2 plan)
-    for P, want in ((0.0, 24.7), (0.25, 22.8), (0.5, 18.5), (0.75, 14.8),
-                    (1.0, 11.8), (2.0, 6.0)):
+    a = e.get("audit", {})
+    for P, want in a.get("operator saving, stage-2 plan", {}).items():
         check(f"operator saving at P={P:g}, theta=1", f.headline[P]["op2"],
-              want, 0.06)
-    for P, want in ((0.0, 0.77), (0.25, 0.39), (0.5, 0.23)):
+              want, 0.02)
+    for P, want in a.get("wait, stage-2 plan", {}).items():
         check(f"wait at P={P:g}, stage-2 plan", f.headline[P]["wait2"],
               want, 0.006)
-    check("peak fleet at P=0.5 [%]", f.headline[0.5]["peak2_pct"], -14.4, 0.06)
-    check("routing saving at P=0, stage-1 plan", f.headline[0.0]["rout1"],
-          23.1, 0.06)
-    check("operator saving at P=0, stage-1 plan", f.headline[0.0]["op1"],
-          -7.8, 0.06)
-    # the withdrawal chapter
-    for (P, th), want in (((10.0, 0.1), 2.9), ((0.0, 0.1), 57.1)):
+    for (P, th), want in a.get("areas consolidating, stage-1 plan", {}).items():
         check(f"areas consolidating at P={P:g}, theta={th:g}",
               f.consolidating[(P, th)]["plan1"], want, 0.06)
-    # the one-area depot count the slides state
+    # the headline pair and the peak, from the same source
+    check("routing saving at P=0, stage-1 plan", f.headline[0.0]["rout1"],
+          e["rout1"], 0.02)
+    check("operator saving at P=0, stage-1 plan", f.headline[0.0]["op1"],
+          e["op1"], 0.02)
+    check("peak fleet at P=0, stage-2 plan [%]", f.headline[0.0]["peak2_pct"],
+          e["peak2"], 0.02)
+    # the one-area depot count the slides state, derived from the hub table
     check("DHL one-area depots", f.one_cell_hubs, 8, 0)
     check("DHL depots", f.dhl_hubs, 16, 0)
-    # the lens-specific discount optimum
+    # the discount line must name a winner only where there is one
     opt = RV.discount_optima(f)
-    check("flat-discount optimum, operator lens", opt["operator"][0], 0.25, 0)
-    check("flat-discount optimum, routing lens", opt["routing"][0], 0.5, 0)
+    line = RV.discount_optimum_line(f)
+    for lens in ("operator", "routing"):
+        P, net, runner, margin = opt[lens]
+        tie = margin < RV.DISCOUNT_TIE_PP
+        want = (f"level in the {lens} lens" if tie
+                else f"P = {P:g} in the {lens} lens")
+        ok = want in line
+        print(f"  {'ok ' if ok else 'FAIL'} discount line, {lens} lens: "
+              f"{'tie' if tie else 'winner'} at {margin:.3f} pp margin")
+        if not ok:
+            bad.append(f"discount line/{lens}")
     print("\n" + ("AUDIT FAILED: " + ", ".join(bad) if bad else "audit clean"))
     return 1 if bad else 0
 
