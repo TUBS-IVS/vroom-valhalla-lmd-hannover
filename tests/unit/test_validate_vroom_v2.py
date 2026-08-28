@@ -20,6 +20,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -427,3 +428,385 @@ def test_cache_probe_gates_hold_against_the_real_builders(V):
         assert list(V._offset_table(2, len(vehicles),
                                     max(0, V.VEH_START_LATEST - vtw[0]))[k]) \
             == list(offs)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Item 0 — the theta=0 baseline (Task 12b): enumeration is delivery-only,
+# the P-invariance / stage1==balanced / no-express gates, queue-merge safety,
+# and predicted-vs-actual saving % in both lenses.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def tiny_baseline_grid():
+    """The theta=0 baseline: ONE schedule (the all-daily one), no express.
+
+    Every cell is pinned to the same all-daily schedule (index 0) — the
+    model's own theta=0 invariant (G-6f-1 in ``61_grid_run_v2.py``) — so
+    ``sched_active`` is True on every day for every cell and
+    ``_express_contributing`` can never find a non-delivery day, no matter
+    how large ``raw_express`` is. Cell 0 is its own tour (day 0, above
+    MIN_TOUR_PARCELS); cells 1/2 are small and pool into one delivery group.
+    """
+    n_plz, n_sched = 3, 1
+    schedules = [frozenset(range(N_DAYS))]
+    sched_active = np.ones((n_sched, N_DAYS), dtype=bool)
+
+    combined_demand = np.zeros((n_plz, n_sched, N_DAYS))
+    combined_demand[0, 0, 0] = 900.0                     # big -> own tour
+    combined_demand[1, 0, 0] = 100.0                     # small -> pooled
+    combined_demand[2, 0, 0] = 80.0                      # small -> pooled
+    combined_stops = np.ones((n_plz, n_sched, N_DAYS)) * 20.0
+
+    small_delivery_mask = (
+        (combined_demand > 0)
+        & (combined_demand < MIN_TOUR_PARCELS)
+        & sched_active[None, :, :])
+
+    cost_3d = np.zeros((n_plz, n_sched, N_DAYS))
+    cost_3d[0, 0, 0] = 4000.0
+    veh_3d = np.zeros((n_plz, n_sched, N_DAYS))
+    veh_3d[0, 0, 0] = float(np.maximum(1, np.ceil(900.0 / 230.0)))
+
+    small_delivery_price = np.zeros((n_plz, n_sched, N_DAYS))
+    small_delivery_price[1, 0, 0] = 700.0
+    small_delivery_price[2, 0, 0] = 600.0
+
+    # Deliberately NON-zero: proves raw_express is IGNORED because every day
+    # is a delivery day here, not merely absent from this fixture.
+    raw_express = np.zeros((n_plz, N_DAYS))
+    raw_express[1, 2] = 40.0
+    expr_stops = np.ones((n_plz, N_DAYS)) * 5.0
+    express_cost = np.zeros((n_plz, N_DAYS))
+    express_cost[1, 2] = 300.0
+
+    lon = {0: 9.70, 1: 9.71, 2: 9.72}
+    lat = {0: 52.30, 1: 52.31, 2: 52.32}
+    m = {
+        "cost_3d": cost_3d, "veh_3d": veh_3d,
+        "sched_active": sched_active,
+        "small_delivery_mask": small_delivery_mask,
+        "small_delivery_price": small_delivery_price,
+        "combined_demand": combined_demand, "combined_stops": combined_stops,
+        "raw_express": raw_express, "expr_stops": expr_stops,
+        "express_cost": express_cost,
+        "area_arr": np.array([3.0, 1.0, 1.0]),
+        "hd_arr": np.array([5.0, 6.0, 7.0]),
+        "_cent_lon": np.array([lon[z] for z in range(3)]),
+        "_cent_lat": np.array([lat[z] for z in range(3)]),
+        "plz_day_lon": [[np.array([lon[z]] * 4) for _ in range(N_DAYS)]
+                        for z in range(3)],
+        "plz_day_lat": [[np.array([lat[z]] * 4) for _ in range(N_DAYS)]
+                        for z in range(3)],
+    }
+    od = {"plz_keys": ["30001", "30002", "30003"],
+          "hub_plz_list": [np.array([0, 1, 2])]}
+    chosen = np.zeros(3, dtype=np.int64)
+    return dict(m=m, od=od, chosen=chosen, schedules=schedules)
+
+
+def test_item0_enumeration_is_delivery_only_even_with_raw_express_present(
+        V, tiny_baseline_grid):
+    """The defining property of item 0: no express, no matter what raw_express
+    holds, because an all-daily schedule leaves no non-delivery day."""
+    rows = V.enumerate_instances(
+        0, 0.0, 0.0, "stage1", "DHL", tiny_baseline_grid["chosen"],
+        tiny_baseline_grid["od"], tiny_baseline_grid["m"],
+        tiny_baseline_grid["schedules"], None)
+    assert rows, "the baseline must still produce delivery instances"
+    assert all(r["vroom_kind"] == "delivery" for r in rows)
+    assert all(r["item"] == 0 for r in rows)
+    kinds = {r["instance_kind"] for r in rows}
+    assert kinds and kinds <= {V.KIND_DELIVERY_SINGLE, V.KIND_DELIVERY_GROUP}
+
+    single = [r for r in rows if r["member_idx"] == [0]]
+    assert len(single) == 1
+    assert single[0]["predicted_cost_eur"] == pytest.approx(4000.0)
+    assert single[0]["predicted_source"] == "cost_3d"
+
+    pooled = [r for r in rows if r["member_idx"] != [0]]
+    assert pooled, "cells 1/2 must pool into one small-delivery group"
+    assert sum(r["predicted_cost_eur"] for r in pooled) == pytest.approx(1300.0)
+
+    total = V.identity_gate_routing(rows, 4000.0 + 700.0 + 600.0,
+                                    "tiny-baseline")
+    assert total == pytest.approx(5300.0)
+
+
+def test_item0_enumeration_gates_fleet_like_any_other_item(V, tiny_baseline_grid):
+    """G2 is run for item 0 too (its plan is labelled "stage1", not
+    "balanced", but at theta=0 the two coincide — see run_census)."""
+    rows = V.enumerate_instances(
+        0, 0.0, 0.0, "stage1", "DHL", tiny_baseline_grid["chosen"],
+        tiny_baseline_grid["od"], tiny_baseline_grid["m"],
+        tiny_baseline_grid["schedules"], None)
+    per: dict = {}
+    for r in rows:
+        per[(r["hub_idx"], r["day"])] = (per.get((r["hub_idx"], r["day"]), 0.0)
+                                         + r["predicted_n_routes"])
+    fleet = pd.DataFrame([{"hub_idx": h, "day": d, "fleet": v}
+                          for (h, d), v in per.items()])
+    V.identity_gate_fleet(rows, fleet, "tiny-baseline")       # must not raise
+    fleet.loc[0, "fleet"] = fleet.loc[0, "fleet"] + 1
+    with pytest.raises(AssertionError, match="G2 fleet identity FAILED"):
+        V.identity_gate_fleet(rows, fleet, "tiny-baseline")
+
+
+# ── assert_baseline_invariant / grid_express_cost on a synthetic chosen/costs
+# frame — the P-invariance, stage1==balanced and no-express checks item 0
+# relies on to validate ONE representative P instead of every P in the grid.
+
+def _baseline_chosen_df(bad_p: float | None = None,
+                        bad_plan: str | None = None) -> pd.DataFrame:
+    """theta=0 rows for DHL across three P values, plus a theta=1 distractor.
+
+    ``bad_p``: corrupt that P's schedule so it differs from P=0's.
+    ``bad_plan``: corrupt schedule_idx_balanced at P=0 (breaks stage1==balanced).
+    """
+    rows = []
+    plzs = ["30001", "30002", "30003"]
+    daily = [3, 3, 3]              # an arbitrary "daily" schedule index
+    for P in (0.0, 0.25, 0.5):
+        s1 = list(daily)
+        if bad_p is not None and np.isclose(P, bad_p):
+            s1 = [s1[0] + 1, s1[1], s1[2]]
+        bal = list(s1)
+        if bad_plan == "balanced" and np.isclose(P, 0.0):
+            bal = [bal[0] + 1, bal[1], bal[2]]
+        for plz, s, b in zip(plzs, s1, bal):
+            rows.append(dict(penalty=P, share_willing=0.0, provider="DHL",
+                             plz=plz, schedule_idx_stage1=s,
+                             schedule_idx_balanced=b,
+                             schedule_idx_system_smoothed=b))
+    # theta=1 distractor rows: must be ignored by every theta=0 check
+    for plz in plzs:
+        rows.append(dict(penalty=0.0, share_willing=1.0, provider="DHL",
+                         plz=plz, schedule_idx_stage1=0,
+                         schedule_idx_balanced=1,
+                         schedule_idx_system_smoothed=1))
+    return pd.DataFrame(rows)
+
+
+def _baseline_costs_df(express: float = 0.0) -> pd.DataFrame:
+    return pd.DataFrame([
+        dict(penalty=P, share_willing=0.0, provider="DHL",
+             cost_stage1_eur=5300.0, cost_stage2_eur=5300.0,
+             express_cost_eur=(express if np.isclose(P, 0.0) else 0.0))
+        for P in (0.0, 0.25, 0.5)
+    ])
+
+
+def test_assert_baseline_invariant_passes_on_a_consistent_grid(V):
+    chosen_df = _baseline_chosen_df()
+    costs_df = _baseline_costs_df()
+    base, checked = V.assert_baseline_invariant(
+        chosen_df, costs_df, "DHL", ["30001", "30002", "30003"])
+    assert base.tolist() == [3, 3, 3]
+    assert sorted(checked) == [0.25, 0.5]
+
+
+def test_assert_baseline_invariant_catches_p_dependence(V):
+    chosen_df = _baseline_chosen_df(bad_p=0.25)
+    costs_df = _baseline_costs_df()
+    with pytest.raises(AssertionError, match="P-invariant"):
+        V.assert_baseline_invariant(chosen_df, costs_df, "DHL",
+                                    ["30001", "30002", "30003"])
+
+
+def test_assert_baseline_invariant_catches_stage1_balanced_mismatch(V):
+    chosen_df = _baseline_chosen_df(bad_plan="balanced")
+    costs_df = _baseline_costs_df()
+    with pytest.raises(AssertionError, match="schedule_idx_balanced"):
+        V.assert_baseline_invariant(chosen_df, costs_df, "DHL",
+                                    ["30001", "30002", "30003"])
+
+
+def test_assert_baseline_invariant_catches_nonzero_express(V):
+    chosen_df = _baseline_chosen_df()
+    costs_df = _baseline_costs_df(express=12.5)
+    with pytest.raises(AssertionError, match="express_cost_eur"):
+        V.assert_baseline_invariant(chosen_df, costs_df, "DHL",
+                                    ["30001", "30002", "30003"])
+
+
+def test_grid_express_cost_reads_the_column(V):
+    costs_df = _baseline_costs_df(express=7.0)
+    assert V.grid_express_cost(costs_df, 0.0, 0.0, "DHL") == pytest.approx(7.0)
+
+
+def test_item_0_is_a_known_item_and_accepted_by_the_cli(V):
+    assert 0 in V.ITEMS
+    assert V.ITEMS[0]["theta"] == 0.0
+    assert V.ITEMS[0]["plan"] == "stage1"
+    assert V.ITEMS[0]["penalties"] == [0.0]
+    args = V.parse_args(["--items", "0", "--census-only"])
+    assert args.items == [0]
+    args = V.parse_args(["--items", "0,1,2,3"])
+    assert args.items == [0, 1, 2, 3]
+
+
+# ── merge_queue_rows: the queue-merge that keeps a partial census (item 0
+# alone) from clobbering other items' already-solved instance rows ──────────
+
+def test_merge_queue_rows_preserves_other_items_and_replaces_requested_ones(V):
+    old = pd.DataFrame([
+        dict(instance_id="i1-a", item=1, cache_hit=True, g6_selected=True),
+        dict(instance_id="i2-a", item=2, cache_hit=False, g6_selected=True),
+        dict(instance_id="i3-a", item=3, cache_hit=False, g6_selected=False),
+    ]).reindex(columns=V.QUEUE_COLS)
+    fresh = pd.DataFrame([
+        dict(instance_id="i0-a", item=0, cache_hit=True, g6_selected=True),
+    ]).reindex(columns=V.QUEUE_COLS)
+
+    merged = V.merge_queue_rows(old, fresh, [0])
+
+    assert sorted(merged["instance_id"]) == ["i0-a", "i1-a", "i2-a", "i3-a"]
+    # item 3's pre-existing G6 selection must survive a census that never
+    # touched item 3
+    i3 = merged[merged["item"] == 3].iloc[0]
+    assert bool(i3["g6_selected"]) is False
+    assert list(merged.columns) == V.QUEUE_COLS
+
+
+def test_merge_queue_rows_replaces_only_the_requested_items(V):
+    old = pd.DataFrame([
+        dict(instance_id="i1-a", item=1, cache_hit=True),
+        dict(instance_id="i1-b", item=1, cache_hit=False),
+        dict(instance_id="i3-a", item=3, cache_hit=True),
+    ]).reindex(columns=V.QUEUE_COLS)
+    fresh = pd.DataFrame([
+        dict(instance_id="i1-new", item=1, cache_hit=False),
+    ]).reindex(columns=V.QUEUE_COLS)
+
+    merged = V.merge_queue_rows(old, fresh, [1])
+
+    assert sorted(merged["instance_id"]) == ["i1-new", "i3-a"]
+
+
+def test_merge_queue_rows_first_census_has_no_old_queue(V):
+    fresh = pd.DataFrame([dict(instance_id="i0-a", item=0)]).reindex(
+        columns=V.QUEUE_COLS)
+    merged = V.merge_queue_rows(None, fresh, [0])
+    assert list(merged["instance_id"]) == ["i0-a"]
+    assert list(merged.columns) == V.QUEUE_COLS
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# savings_vs_baseline: predicted vs ACTUAL saving %, both lenses, both totals
+# (with and without PARTIAL rows) — the report item 0 exists to make possible
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _savings_frame() -> pd.DataFrame:
+    """A theta=0 baseline (2 clean rows) and one point with a PARTIAL row.
+
+    The point's PARTIAL row (day 1) carries MORE routes (5) than its OK row
+    (2) on purpose: it makes the operator lens's peak term — and therefore
+    the "with vs without PARTIAL" saving % — visibly (here: sign-flippingly)
+    different, which is exactly the distinction the report has to state both
+    totals for.
+    """
+    return pd.DataFrame([
+        dict(item=0, penalty=0.0, share_willing=0.0, plan="stage1",
+             hub_name="A", day=0, vroom_cost_eur=1000.0, vroom_n_routes=3,
+             predicted_cost_eur=1050.0, predicted_n_routes=3,
+             vroom_status="OK", instance_kind="delivery_single"),
+        dict(item=0, penalty=0.0, share_willing=0.0, plan="stage1",
+             hub_name="A", day=1, vroom_cost_eur=800.0, vroom_n_routes=2,
+             predicted_cost_eur=820.0, predicted_n_routes=2,
+             vroom_status="OK", instance_kind="delivery_single"),
+        dict(item=1, penalty=0.25, share_willing=1.0, plan="balanced",
+             hub_name="A", day=0, vroom_cost_eur=600.0, vroom_n_routes=2,
+             predicted_cost_eur=650.0, predicted_n_routes=2,
+             vroom_status="OK", instance_kind="delivery_single"),
+        dict(item=1, penalty=0.25, share_willing=1.0, plan="balanced",
+             hub_name="A", day=1, vroom_cost_eur=np.nan, vroom_n_routes=5,
+             predicted_cost_eur=150.0, predicted_n_routes=1,
+             vroom_status="PARTIAL", instance_kind="delivery_single"),
+    ])
+
+
+def test_savings_vs_baseline_both_lenses_with_and_without_partial(V):
+    df = _savings_frame()
+    rows = V.savings_vs_baseline(df)
+    assert len(rows) == 1
+    r = rows[0]
+    assert (r["item"], r["penalty"], r["share_willing"], r["plan"]) == (
+        1, 0.25, 1.0, "balanced")
+    assert r["n_all"] == 2 and r["n_clean"] == 1
+    assert r["base_n_all"] == 2 and r["base_n_clean"] == 2
+
+    base_pred_routing = 1050.0 + 820.0
+    point_pred_routing = 650.0 + 150.0
+    assert r["pred_routing_save_pct"] == pytest.approx(
+        (base_pred_routing - point_pred_routing) / base_pred_routing * 100)
+
+    base_act_routing = 1000.0 + 800.0
+    point_act_routing = 600.0                 # the PARTIAL row has no cost
+    assert r["act_routing_save_pct_clean"] == pytest.approx(
+        (base_act_routing - point_act_routing) / base_act_routing * 100)
+    assert r["act_routing_save_pct_all"] == pytest.approx(
+        (base_act_routing - point_act_routing) / base_act_routing * 100)
+
+    base_var_pred = base_pred_routing - FIXED_COST_EUR * (3 + 2)
+    base_opcost_pred = base_var_pred + WEEK_FIXED_COST_EUR * max(3, 2)
+    point_var_pred = point_pred_routing - FIXED_COST_EUR * (2 + 1)
+    point_opcost_pred = point_var_pred + WEEK_FIXED_COST_EUR * max(2, 1)
+    assert r["pred_opcost_save_pct"] == pytest.approx(
+        (base_opcost_pred - point_opcost_pred) / base_opcost_pred * 100)
+
+    base_var_act = base_act_routing - FIXED_COST_EUR * (3 + 2)
+    base_opcost_act = base_var_act + WEEK_FIXED_COST_EUR * max(3, 2)
+
+    point_var_act_clean = point_act_routing - FIXED_COST_EUR * 2
+    point_opcost_act_clean = point_var_act_clean + WEEK_FIXED_COST_EUR * 2
+    assert r["act_opcost_save_pct_clean"] == pytest.approx(
+        (base_opcost_act - point_opcost_act_clean) / base_opcost_act * 100)
+
+    point_var_act_all = point_act_routing - FIXED_COST_EUR * 2   # PARTIAL unpriced
+    point_opcost_act_all = point_var_act_all + WEEK_FIXED_COST_EUR * max(2, 5)
+    assert r["act_opcost_save_pct_all"] == pytest.approx(
+        (base_opcost_act - point_opcost_act_all) / base_opcost_act * 100)
+
+    # the whole point of stating both totals: they must actually differ here
+    # (in this fixture, dramatically enough to flip sign)
+    assert r["act_opcost_save_pct_all"] < 0 < r["act_opcost_save_pct_clean"]
+
+
+def test_savings_vs_baseline_empty_when_baseline_unsolved(V):
+    df = _savings_frame()
+    df = df[df["item"] != 0]
+    assert V.savings_vs_baseline(df) == []
+
+
+def test_write_report_includes_the_predicted_vs_actual_saving_section(V, tmp_path):
+    df = _savings_frame()
+    df.to_csv(tmp_path / V.SOLVED_CSV, index=False)
+    args = SimpleNamespace(rev_dir=str(tmp_path))
+
+    V.write_report(tmp_path, args)
+
+    text = (tmp_path / V.REPORT_MD).read_text(encoding="utf-8")
+    assert "Predicted vs actual saving" in text
+    assert "0.25" in text and "balanced" in text
+
+    # both the "clean" and "all" actual-saving columns must appear, and with
+    # DIFFERENT values for this fixture (re-read the CSV exactly as
+    # write_report did, so the formatted strings are guaranteed to line up).
+    df_check = pd.read_csv(tmp_path / V.SOLVED_CSV)
+    r = V.savings_vs_baseline(df_check)[0]
+    clean_str = f"{r['act_opcost_save_pct_clean']:+.2f}"
+    all_str = f"{r['act_opcost_save_pct_all']:+.2f}"
+    assert clean_str in text
+    assert all_str in text
+    assert clean_str != all_str
+
+
+def test_write_report_notes_a_pending_baseline_when_item_0_absent(V, tmp_path):
+    df = _savings_frame()
+    df = df[df["item"] != 0]
+    df.to_csv(tmp_path / V.SOLVED_CSV, index=False)
+    args = SimpleNamespace(rev_dir=str(tmp_path))
+
+    V.write_report(tmp_path, args)
+
+    text = (tmp_path / V.REPORT_MD).read_text(encoding="utf-8")
+    assert "has not been solved yet" in text

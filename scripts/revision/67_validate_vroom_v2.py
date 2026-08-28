@@ -15,6 +15,14 @@ BOTH cost lenses:
 
 WHAT IS VALIDATED (controller amendment 2026-08-27, priority order)
 -------------------------------------------------------------------
+  item 0  theta = 0, the DAILY BASELINE (Task 12b) — every cell pinned to the
+          all-daily schedule (``61_grid_run_v2.py``'s G-6f-1), no express by
+          construction. This is the VROOM baseline the paper's savings % are
+          actually measured against; items 1-3 alone cannot state an ACTUAL
+          saving because there was no VROOM-solved reference point. Built at
+          ONE representative P (0.0) and asserted P-invariant against every
+          other P in the grid — solving the identical daily tours once per P
+          would waste VROOM budget on duplicate requests.
   item 1  theta = 1, OPERATOR plan (``schedule_idx_balanced``),
           P in {0, 0.25, 0.5, 0.75} — every instance.
   item 2  theta = 1, ROUTING plan (``schedule_idx_stage1``), P in {0, 0.25} —
@@ -23,8 +31,10 @@ WHAT IS VALIDATED (controller amendment 2026-08-27, priority order)
   item 3  (P, theta) = (0.25, 0.5), OPERATOR plan — the only point with all
           instance kinds in volume. G6 stratified fallback available.
 
-Hard budget: 8 VROOM-hours for items 1-3 together. The CENSUS runs first and
-never solves anything; the controller approves the solve from its numbers.
+Hard budget: 8 VROOM-hours for items 1-3 together (item 0 is cheap: mostly
+cache hits against the 2026-07 validation's daily solves, see below). The
+CENSUS runs first and never solves anything; the controller approves the
+solve from its numbers.
 
 THE PREDICTED SIDE IS THE GRID'S OWN, NOT A RE-IMPLEMENTATION
 --------------------------------------------------------------
@@ -122,7 +132,16 @@ Output (results/<rev>/validation/):
     census.md / census.csv        per item x kind: instances, cache hits, hours
     instance_queue.csv            the full instance list (predicted side + cache)
     tab_vroom_v2.csv              one row per solved instance
-    validation_report.md          MAPE/bias per kind, both lenses, per plan/point
+    validation_report.md          MAPE/bias per kind, both lenses, per plan/point,
+                                   and (once item 0 is solved) predicted-vs-actual
+                                   saving % vs the theta=0 baseline, both lenses
+
+A CENSUS for a SUBSET of items (e.g. ``--items 0`` to add the baseline onto an
+already-censused/partly-solved output dir) MERGES onto the existing
+instance_queue.csv: only the requested item(s)' rows are (re)computed, every
+other item's rows — including their cache-hit flags and any G6 selection —
+are carried through untouched. ``tab_vroom_v2.csv`` is never touched by a
+census; it only grows via ``run_solve``'s append.
 """
 from __future__ import annotations
 
@@ -244,7 +263,16 @@ KINDS = (KIND_DELIVERY_SINGLE, KIND_DELIVERY_GROUP,
 
 #: What to validate. ``plan`` names the column in _tab_chosen_v2.csv and the
 #: cost column in tab_costs_v2.csv the identity gate anchors on.
+#:
+#: item 0's ``penalties`` is deliberately a SINGLETON ([0.0]): theta=0 pins
+#: every cell to the daily schedule independently of P (G-6f-1), so the same
+#: VROOM tours would be re-requested once per P for nothing. The single P=0.0
+#: point is asserted P-invariant against the grid's OTHER P values by
+#: ``assert_baseline_invariant`` before it is trusted (see ``run_census``).
 ITEMS: dict[int, dict] = {
+    0: dict(theta=0.0, plan="stage1", penalties=[0.0],
+            label="theta=0 daily baseline (no VROOM reference existed before "
+                  "Task 12b)"),
     1: dict(theta=1.0, plan="balanced", penalties=[0.0, 0.25, 0.5, 0.75],
             label="theta=1 operator plan"),
     2: dict(theta=1.0, plan="stage1", penalties=[0.0, 0.25],
@@ -1064,6 +1092,86 @@ def operator_cost_predicted(df: pd.DataFrame) -> dict:
     }
 
 
+def savings_vs_baseline(df: pd.DataFrame, base_item: int = 0) -> list[dict]:
+    """Predicted vs ACTUAL saving %, both lenses, for every point vs item 0.
+
+    Before item 0 existed there was no VROOM-solved daily baseline, so only a
+    PREDICTED saving % could ever be stated (relative to ``cost_stage1_eur``
+    at theta=0). This is the reconstruction that finally allows the actual
+    number: for every OTHER (item, P, theta, plan) point present in *df*,
+
+        pred saving %   = (base_pred  - point_pred)  / base_pred  * 100
+        actual saving % = (base_act   - point_act)   / base_act   * 100
+
+    in both the routing lens (``Sigma vroom_cost`` / ``Sigma predicted``) and
+    the operator lens (``operator_cost_actual`` / ``operator_cost_predicted``,
+    i.e. OpCost with the peak-fleet weekly-fixed term).
+
+    PREDICTED totals never depend on solve status (they are read from the
+    grid's own pricing path at census time, independently of whether VROOM
+    ever ran), so they are always computed over every row of a group. ACTUAL
+    totals are reported TWICE per the controller's "state both totals"
+    instruction: "clean" pre-filters to OK/CACHED rows before computing
+    anything (a PARTIAL tour is dropped entirely, including its vehicles from
+    the peak); "all" passes every row straight to ``operator_cost_actual``,
+    which keeps its nuanced treatment (a PARTIAL row's cost is excluded from
+    ``variable`` but its ``vroom_n_routes`` still counts toward the peak — an
+    unpriced tour still needs its van). The two can legitimately differ, most
+    visibly in the operator lens's peak term; that difference IS the "with
+    and without PARTIAL rows" the spec asks for, not a rounding artifact.
+
+    Returns ``[]`` if item 0 has not been solved yet in *df* — an actual
+    saving needs an actual baseline, which is the entire reason item 0 exists.
+    """
+    base_all = df[df["item"] == base_item]
+    if base_all.empty:
+        return []
+    base_clean = base_all[base_all["vroom_status"].isin(["OK", "CACHED"])]
+    bp = operator_cost_predicted(base_all)
+    ba_all = operator_cost_actual(base_all)
+    ba_clean = operator_cost_actual(base_clean)
+
+    def _save_pct(base_val: float, point_val: float) -> float:
+        return (base_val - point_val) / base_val * 100.0 if base_val else float("nan")
+
+    out: list[dict] = []
+    for keys, g in df[df["item"] != base_item].groupby(
+            ["item", "penalty", "share_willing", "plan"], sort=True):
+        g_clean = g[g["vroom_status"].isin(["OK", "CACHED"])]
+        p = operator_cost_predicted(g)
+        a_all = operator_cost_actual(g)
+        a_clean = operator_cost_actual(g_clean)
+        out.append(dict(
+            item=int(keys[0]), penalty=float(keys[1]),
+            share_willing=float(keys[2]), plan=str(keys[3]),
+            n_all=int(len(g)), n_clean=int(len(g_clean)),
+            base_n_all=int(len(base_all)), base_n_clean=int(len(base_clean)),
+            pred_routing_save_pct=_save_pct(bp["routing_eur"], p["routing_eur"]),
+            pred_opcost_save_pct=_save_pct(bp["opcost_eur"], p["opcost_eur"]),
+            act_routing_save_pct_clean=_save_pct(ba_clean["routing_eur"],
+                                                 a_clean["routing_eur"]),
+            act_routing_save_pct_all=_save_pct(ba_all["routing_eur"],
+                                               a_all["routing_eur"]),
+            act_opcost_save_pct_clean=_save_pct(ba_clean["opcost_eur"],
+                                                a_clean["opcost_eur"]),
+            act_opcost_save_pct_all=_save_pct(ba_all["opcost_eur"],
+                                              a_all["opcost_eur"]),
+            base_routing_pred_eur=bp["routing_eur"],
+            point_routing_pred_eur=p["routing_eur"],
+            base_opcost_pred_eur=bp["opcost_eur"],
+            point_opcost_pred_eur=p["opcost_eur"],
+            base_routing_act_clean_eur=ba_clean["routing_eur"],
+            point_routing_act_clean_eur=a_clean["routing_eur"],
+            base_routing_act_all_eur=ba_all["routing_eur"],
+            point_routing_act_all_eur=a_all["routing_eur"],
+            base_opcost_act_clean_eur=ba_clean["opcost_eur"],
+            point_opcost_act_clean_eur=a_clean["opcost_eur"],
+            base_opcost_act_all_eur=ba_all["opcost_eur"],
+            point_opcost_act_all_eur=a_all["opcost_eur"],
+        ))
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Grid inputs
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1112,6 +1220,72 @@ def grid_cost(costs: pd.DataFrame, P: float, th: float, prov: str, plan: str
     return float(sub.iloc[0][PLAN_COST_COL[plan]])
 
 
+def grid_express_cost(costs: pd.DataFrame, P: float, th: float, prov: str
+                      ) -> float:
+    """``express_cost_eur`` of the grid's own bundled cost split."""
+    sub = costs[(np.isclose(costs.penalty, P))
+                & (np.isclose(costs.share_willing, th))
+                & (costs.provider == prov)]
+    assert len(sub) == 1, (
+        f"expected exactly 1 cost row for P={P} th={th} {prov}, got {len(sub)}")
+    return float(sub.iloc[0]["express_cost_eur"])
+
+
+def assert_baseline_invariant(chosen_df: pd.DataFrame, costs_df: pd.DataFrame,
+                              prov: str, plz_keys: list[str]
+                              ) -> tuple[np.ndarray, list[float]]:
+    """Item 0's three baked-in invariants of the theta=0 grid block.
+
+    theta=0 is a stage-2 NO-OP by construction (``61_grid_run_v2.py``'s
+    G-6f-1): every cell is pinned to the daily schedule, independently of P
+    (the wait penalty's ``local_willing`` term vanishes at theta=0, and stage
+    1 hard-codes the daily index besides — see ``run_triple``'s
+    ``if th == 0.0: chosen_s1 = np.full(...)``). Item 0 therefore builds VROOM
+    instances at ONE representative P (0.0) instead of once per P. This
+    function proves that shortcut is valid against the GRID'S OWN tables
+    rather than assuming it, and aborts loudly if it is not:
+
+      * ``schedule_idx_stage1 == schedule_idx_balanced`` at (P=0, theta=0)
+        — the two plan columns item 0 could validate under are the same plan;
+      * that array is identical for every OTHER P present in the grid at
+        theta=0 — the P-invariance the singleton ``penalties=[0.0]`` relies on;
+      * ``express_cost_eur == 0`` at (P=0, theta=0) — no cell has a
+        non-delivery day to carry express demand on, so the baseline is
+        delivery-only, exactly as ``enumerate_instances`` will independently
+        find (no cell of an all-daily schedule is ever "non-delivering").
+
+    Returns ``(chosen_stage1_array, [other P values checked])``.
+    """
+    s1 = chosen_array(chosen_df, 0.0, 0.0, prov, "stage1", plz_keys)
+    bal = chosen_array(chosen_df, 0.0, 0.0, prov, "balanced", plz_keys)
+    assert np.array_equal(s1, bal), (
+        f"item 0 FAILED for {prov}: schedule_idx_stage1 != "
+        f"schedule_idx_balanced at (P=0, theta=0) in "
+        f"{int((s1 != bal).sum())} cell(s) — theta=0 is supposed to be a "
+        "stage-2 no-op (G-6f-1); the baseline plan is not well-defined")
+
+    sub = chosen_df[np.isclose(chosen_df.share_willing, 0.0)
+                    & (chosen_df.provider == prov)]
+    checked_p: list[float] = []
+    for P in sorted(sub.penalty.unique()):
+        if np.isclose(float(P), 0.0):
+            continue
+        arr = chosen_array(chosen_df, float(P), 0.0, prov, "stage1", plz_keys)
+        assert np.array_equal(arr, s1), (
+            f"item 0 FAILED for {prov}: theta=0 schedule at P={P:g} differs "
+            f"from P=0 in {int((arr != s1).sum())} cell(s) — the baseline is "
+            "supposed to be P-invariant at theta=0 (local_willing vanishes "
+            "there for every P), so validating only P=0 would be wrong")
+        checked_p.append(float(P))
+
+    ecost = grid_express_cost(costs_df, 0.0, 0.0, prov)
+    assert ecost == 0.0, (
+        f"item 0 FAILED for {prov}: express_cost_eur={ecost:g} at "
+        "(P=0, theta=0), expected exactly 0 — an all-daily schedule should "
+        "leave no non-delivery day to carry express demand on")
+    return s1, checked_p
+
+
 def fleet_block(fleet: pd.DataFrame | None, P: float, th: float, prov: str,
                 hub_names: list[str]) -> pd.DataFrame | None:
     """The grid's fleet rows for this triple, with ``hub_idx`` restored.
@@ -1140,6 +1314,28 @@ def fleet_block(fleet: pd.DataFrame | None, P: float, th: float, prov: str,
 # ─────────────────────────────────────────────────────────────────────────────
 # Census
 # ─────────────────────────────────────────────────────────────────────────────
+
+def merge_queue_rows(old: pd.DataFrame | None, fresh: pd.DataFrame,
+                     items: list[int]) -> pd.DataFrame:
+    """Union *fresh* (just (re)computed for *items*) onto *old*.
+
+    Every OTHER item's rows in *old* — including their ``cache_hit`` /
+    ``g6_selected`` flags — are carried through untouched; only the rows
+    whose ``item`` is in *items* are replaced. A blind overwrite of
+    ``instance_queue.csv`` on a partial census (e.g. ``--items 0`` to add the
+    baseline onto a queue that already has items 1-3, some of them SOLVED in
+    ``tab_vroom_v2.csv``) would desync the queue from the solved table:
+    ``run_solve`` filters the queue by the requested items and would silently
+    see "0 queued" for any item this run did not touch, believing it done.
+
+    *old* is ``None`` the first time a census runs in a fresh output dir.
+    """
+    if old is None or old.empty:
+        return fresh.reindex(columns=QUEUE_COLS)
+    kept = old[~old["item"].isin(items)]
+    merged = pd.concat([kept, fresh], ignore_index=True, sort=False)
+    return merged.reindex(columns=QUEUE_COLS)
+
 
 def run_census(args, rev_dir: Path, out_dir: Path) -> pd.DataFrame:
     """Enumerate, price, gate, size and cache-probe every instance."""
@@ -1206,14 +1402,32 @@ def run_census(args, rev_dir: Path, out_dir: Path) -> pd.DataFrame:
                 f"{time.perf_counter() - t_m:.1f}s")
 
             for (it, P, plan) in blocks[th]:
+                if it == 0:
+                    _, checked_p = assert_baseline_invariant(
+                        chosen_df, costs_df, prov, od["plz_keys"])
+                    log(f"  [item 0] {prov}: daily baseline is P-invariant "
+                        f"(checked P={checked_p} against P=0) and "
+                        "stage1==balanced, express_cost_eur==0 at theta=0")
                 chosen = chosen_array(chosen_df, P, th, prov, plan,
                                       od["plz_keys"])
                 inst = enumerate_instances(it, P, th, plan, prov, chosen, od,
                                            m, schedules, head)
+                if it == 0:
+                    assert not any(r["vroom_kind"] == "express" for r in inst), (
+                        f"item 0 FAILED for {prov}: the all-daily baseline "
+                        "enumeration produced an express instance — no cell "
+                        "should have a non-delivery day to carry one on")
                 tag = f"item {it} P={P:g} th={th:g} {plan} {prov}"
                 total = identity_gate_routing(
                     inst, grid_cost(costs_df, P, th, prov, plan), tag)
-                if plan == "balanced":
+                if plan == "balanced" or it == 0:
+                    # item 0's plan is labelled "stage1", but at theta=0
+                    # stage1 == balanced == the fleet table's final plan
+                    # (assert_baseline_invariant just proved the first
+                    # equality; system_smooth_pass is off by default and a
+                    # no-op here regardless, so the fleet table's chosen_s3
+                    # coincides too) — G2 is exactly as meaningful here as for
+                    # the "balanced" items.
                     identity_gate_fleet(
                         inst, fleet_block(fleet_df, P, th, prov, hub_names), tag)
                 for r in inst:
@@ -1261,21 +1475,51 @@ def run_census(args, rev_dir: Path, out_dir: Path) -> pd.DataFrame:
     df["member_idx"] = df["member_idx"].apply(json.dumps)
 
     # ── G6 fallback for item 3, pre-computed so the controller can approve ──
+    # (only meaningful when item 3 is actually part of THIS run — see the
+    # merge note below for what happens to it otherwise.)
     item3 = [r for r in rows if int(r["item"]) == 3]
-    g6_keep = g6_select(item3) if item3 else set()
+    g6_keep_fresh = g6_select(item3) if item3 else set()
     if item3:
         df.loc[df["item"] == 3, "g6_selected"] = df.loc[
-            df["item"] == 3, "instance_id"].isin(g6_keep)
-    if args.g6_fallback:
-        log(f"[G6] --g6-fallback: item 3 restricted to {len(g6_keep)} of "
-            f"{len(item3)} instance(s)")
+            df["item"] == 3, "instance_id"].isin(g6_keep_fresh)
+    if args.g6_fallback and item3:
+        log(f"[G6] --g6-fallback: item 3 restricted to {len(g6_keep_fresh)} "
+            f"of {len(item3)} instance(s)")
     df = df.reindex(columns=QUEUE_COLS)
     out_dir.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out_dir / QUEUE_CSV, index=False)
-    log(f"[census] wrote {out_dir / QUEUE_CSV} ({len(df)} rows)")
 
-    write_census_report(df, out_dir, args, tmodel, g6_keep)
-    return df
+    # ── merge onto any existing queue — NEVER overwrite other items' rows ──
+    # A partial census (e.g. `--items 0` to add the baseline onto a queue
+    # that already has items 1-3, some of them SOLVED in tab_vroom_v2.csv)
+    # must only replace the rows for the item(s) it just (re)computed. A
+    # blind overwrite here would desync instance_queue.csv from
+    # tab_vroom_v2.csv: a resumed `run_solve` filters the queue by
+    # ``args.items`` and would silently see "0 queued" for every item this
+    # run did not touch, believing it complete.
+    queue_p = out_dir / QUEUE_CSV
+    old = pd.read_csv(queue_p) if queue_p.exists() else None
+    if old is not None:
+        kept_preview = old[~old["item"].isin(items)]
+        if len(kept_preview):
+            log(f"[census] preserving {len(kept_preview)} existing row(s) "
+                f"for item(s) "
+                f"{sorted(int(i) for i in kept_preview['item'].unique())} "
+                "not in this run")
+    merged = merge_queue_rows(old, df, items)
+    merged.to_csv(queue_p, index=False)
+    log(f"[census] wrote {queue_p} ({len(merged)} row(s) total, "
+        f"{len(df)} (re)computed this run)")
+
+    # g6_keep for the REPORT must reflect the MERGED table's own column, not
+    # just this run's fresh rows: a census that does not touch item 3 (e.g.
+    # `--items 0`) must not blank out a previously-computed G6 selection.
+    item3_merged = merged[merged["item"] == 3]
+    g6_keep = (set(item3_merged.loc[item3_merged["g6_selected"].astype(bool),
+                                    "instance_id"])
+              if len(item3_merged) else set())
+
+    write_census_report(merged, out_dir, args, tmodel, g6_keep)
+    return merged
 
 
 _CHOSEN_MAP_CACHE: dict[tuple, dict] = {}
@@ -1334,10 +1578,14 @@ def write_census_report(df: pd.DataFrame, out_dir: Path, args, tmodel: dict,
     item3_h = float(tot.loc[tot["item"] == 3, "est_hours_new"].sum()) \
         if (tot["item"] == 3).any() else 0.0
 
+    reported_items = sorted(int(i) for i in df["item"].unique())
     md: list[str] = []
     md.append("# VROOM validation v2 — cache census\n")
     md.append(f"- grid: `{args.rev_dir}`")
-    md.append(f"- items: {', '.join(str(i) for i in args.items)}")
+    md.append(f"- items (this run): {', '.join(str(i) for i in args.items)}")
+    if reported_items != sorted(args.items):
+        md.append(f"- items (reported below, incl. preserved rows from "
+                  f"earlier runs): {', '.join(str(i) for i in reported_items)}")
     md.append(f"- parallelism assumed: **{par}** concurrent VROOM requests")
     md.append(f"- solve-time model: {tmodel['source']}")
     if tmodel.get("bins"):
@@ -1384,7 +1632,13 @@ def write_census_report(df: pd.DataFrame, out_dir: Path, args, tmodel: dict,
               f"{item3_h:.2f} h of new solves")
     md.append(f"- item 3 under G6: {len(g6_keep)} instances selected, "
               f"{len(g6)} of them new → **{g6_h:.2f} h**")
-    md.append(f"- items 1+2 + G6 item 3: "
+    # This label is item-set-aware (not hardcoded "1+2"): `total_h` is a sum
+    # over whatever items are actually being reported below (see
+    # `reported_items` above), which need not be {1, 2, 3} — e.g. item 0
+    # joins it on a merged census.
+    non3_items = [i for i in reported_items if i != 3]
+    non3_label = "+".join(str(i) for i in non3_items) if non3_items else "(none)"
+    md.append(f"- items {non3_label} + G6 item 3: "
               f"**{total_h - item3_h + g6_h:.2f} h**\n")
     md.append("Apply with `--g6-fallback` (writes the sampling note into the "
               "output header); never applied to items 1–2.\n")
@@ -1655,6 +1909,49 @@ def write_report(out_dir: Path, args) -> None:
     md.append("`variable = Σ (vroom_cost − 189.15 · n_routes)`; "
               "`peak_h = max_d Σ n_routes of hub h`; "
               "`OpCost = Σ variable + 1134.90 · Σ_h peak_h`.\n")
+
+    md.append("## Predicted vs actual saving vs the theta=0 baseline (item 0)\n")
+    srows = savings_vs_baseline(df)
+    if not srows:
+        md.append("Item 0 (the theta=0 daily baseline) has not been solved "
+                  "yet in this output dir — an ACTUAL saving % needs an "
+                  "actual baseline, so only the predicted saving % (relative "
+                  "to `cost_stage1_eur`, see the grid tables directly) can be "
+                  "stated until it is.\n")
+    else:
+        b = srows[0]
+        md.append(f"Baseline (item 0, n={b['base_n_all']}) totals — "
+                  f"predicted: routing {b['base_routing_pred_eur']:,.0f} EUR, "
+                  f"OpCost {b['base_opcost_pred_eur']:,.0f} EUR; actual "
+                  f"clean (n={b['base_n_clean']}, OK/CACHED only): routing "
+                  f"{b['base_routing_act_clean_eur']:,.0f} EUR, OpCost "
+                  f"{b['base_opcost_act_clean_eur']:,.0f} EUR; actual incl. "
+                  f"PARTIAL (n={b['base_n_all']}): routing "
+                  f"{b['base_routing_act_all_eur']:,.0f} EUR, OpCost "
+                  f"{b['base_opcost_act_all_eur']:,.0f} EUR.\n")
+        md.append("| item | P | θ | plan | n (all/clean) | pred save % "
+                  "routing | actual save % routing (clean) | actual save % "
+                  "routing (all) | pred save % OpCost | actual save % OpCost "
+                  "(clean) | actual save % OpCost (all) |")
+        md.append("|---|---:|---:|---|---|---:|---:|---:|---:|---:|---:|")
+        for r in srows:
+            md.append(
+                f"| {r['item']} | {r['penalty']:g} | {r['share_willing']:g} | "
+                f"{r['plan']} | {r['n_all']}/{r['n_clean']} | "
+                f"{r['pred_routing_save_pct']:+.2f} | "
+                f"{r['act_routing_save_pct_clean']:+.2f} | "
+                f"{r['act_routing_save_pct_all']:+.2f} | "
+                f"{r['pred_opcost_save_pct']:+.2f} | "
+                f"{r['act_opcost_save_pct_clean']:+.2f} | "
+                f"{r['act_opcost_save_pct_all']:+.2f} |")
+        md.append("")
+        md.append("Saving % = `(baseline − point) / baseline * 100` in each "
+                  "lens; predicted is read from the grid's pricing path "
+                  "(status-independent); actual \"clean\" drops PARTIAL rows "
+                  "entirely (incl. from the peak-fleet term), \"all\" keeps "
+                  "`operator_cost_actual`'s treatment (PARTIAL excluded from "
+                  "cost, its vehicles still counted in the peak) — the two "
+                  "are the \"with and without PARTIAL rows\" totals.\n")
     (out_dir / REPORT_MD).write_text("\n".join(md), encoding="utf-8")
     log(f"[report] wrote {out_dir / REPORT_MD}")
 
@@ -1669,7 +1966,10 @@ def parse_args(argv=None):
                     help="grid directory holding _tab_chosen_v2.csv")
     ap.add_argument("--out-dir", default=None,
                     help="default: <rev-dir>/validation")
-    ap.add_argument("--items", default="1,2,3")
+    ap.add_argument("--items", default="1,2,3",
+                    help="comma-separated item id(s): 0=theta=0 daily "
+                         "baseline (Task 12b), 1-3 per the controller "
+                         "amendment; default 1,2,3")
     ap.add_argument("--providers", default=None,
                     help="comma-separated subset (smoke runs only)")
     ap.add_argument("--census-only", action="store_true")
