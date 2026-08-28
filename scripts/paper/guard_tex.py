@@ -10,7 +10,10 @@ silent loss, and every check is a hard failure, never a warning:
    (``\\section``, ``\\caption``, ``\\label``, ``\\ref``, ``\\cite``,
    ``\\footnote`` and relatives). A commented-out ``\\section`` is almost
    always a paragraph that fell into a ``%`` block, not a deliberate edit;
-   the few deliberate ones are named with ``--ignore-prefix``.
+   the few deliberate ones are named in :data:`DEFAULT_DRAFT_BLOCKS`, which
+   is applied automatically, and extra ones with ``--ignore-prefix``. The
+   guard **reports how many comment lines each exemption suppressed**, so a
+   broad exemption can never hide a growing block in silence.
 2. **page count** -- the built PDF's pages, read with ``pdftotext`` (pages
    are separated by form feeds), against ``--expect-pages``. This is the
    page-budget tripwire: a submission limit is not something to discover
@@ -29,11 +32,18 @@ the guard looks for ``<stem>.bbl`` next to the .tex and next to the PDF, then
 falls back to the ``\\bibliography{...}`` .bib next to the .tex (and says
 which source it used -- it never silently checks nothing).
 
-Usage:
+Usage -- this is the whole invocation; the draft-block exemptions are the
+script's own and no longer have to be passed in::
 
     python scripts/paper/guard_tex.py --tex paper/EWGT_2026_rev1/tbc_preprint_main.tex \\
         --pdf build/tbc_preprint_main.pdf --bbl build/tbc_preprint_main.bbl \\
         --expect-pages 17 --expect-bibitems 23
+
+    python scripts/paper/guard_tex.py --tex paper/EWGT_2026_rev1/supplementary.tex \\
+        --pdf build/supplementary.pdf --expect-pages 7
+
+Pass ``--no-default-ignores`` to see the manuscript's deliberate draft blocks
+reported alongside real defects.
 
 Exit code 0 if every requested check passes, 1 otherwise.
 """
@@ -55,6 +65,36 @@ CONTROL_SEQUENCES = (
     "footnote", "url", "includegraphics", "item", "begin", "end",
 )
 _HIDDEN_RE = re.compile(r"\\(" + "|".join(CONTROL_SEQUENCES) + r")\b")
+
+#: Comment prefixes that mark a **deliberate** commented-out draft block in
+#: ``paper/EWGT_2026_rev1/tbc_preprint_main.tex``. Applied by default so the
+#: guard passes on a clean tree when invoked the way ``--help`` shows; turn
+#: them off with ``--no-default-ignores``.
+#:
+#: These lived only in ``tests/unit/test_guard_tex.py`` until the final review
+#: (M6): the script's own documented invocation then failed on a clean tree,
+#: which teaches a reader to distrust it. The test now imports this list.
+#:
+#: What each one covers, as of the rev1 manuscript:
+#:
+#: ``"% \\subsection"`` / ``"% \\label"``
+#:     Two subsections that moved to the supplementary and are kept as a
+#:     record of the submitted method -- "Willingness to wait and residual
+#:     handling" and "Fleet balancing" (the latter explicitly marked
+#:     ``SUPERSEDED`` in the .tex). Narrow: they exempt exactly the
+#:     ``\\subsection`` / ``\\label`` line, not the prose under it.
+#: ``"% We propose a machine learning"``
+#:     An alternative introduction paragraph, commented out whole. This one
+#:     is **broad** -- it exempts a whole paragraph by its opening words, and
+#:     the paragraph contains ``\\citep`` calls -- so if that text were ever
+#:     re-swallowed the guard would stay silent about it. That is why the
+#:     suppression counts are printed: this prefix must suppress exactly ONE
+#:     line, and a rising count is the signal to look.
+DEFAULT_DRAFT_BLOCKS: tuple[str, ...] = (
+    "% \\subsection",
+    "% \\label",
+    "% We propose a machine learning",
+)
 _CITE_RE = re.compile(r"\\cite[a-zA-Z]*\*?(?:\[[^\]]*\])*\{([^}]+)\}")
 _BIBITEM_RE = re.compile(r"\\bibitem(?:\[[^\]]*\])?\{([^}]+)\}")
 _BIB_ENTRY_RE = re.compile(r"^\s*@\w+\s*\{\s*([^,\s]+)\s*,", re.MULTILINE)
@@ -89,6 +129,29 @@ def hidden_control_sequences(tex: str,
         if _HIDDEN_RE.search(s):
             out.append((i, s[:120]))
     return out
+
+
+def suppressed_by_prefix(tex: str, ignore_prefixes: tuple[str, ...]
+                         ) -> dict[str, int]:
+    """How many hiding comment lines each prefix in *ignore_prefixes* removes.
+
+    An exemption that suppresses nothing is stale; one that suppresses more
+    lines than it used to has quietly grown to cover text nobody vetted.
+    Neither is visible unless the counts are printed, which is what this is
+    for -- an exemption is a hole in a tripwire and must be as legible as the
+    tripwire itself. Each line is attributed to the FIRST matching prefix, so
+    the counts sum to the number of lines actually suppressed.
+    """
+    counts = dict.fromkeys(ignore_prefixes, 0)
+    for line in tex.replace("\r\n", "\n").split("\n"):
+        s = line.lstrip()
+        if not s.startswith("%") or not _HIDDEN_RE.search(s):
+            continue
+        for p in ignore_prefixes:
+            if s.startswith(p):
+                counts[p] += 1
+                break
+    return counts
 
 
 def bibitem_keys(bbl: str) -> list[str]:
@@ -167,6 +230,13 @@ def run_checks(tex_path: Path, pdf: Path | None = None,
          f"  {'OK' if not hidden else '*** FAIL ***'}")
     for i, s in hidden:
         echo(f"      line {i}: {s}")
+    if ignore_prefixes:
+        counts = suppressed_by_prefix(tex, ignore_prefixes)
+        echo(f"   exempted draft blocks ({sum(counts.values())} line(s) "
+             f"suppressed):")
+        for p, n in counts.items():
+            note = "  <-- suppresses nothing; stale?" if n == 0 else ""
+            echo(f"      {n:>3}x  {p!r}{note}")
     if hidden:
         failures.append(f"{len(hidden)} comment line(s) hide a control sequence "
                         f"in {tex_path.name}")
@@ -249,13 +319,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--expect-pages", type=int)
     ap.add_argument("--expect-bibitems", type=int)
     ap.add_argument("--ignore-prefix", action="append", default=[],
-                    help="a comment prefix that is a deliberate draft block; "
-                         "repeatable")
+                    help="an ADDITIONAL comment prefix that is a deliberate "
+                         "draft block; repeatable. The manuscript's own "
+                         "blocks are already covered by DEFAULT_DRAFT_BLOCKS")
+    ap.add_argument("--no-default-ignores", action="store_true",
+                    help="do not apply DEFAULT_DRAFT_BLOCKS, so the "
+                         "manuscript's deliberate draft blocks are reported "
+                         "as defects too")
     a = ap.parse_args(argv)
+
+    prefixes = tuple(a.ignore_prefix)
+    if not a.no_default_ignores:
+        prefixes = DEFAULT_DRAFT_BLOCKS + prefixes
 
     print(f"guard_tex: {a.tex}")
     failures = run_checks(a.tex, a.pdf, a.bbl, a.bib, a.expect_pages,
-                          a.expect_bibitems, tuple(a.ignore_prefix))
+                          a.expect_bibitems, prefixes)
     if failures:
         print("\nFAILED:")
         for f in failures:

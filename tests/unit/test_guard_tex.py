@@ -37,8 +37,13 @@ EXPECTED_BIBITEMS = 23
 #: alternative introduction paragraph and two subsections that moved to the
 #: supplementary (the second is explicitly labelled "SUPERSEDED" in the .tex).
 #: Everything else on a comment line is treated as a swallowed paragraph.
-DRAFT_BLOCKS = ("% \\subsection", "% \\label",
-                "% We propose a machine learning")
+#:
+#: This list is the SCRIPT's (``guard_tex.DEFAULT_DRAFT_BLOCKS``), applied by
+#: the guard automatically; the value here only PINS it. Final-review finding
+#: M6: while the exemptions lived only in this test file, the guard failed on
+#: a clean tree when run the way its own ``--help`` documents.
+EXPECTED_DRAFT_BLOCKS = ("% \\subsection", "% \\label",
+                         "% We propose a machine learning")
 
 
 def _load():
@@ -86,6 +91,47 @@ def test_named_draft_blocks_are_exempt_but_nothing_else_is(mod):
            "% \\caption{this one was swallowed}\n")
     out = mod.hidden_control_sequences(tex, ignore_prefixes=("% \\subsection",))
     assert [i for i, _ in out] == [2]
+
+
+def test_the_draft_block_allow_list_lives_in_the_script(mod):
+    """M6: the exemptions are the script's, not this test's private list.
+
+    A guard whose documented invocation fails on a clean tree teaches its
+    reader to ignore it. Pinning the list here means a new exemption has to
+    be added deliberately, in the script, and shows up in review.
+    """
+    assert mod.DEFAULT_DRAFT_BLOCKS == EXPECTED_DRAFT_BLOCKS
+
+
+def test_suppression_counts_make_every_exemption_visible(mod):
+    """An exemption is a hole in a tripwire; the counts keep it legible.
+
+    Guards the second-order risk in ``"% We propose a machine learning"``,
+    which exempts a whole paragraph by its opening words: a rising count is
+    the only signal that it has started covering text nobody vetted.
+    """
+    tex = ("% \\subsection{a}\n"
+           "% \\subsection{b}\n"
+           "% \\label{c}\n"
+           "% src: a benign comment with no control sequence\n")
+    counts = mod.suppressed_by_prefix(tex, ("% \\subsection", "% \\label",
+                                            "% never matches anything"))
+    assert counts == {"% \\subsection": 2, "% \\label": 1,
+                      "% never matches anything": 0}
+
+
+def test_default_ignores_are_applied_by_main_and_can_be_switched_off(mod, capsys):
+    """``main`` applies the allow-list itself; ``--no-default-ignores`` does not."""
+    rc = mod.main(["--tex", str(MAIN_TEX)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "comment lines hiding a control sequence: 0" in out
+    assert "exempted draft blocks (5 line(s) suppressed)" in out
+
+    rc = mod.main(["--tex", str(MAIN_TEX), "--no-default-ignores"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "comment lines hiding a control sequence: 5" in out
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -232,11 +278,11 @@ def test_the_committed_manuscript_passes_the_guard(mod, tmp_path, capsys):
                     + build.stderr.decode(errors="replace")[-2000:])
     assert bbl.exists(), "tectonic produced no .bbl (--keep-intermediates)"
 
+    # No --ignore-prefix: the guard applies DEFAULT_DRAFT_BLOCKS itself, so
+    # this is exactly the invocation its --help documents (finding M6).
     argv = ["--tex", str(MAIN_TEX), "--pdf", str(pdf), "--bbl", str(bbl),
             "--expect-pages", str(EXPECTED_PAGES),
             "--expect-bibitems", str(EXPECTED_BIBITEMS)]
-    for prefix in DRAFT_BLOCKS:
-        argv += ["--ignore-prefix", prefix]
     rc = mod.main(argv)
     out = capsys.readouterr().out
     assert rc == 0, (

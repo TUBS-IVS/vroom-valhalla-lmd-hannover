@@ -1069,16 +1069,36 @@ def operator_cost_actual(df: pd.DataFrame, fixed_cost_eur: float = FIXED_COST_EU
 
 
 def operator_cost_predicted(df: pd.DataFrame) -> dict:
-    """The same lens on the PREDICTED side, from the same instance rows."""
+    """The same lens on the PREDICTED side, from the same instance rows.
+
+    Unlike :func:`operator_cost_actual`, this side has **no** legitimate
+    missing value and therefore no NaN policy: the actual side may lack a
+    solver cost (a failed or partial solve, recorded as a status and counted
+    as ``n_missing_cost``), but every row's *prediction* comes from the grid's
+    own pricing path, which prices every instance it emits. A NaN here is a
+    defect upstream -- a broken join, a truncated CSV, a column read under the
+    wrong dtype -- and zero-filling it would silently UNDERSTATE the predicted
+    OpCost and shrink the very pred-vs-actual gap this script exists to
+    measure. So it raises. The G1 startup identity gate (Sigma predicted ==
+    grid cost) would catch a systematic NaN; a per-row one it would not,
+    which is exactly the hole this closes.
+    """
     if df is None or len(df) == 0:
         return {"variable_eur": 0.0, "sum_hub_peak": 0.0, "opcost_eur": 0.0,
                 "vehicle_days": 0.0, "routing_eur": 0.0, "n": 0}
     d = df.copy()
     hub_key = "hub_name" if "hub_name" in d.columns else "hub_idx"
-    d["predicted_n_routes"] = pd.to_numeric(d["predicted_n_routes"],
-                                            errors="coerce").fillna(0.0)
-    d["predicted_cost_eur"] = pd.to_numeric(d["predicted_cost_eur"],
-                                            errors="coerce").fillna(0.0)
+    for col in ("predicted_n_routes", "predicted_cost_eur"):
+        d[col] = pd.to_numeric(d[col], errors="coerce")
+        bad = d[col].isna()
+        if bool(bad.any()):
+            ids = d.loc[bad, "instance_id"].head(5).tolist() \
+                if "instance_id" in d.columns else d.index[bad][:5].tolist()
+            raise ValueError(
+                f"operator_cost_predicted: {int(bad.sum())} of {len(d)} rows "
+                f"have a non-numeric/missing {col!r}. A missing PREDICTION is "
+                f"a defect, never 0 -- the grid prices every instance it "
+                f"emits. First offending rows: {ids}")
     variable = float((d["predicted_cost_eur"]
                       - FIXED_COST_EUR * d["predicted_n_routes"]).sum())
     per_hub_day = d.groupby([hub_key, "day"])["predicted_n_routes"].sum()

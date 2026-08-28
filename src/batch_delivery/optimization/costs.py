@@ -26,10 +26,11 @@ from batch_delivery.config.constants import (
     VEHICLE_CAPACITY,
 )
 from batch_delivery.features import (
-    _PROVIDER_IDX,
+    _PROVIDER_IDX,  # noqa: F401  re-export: bundle.py and notebooks import it from here
     ALL_COLS,
     TIER2_COLS,
     compute_tier2_features,
+    provider_index,
 )
 from batch_delivery.io.demand import compute_shifted_demand_plz, get_source_days
 from batch_delivery.legacy.daganzo import CalibratedDaganzo, predict_vec
@@ -718,8 +719,9 @@ def build_cost_matrices_ml(
         return empty
 
     # ── 7) ML prediction (vectorised feature construction) ──────────
-    # NOTE: compute_tier2_features, ALL_COLS, TIER2_COLS, _PROVIDER_IDX, and
-    # get_source_days are all imported at module scope (see top of file).
+    # NOTE: compute_tier2_features, ALL_COLS, TIER2_COLS, _PROVIDER_IDX,
+    # provider_index and get_source_days are all imported at module scope
+    # (see top of file).
     # Do NOT add function-local imports here — Python's scoping rules would
     # then treat get_source_days as a local variable throughout this function,
     # causing UnboundLocalError at line 1087 in the earlier section.
@@ -877,7 +879,7 @@ def build_cost_matrices_ml(
     feat_mx[:, 19] = np.where(hp, _psd_std[pi_arr, d_arr] * psd_scale, 0.0)   # demand_std
     feat_mx[:, 20] = np.where(hp, _psd_max[pi_arr, d_arr] * psd_scale, np_f)  # max_stop_demand
     feat_mx[:, 21] = np_f / (min_veh * VEHICLE_CAPACITY)               # demand_cap_ratio
-    feat_mx[:, 22] = float(_PROVIDER_IDX.get(provider, 0))             # provider_idx
+    feat_mx[:, 22] = float(provider_index(provider))                   # provider_idx
     feat_mx[:, 23] = d_arr.astype(np.float64)                          # day_idx
     feat_mx[:, 24] = freq_f                                            # delivery_frequency
 
@@ -993,7 +995,7 @@ def build_cost_matrices_ml(
                              np.trunc(npx))
         min_vx = np.maximum(1.0, np.ceil(np.trunc(npx) / VEHICLE_CAPACITY))
         xf[:, 21] = np.trunc(npx) / (min_vx * VEHICLE_CAPACITY)
-        xf[:, 22] = float(_PROVIDER_IDX.get(provider, 0))
+        xf[:, 22] = float(provider_index(provider))
         xf[:, 23] = xd.astype(np.float64)
         xf[:, 24] = 1.0                      # single-day residual semantics
         express_cost[xi, xd] = ml_predictor.predict(

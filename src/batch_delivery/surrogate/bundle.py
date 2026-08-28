@@ -398,8 +398,8 @@ def bundle_features(members, day, matrices, *, kind,
     x[_I["max_stop_demand"]] = psd_max
     mv = max(1.0, np.ceil(np.trunc(npx) / VEHICLE_CAPACITY))
     x[_I["demand_cap_ratio"]] = np.trunc(npx) / (mv * VEHICLE_CAPACITY)
-    from batch_delivery.optimization.costs import _PROVIDER_IDX
-    x[_I["provider_idx"]] = float(_PROVIDER_IDX.get(matrices["provider"], 0))
+    from batch_delivery.features.core import provider_index
+    x[_I["provider_idx"]] = float(provider_index(matrices["provider"]))
     x[_I["day_idx"]] = float(day)
     x[_I["delivery_frequency"]] = float(freq)
     return x
