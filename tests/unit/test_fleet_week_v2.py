@@ -148,7 +148,7 @@ def test_refuses_when_the_routing_plan_peak_drifts_from_the_grid(mod, data):
     grid = grid.copy()
     sel = np.isclose(grid.penalty, 0.25) & np.isclose(grid.share_willing, 1.0)
     grid.loc[sel, "sum_hub_peak_plan1"] += 1.0
-    with pytest.raises(AssertionError, match="G6.*plan1"):
+    with pytest.raises(AssertionError, match=r"G6.*plan1"):
         mod.fleet_week_table(pp, grid, P_VALUES)
 
 
@@ -157,7 +157,7 @@ def test_refuses_when_the_operator_plan_peak_drifts_from_the_grid(mod, data):
     grid = grid.copy()
     sel = np.isclose(grid.penalty, 0.0) & np.isclose(grid.share_willing, 1.0)
     grid.loc[sel, "sum_hub_peak_plan2"] -= 2.0
-    with pytest.raises(AssertionError, match="G6.*plan2"):
+    with pytest.raises(AssertionError, match=r"G6.*plan2"):
         mod.fleet_week_table(pp, grid, P_VALUES)
 
 
