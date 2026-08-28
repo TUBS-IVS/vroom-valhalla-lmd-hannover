@@ -484,7 +484,9 @@ def _load_bundle_head(path: Path, jpath: Path, edges_path: Path | None):
     adapter passes it under whichever keyword the installed ``bundle.py``
     exposes, and — if a build has neither — performs the identical check here
     through the module's own ``load_bin_edges`` / ``assert_no_edge_drift``.
-    ``edges_checked`` records that the check ran; nothing silently skips it.
+    ``edges_checked`` records that the check ran; nothing silently skips it —
+    a build that cannot run it refuses the head outright (Task 11 review
+    Important 1) instead of handing one back unchecked.
     """
     import inspect
     params = inspect.signature(BundleHead.load).parameters
@@ -495,12 +497,23 @@ def _load_bundle_head(path: Path, jpath: Path, edges_path: Path | None):
                                        **{kw: edges_path}), True
     head = BundleHead.load(path, certified=jpath)
     if edges_path is None:
-        return head, False
+        raise SystemExit(
+            "_load_bundle_head: no edges file was given, so the bin-edge "
+            "drift check cannot run. A certified bin NAME means nothing "
+            "against terciles nobody checked; pass --edges-path (or set "
+            "'edges_source' in the certified-bins JSON).")
     mod = sys.modules[BundleHead.__module__]
     read_edges = getattr(mod, "load_bin_edges", None)
     no_drift = getattr(mod, "assert_no_edge_drift", None)
     if read_edges is None or no_drift is None:      # a build without either
-        return head, False
+        raise SystemExit(
+            f"_load_bundle_head: cannot run the bin-edge drift check "
+            f"against {edges_path}. {BundleHead.__module__} exposes "
+            "neither an edges_json/edges_path keyword on BundleHead.load "
+            "nor the module-level load_bin_edges/assert_no_edge_drift "
+            "helpers. A certified bin NAME means nothing against terciles "
+            "nobody checked; fix the installed bundle.py before using "
+            "--head installed.")
     no_drift(head.edges, read_edges(edges_path), source=str(edges_path))
     return head, True
 

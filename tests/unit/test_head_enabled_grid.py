@@ -20,6 +20,7 @@ import importlib.util
 import json
 import logging
 import pickle
+import sys
 import warnings
 from functools import lru_cache
 from pathlib import Path
@@ -289,6 +290,49 @@ def test_installed_head_refuses_drifted_tercile_edges(tmp_path):
     pkl = _install(tmp_path, bin_edges=moved)
     with pytest.raises((SystemExit, AssertionError)):
         mod.load_head("installed", pkl, model=None)
+
+
+def test_load_bundle_head_refuses_when_the_edge_check_cannot_run(
+        monkeypatch, tmp_path):
+    """Task 11 review Important 1.
+
+    Reproduces the reviewer's concrete scenario: ``BundleHead.load`` drops
+    its ``edges_json``/``edges_path`` keyword (e.g. a rename) and the
+    module-level ``assert_no_edge_drift`` helper disappears too -- the exact
+    condition under which ``_load_bundle_head`` used to hand back
+    ``(head, False)`` instead of refusing. A certified bin NAME means
+    nothing against terciles nobody re-checked, so this must raise loud
+    rather than degrade to an unchecked head.
+    """
+    mod = runner()
+
+    class _FakeHead:
+        edges = EDGES
+        restricted = True
+
+    def fake_load(path, certified=None):
+        return _FakeHead()
+
+    monkeypatch.setattr(BundleHead, "load", fake_load)
+    monkeypatch.setattr(sys.modules[BundleHead.__module__],
+                        "assert_no_edge_drift", None)
+
+    with pytest.raises(SystemExit, match="bin-edge drift"):
+        mod._load_bundle_head(tmp_path / "bundle_head.pkl",
+                              tmp_path / "bundle_head_certified_bins.json",
+                              tmp_path / "bundles" / "bundles_bins.json")
+
+
+def test_load_bundle_head_still_returns_the_head_when_the_check_runs(
+        tmp_path):
+    """The fix only refuses the UNCHECKED path; a real check is untouched."""
+    mod = runner()
+    pkl = _install(tmp_path)
+    head, edges_checked = mod._load_bundle_head(
+        pkl, tmp_path / "bundle_head_certified_bins.json",
+        tmp_path / "bundles" / "bundles_bins.json")
+    assert edges_checked is True
+    assert head.restricted
 
 
 def test_head_none_is_the_head_free_path():
