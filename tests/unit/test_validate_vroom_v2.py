@@ -724,15 +724,30 @@ def _savings_frame() -> pd.DataFrame:
     ])
 
 
+def _queue_frame_full() -> pd.DataFrame:
+    """The census matching ``_savings_frame`` exactly: every point FULL (no
+    G6 restriction anywhere) — solved count == census count for both items.
+    """
+    rows = [dict(item=0, penalty=0.0, share_willing=0.0, plan="stage1",
+                build_note="OK", g6_selected=True) for _ in range(2)]
+    rows += [dict(item=1, penalty=0.25, share_willing=1.0, plan="balanced",
+                 build_note="OK", g6_selected=True) for _ in range(2)]
+    return pd.DataFrame(rows)
+
+
 def test_savings_vs_baseline_both_lenses_with_and_without_partial(V):
     df = _savings_frame()
-    rows = V.savings_vs_baseline(df)
+    rows = V.savings_vs_baseline(df, _queue_frame_full())
     assert len(rows) == 1
     r = rows[0]
     assert (r["item"], r["penalty"], r["share_willing"], r["plan"]) == (
         1, 0.25, 1.0, "balanced")
     assert r["n_all"] == 2 and r["n_clean"] == 1
     assert r["base_n_all"] == 2 and r["base_n_clean"] == 2
+    # a FULL point (no G6 restriction): census == target == solved, and the
+    # saving-% fields are real numbers, never the subset "n/a"
+    assert r["is_g6_subset"] is False
+    assert r["n_census"] == 2 and r["n_target"] == 2
 
     base_pred_routing = 1050.0 + 820.0
     point_pred_routing = 650.0 + 150.0
@@ -774,12 +789,13 @@ def test_savings_vs_baseline_both_lenses_with_and_without_partial(V):
 def test_savings_vs_baseline_empty_when_baseline_unsolved(V):
     df = _savings_frame()
     df = df[df["item"] != 0]
-    assert V.savings_vs_baseline(df) == []
+    assert V.savings_vs_baseline(df, _queue_frame_full()) == []
 
 
 def test_write_report_includes_the_predicted_vs_actual_saving_section(V, tmp_path):
     df = _savings_frame()
     df.to_csv(tmp_path / V.SOLVED_CSV, index=False)
+    _queue_frame_full().to_csv(tmp_path / V.QUEUE_CSV, index=False)
     args = SimpleNamespace(rev_dir=str(tmp_path))
 
     V.write_report(tmp_path, args)
@@ -792,21 +808,168 @@ def test_write_report_includes_the_predicted_vs_actual_saving_section(V, tmp_pat
     # DIFFERENT values for this fixture (re-read the CSV exactly as
     # write_report did, so the formatted strings are guaranteed to line up).
     df_check = pd.read_csv(tmp_path / V.SOLVED_CSV)
-    r = V.savings_vs_baseline(df_check)[0]
+    queue_check = pd.read_csv(tmp_path / V.QUEUE_CSV)
+    r = V.savings_vs_baseline(df_check, queue_check)[0]
     clean_str = f"{r['act_opcost_save_pct_clean']:+.2f}"
     all_str = f"{r['act_opcost_save_pct_all']:+.2f}"
     assert clean_str in text
     assert all_str in text
     assert clean_str != all_str
+    # the gap columns this report adds are present and populated
+    assert "gap % routing" in text and "gap % OpCost" in text
+    assert f"{r['gap_routing_pct']:+.2f}" in text
 
 
 def test_write_report_notes_a_pending_baseline_when_item_0_absent(V, tmp_path):
     df = _savings_frame()
     df = df[df["item"] != 0]
     df.to_csv(tmp_path / V.SOLVED_CSV, index=False)
+    _queue_frame_full().to_csv(tmp_path / V.QUEUE_CSV, index=False)
     args = SimpleNamespace(rev_dir=str(tmp_path))
 
     V.write_report(tmp_path, args)
 
     text = (tmp_path / V.REPORT_MD).read_text(encoding="utf-8")
     assert "has not been solved yet" in text
+
+
+def test_write_report_requires_the_instance_queue(V, tmp_path):
+    """Task 12c: a saving % needs the census to know which points are a G6
+    subset — writing the report without it must raise, never guess."""
+    df = _savings_frame()
+    df.to_csv(tmp_path / V.SOLVED_CSV, index=False)
+    args = SimpleNamespace(rev_dir=str(tmp_path))
+    with pytest.raises(AssertionError, match="no instance queue"):
+        V.write_report(tmp_path, args)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# G6-subset awareness (Task 12c): a point solved on a stratified fallback
+# subset (67_'s ``--g6-fallback``) must never state a saving % against the
+# FULL baseline — the v6 bug this fixes had item 3 (1000 of 1594 census
+# instances solved) print a meaningless +38.7 % this way. The predicted-
+# vs-actual GAP on the point's own solved rows stays valid regardless.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _subset_frame() -> pd.DataFrame:
+    """A full theta=0 baseline (item 0), a FULL item 1 point (2/2 census),
+    and a G6 SUBSET item 3 point (2 of its 5 census instances solved)."""
+    rows = []
+    for d in range(2):
+        rows.append(dict(item=0, penalty=0.0, share_willing=0.0,
+                         plan="stage1", hub_name="A", day=d,
+                         vroom_cost_eur=1000.0, vroom_n_routes=2,
+                         predicted_cost_eur=1000.0, predicted_n_routes=2,
+                         vroom_status="OK", instance_kind="delivery_single"))
+    for d in range(2):
+        rows.append(dict(item=1, penalty=0.25, share_willing=1.0,
+                         plan="balanced", hub_name="A", day=d,
+                         vroom_cost_eur=400.0, vroom_n_routes=1,
+                         predicted_cost_eur=420.0, predicted_n_routes=1,
+                         vroom_status="OK", instance_kind="delivery_single"))
+    for d in range(2):                                 # only 2 of 5 census
+        rows.append(dict(item=3, penalty=0.25, share_willing=0.5,
+                         plan="balanced", hub_name="A", day=d,
+                         vroom_cost_eur=300.0, vroom_n_routes=1,
+                         predicted_cost_eur=310.0, predicted_n_routes=1,
+                         vroom_status="OK", instance_kind="delivery_single"))
+    return pd.DataFrame(rows)
+
+
+def _subset_queue() -> pd.DataFrame:
+    """item 0 and item 1 FULL (2/2 each); item 3 a G6 subset: 2 of a 5-row
+    census selected — matching exactly what ``_subset_frame`` solved."""
+    rows = [dict(item=0, penalty=0.0, share_willing=0.0, plan="stage1",
+                build_note="OK", g6_selected=True) for _ in range(2)]
+    rows += [dict(item=1, penalty=0.25, share_willing=1.0, plan="balanced",
+                 build_note="OK", g6_selected=True) for _ in range(2)]
+    rows += [dict(item=3, penalty=0.25, share_willing=0.5, plan="balanced",
+                 build_note="OK", g6_selected=(i < 2)) for i in range(5)]
+    return pd.DataFrame(rows)
+
+
+def test_savings_vs_baseline_g6_subset_is_na_but_gap_is_valid(V):
+    rows = V.savings_vs_baseline(_subset_frame(), _subset_queue())
+    by_item = {r["item"]: r for r in rows}
+    full, subset = by_item[1], by_item[3]
+
+    # the FULL item is unaffected: real numbers, census == target == solved
+    assert full["is_g6_subset"] is False
+    assert full["n_census"] == full["n_target"] == full["n_all"] == 2
+    assert not any(np.isnan(full[k]) for k in (
+        "pred_routing_save_pct", "act_routing_save_pct_all",
+        "pred_opcost_save_pct", "act_opcost_save_pct_all"))
+
+    # the SUBSET item: every saving-% field is NaN, n_all == n_target == 2
+    # (fully solved for ITS OWN target) but n_census == 5 (the full item)
+    assert subset["is_g6_subset"] is True
+    assert subset["n_all"] == 2 and subset["n_target"] == 2
+    assert subset["n_census"] == 5
+    for k in ("pred_routing_save_pct", "pred_opcost_save_pct",
+             "act_routing_save_pct_clean", "act_routing_save_pct_all",
+             "act_opcost_save_pct_clean", "act_opcost_save_pct_all"):
+        assert np.isnan(subset[k]), f"{k} must be NaN for a G6 subset"
+
+    # the GAP (predicted vs actual on the subset's OWN solved rows) stays a
+    # real number: Sigma pred 620, Sigma actual 600 -> +3.33 %
+    assert subset["point_routing_pred_eur"] == pytest.approx(620.0)
+    assert subset["point_routing_act_all_eur"] == pytest.approx(600.0)
+    assert subset["gap_routing_pct"] == pytest.approx(
+        (620.0 - 600.0) / 600.0 * 100)
+    assert not np.isnan(subset["gap_opcost_pct"])
+
+
+def test_write_report_g6_subset_row_prints_na_and_keeps_the_gap(V, tmp_path):
+    _subset_frame().to_csv(tmp_path / V.SOLVED_CSV, index=False)
+    _subset_queue().to_csv(tmp_path / V.QUEUE_CSV, index=False)
+    args = SimpleNamespace(rev_dir=str(tmp_path))
+
+    V.write_report(tmp_path, args)
+    text = (tmp_path / V.REPORT_MD).read_text(encoding="utf-8")
+
+    na = "n/a (G6 subset, not comparable to the full baseline)"
+    assert na in text
+    # the subset row's own n column: solved/census, not solved/clean
+    assert "| 3 | 0.25 | 0.5 | balanced | 2/5 |" in text
+
+    # the FULL item 1 row must NOT be marked n/a -- scoped to the savings
+    # table specifically, since the "Routing lens" table above it ALSO has
+    # rows starting "| 1 |" (grouped by instance_kind) and never says n/a
+    # regardless, which would make an unscoped search vacuously pass.
+    section = text.split("## Predicted vs actual saving")[1]
+    lines = [ln for ln in section.splitlines() if ln.startswith("| 1 |")]
+    assert lines and na not in lines[0]
+    # the gap columns are present and numeric for the subset row
+    rows = V.savings_vs_baseline(_subset_frame(), _subset_queue())
+    subset = [r for r in rows if r["item"] == 3][0]
+    assert f"{subset['gap_routing_pct']:+.2f}" in text
+
+
+def test_savings_vs_baseline_raises_when_baseline_itself_is_a_subset(V):
+    df = _subset_frame()
+    queue = _subset_queue()
+    queue.loc[queue.item == 0, "g6_selected"] = [True, False]
+    with pytest.raises(AssertionError, match="ITSELF a recorded G6 subset"):
+        V.savings_vs_baseline(df, queue)
+
+
+def test_savings_vs_baseline_raises_on_an_incompletely_solved_point(V):
+    df = _subset_frame()
+    df = df[~((df.item == 3) & (df.day == 1))]         # only 1 of 2 target
+    queue = _subset_queue()                            # target is still 2
+    with pytest.raises(AssertionError,
+                       match="solved but its recorded target"):
+        V.savings_vs_baseline(df, queue)
+
+
+def test_savings_vs_baseline_raises_when_a_point_has_no_census_group(V):
+    df = _subset_frame()
+    queue = _subset_queue()
+    queue = queue[queue.item != 3]                     # item 3 vanishes
+    with pytest.raises(AssertionError, match="no census group"):
+        V.savings_vs_baseline(df, queue)
+
+
+def test_savings_vs_baseline_requires_a_queue(V):
+    with pytest.raises(AssertionError, match="queue_df"):
+        V.savings_vs_baseline(_subset_frame(), None)

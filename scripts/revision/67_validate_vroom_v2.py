@@ -169,6 +169,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _stage3_common as C  # noqa: E402
+import _figs_tables_v2 as FT  # noqa: E402  -- shared G6-subset accounting
 
 sys.path.insert(0, str(C.ROOT / "src"))
 from batch_delivery.config.constants import (  # noqa: E402
@@ -1092,7 +1093,36 @@ def operator_cost_predicted(df: pd.DataFrame) -> dict:
     }
 
 
-def savings_vs_baseline(df: pd.DataFrame, base_item: int = 0) -> list[dict]:
+def _census_target_row(targets: pd.DataFrame, item: int, P: float, th: float,
+                       plan: str) -> pd.Series:
+    """The one ``g6_subset_targets`` row for (item, P, theta, plan).
+
+    Raises when the group is missing from *targets* (a point with solved
+    rows but no matching census group at all — its subset status cannot be
+    determined) or ambiguous (more than one match — a malformed queue).
+    """
+    mask = pd.Series(True, index=targets.index)
+    if "item" in targets.columns:
+        mask &= targets["item"] == int(item)
+    if "penalty" in targets.columns:
+        mask &= np.isclose(targets["penalty"], float(P))
+    if "share_willing" in targets.columns:
+        mask &= np.isclose(targets["share_willing"], float(th))
+    if "plan" in targets.columns:
+        mask &= targets["plan"] == str(plan)
+    sub = targets[mask]
+    assert len(sub) <= 1, (
+        f"instance_queue.csv has {len(sub)} ambiguous census group(s) for "
+        f"item={item} P={P:g} th={th:g} plan={plan}")
+    assert not sub.empty, (
+        f"no census group for item={item} P={P:g} th={th:g} plan={plan} in "
+        "instance_queue.csv — this point's subset status cannot be "
+        "determined; run the census for it first (never guess)")
+    return sub.iloc[0]
+
+
+def savings_vs_baseline(df: pd.DataFrame, queue_df: pd.DataFrame,
+                        base_item: int = 0) -> list[dict]:
     """Predicted vs ACTUAL saving %, both lenses, for every point vs item 0.
 
     Before item 0 existed there was no VROOM-solved daily baseline, so only a
@@ -1120,12 +1150,58 @@ def savings_vs_baseline(df: pd.DataFrame, base_item: int = 0) -> list[dict]:
     visibly in the operator lens's peak term; that difference IS the "with
     and without PARTIAL rows" the spec asks for, not a rounding artifact.
 
+    *queue_df* is 67_'s own ``instance_queue.csv`` (the full census, before
+    any G6 restriction) — REQUIRED. A point solved on a G6 stratified subset
+    (``--g6-fallback``) has fewer instances than the baseline it would be
+    measured against, and a saving % computed from it is not a saving %, it
+    is an artifact of comparing a part to a whole (the v6 case this fixes:
+    item 3 printed a meaningless +38.7 % this way). ``_figs_tables_v2.
+    g6_subset_targets`` — shared with 70_'s CO2 table, so the two never
+    disagree about which points are comparable — turns the queue's
+    ``g6_selected`` column into a per-point RECORDED subset status; this
+    function never infers "subset" from a bare row-count mismatch, it either
+    finds a recorded status or raises.
+
+    A subset point's six saving-% fields are ``float('nan')`` and
+    ``is_g6_subset`` is ``True`` on its row; ``n_census``/``n_target`` name
+    the full census and the recorded target (``n_all`` — this point's solved
+    count — equals ``n_target`` once it is done, never ``n_census``). The
+    predicted-vs-actual GAP for that same point (``gap_routing_pct`` /
+    ``gap_opcost_pct``, alongside the Sigma pred / Sigma actual eur totals
+    already returned) is unaffected: it compares the point's own predicted
+    and actual totals against EACH OTHER, not against the baseline, and is
+    exactly as valid on a subset as on the full item.
+
     Returns ``[]`` if item 0 has not been solved yet in *df* — an actual
-    saving needs an actual baseline, which is the entire reason item 0 exists.
+    saving needs an actual baseline, which is the entire reason item 0
+    exists. Raises if item 0 ITSELF is a recorded G6 subset (no comparison in
+    this table would mean anything), if a point's solved count does not
+    match its OWN recorded target — subset or not, an incompletely-solved
+    point silently compared to the baseline is the same failure mode this
+    function exists to catch — or if a point has no matching census group in
+    *queue_df* at all.
     """
+    assert queue_df is not None, (
+        "queue_df (instance_queue.csv) is required — a point's subset "
+        "status cannot be determined without the census")
     base_all = df[df["item"] == base_item]
     if base_all.empty:
         return []
+
+    targets = FT.g6_subset_targets(queue_df)
+
+    base_row = base_all.iloc[0]
+    base_t = _census_target_row(targets, base_item, base_row["penalty"],
+                                base_row["share_willing"], base_row["plan"])
+    assert not bool(base_t["is_g6_subset"]), (
+        f"item {base_item} (the theta=0 baseline) is ITSELF a recorded G6 "
+        f"subset ({len(base_all)}/{int(base_t['n_census'])}) — no saving % "
+        "in this table would be comparable to a partial baseline")
+    assert len(base_all) == int(base_t["n_census"]), (
+        f"item {base_item} (the baseline): {len(base_all)} solved but its "
+        f"own census has {int(base_t['n_census'])} — an incomplete baseline "
+        "cannot anchor a saving % table")
+
     base_clean = base_all[base_all["vroom_status"].isin(["OK", "CACHED"])]
     bp = operator_cost_predicted(base_all)
     ba_all = operator_cost_actual(base_all)
@@ -1134,28 +1210,48 @@ def savings_vs_baseline(df: pd.DataFrame, base_item: int = 0) -> list[dict]:
     def _save_pct(base_val: float, point_val: float) -> float:
         return (base_val - point_val) / base_val * 100.0 if base_val else float("nan")
 
+    def _gap_pct(pred_val: float, act_val: float) -> float:
+        return (pred_val - act_val) / act_val * 100.0 if act_val else float("nan")
+
+    nan = float("nan")
     out: list[dict] = []
     for keys, g in df[df["item"] != base_item].groupby(
             ["item", "penalty", "share_willing", "plan"], sort=True):
+        item_, P_, th_, plan_ = keys
+        t = _census_target_row(targets, item_, P_, th_, plan_)
+        is_subset = bool(t["is_g6_subset"])
+        n_census = int(t["n_census"])
+        n_target = int(t["n_target"])
+        n_all = int(len(g))
+        assert n_all == n_target, (
+            f"item {int(item_)} P={float(P_):g} th={float(th_):g} {plan_}: "
+            f"{n_all} solved but its recorded target is {n_target} "
+            f"({'a G6 subset of ' + str(n_census) if is_subset else 'the full census'}"
+            f") — an incompletely-solved point cannot be compared to the "
+            "baseline; finish solving it (or its G6 target) before "
+            "reporting a saving %")
+
         g_clean = g[g["vroom_status"].isin(["OK", "CACHED"])]
         p = operator_cost_predicted(g)
         a_all = operator_cost_actual(g)
         a_clean = operator_cost_actual(g_clean)
         out.append(dict(
-            item=int(keys[0]), penalty=float(keys[1]),
-            share_willing=float(keys[2]), plan=str(keys[3]),
-            n_all=int(len(g)), n_clean=int(len(g_clean)),
+            item=int(item_), penalty=float(P_), share_willing=float(th_),
+            plan=str(plan_), n_all=n_all, n_clean=int(len(g_clean)),
+            n_census=n_census, n_target=n_target, is_g6_subset=is_subset,
             base_n_all=int(len(base_all)), base_n_clean=int(len(base_clean)),
-            pred_routing_save_pct=_save_pct(bp["routing_eur"], p["routing_eur"]),
-            pred_opcost_save_pct=_save_pct(bp["opcost_eur"], p["opcost_eur"]),
-            act_routing_save_pct_clean=_save_pct(ba_clean["routing_eur"],
-                                                 a_clean["routing_eur"]),
-            act_routing_save_pct_all=_save_pct(ba_all["routing_eur"],
-                                               a_all["routing_eur"]),
-            act_opcost_save_pct_clean=_save_pct(ba_clean["opcost_eur"],
-                                                a_clean["opcost_eur"]),
-            act_opcost_save_pct_all=_save_pct(ba_all["opcost_eur"],
-                                              a_all["opcost_eur"]),
+            pred_routing_save_pct=(nan if is_subset else _save_pct(
+                bp["routing_eur"], p["routing_eur"])),
+            pred_opcost_save_pct=(nan if is_subset else _save_pct(
+                bp["opcost_eur"], p["opcost_eur"])),
+            act_routing_save_pct_clean=(nan if is_subset else _save_pct(
+                ba_clean["routing_eur"], a_clean["routing_eur"])),
+            act_routing_save_pct_all=(nan if is_subset else _save_pct(
+                ba_all["routing_eur"], a_all["routing_eur"])),
+            act_opcost_save_pct_clean=(nan if is_subset else _save_pct(
+                ba_clean["opcost_eur"], a_clean["opcost_eur"])),
+            act_opcost_save_pct_all=(nan if is_subset else _save_pct(
+                ba_all["opcost_eur"], a_all["opcost_eur"])),
             base_routing_pred_eur=bp["routing_eur"],
             point_routing_pred_eur=p["routing_eur"],
             base_opcost_pred_eur=bp["opcost_eur"],
@@ -1168,6 +1264,10 @@ def savings_vs_baseline(df: pd.DataFrame, base_item: int = 0) -> list[dict]:
             point_opcost_act_clean_eur=a_clean["opcost_eur"],
             base_opcost_act_all_eur=ba_all["opcost_eur"],
             point_opcost_act_all_eur=a_all["opcost_eur"],
+            # GAP: predicted vs actual on this point's OWN solved set — valid
+            # regardless of subset status (see docstring).
+            gap_routing_pct=_gap_pct(p["routing_eur"], a_all["routing_eur"]),
+            gap_opcost_pct=_gap_pct(p["opcost_eur"], a_all["opcost_eur"]),
         ))
     return out
 
@@ -1908,10 +2008,24 @@ def write_report(out_dir: Path, args) -> None:
     md.append("")
     md.append("`variable = Σ (vroom_cost − 189.15 · n_routes)`; "
               "`peak_h = max_d Σ n_routes of hub h`; "
-              "`OpCost = Σ variable + 1134.90 · Σ_h peak_h`.\n")
+              "`OpCost = Σ variable + 1134.90 · Σ_h peak_h`. Reproducing "
+              "`Σ_h peak_h` from the per-instance rows requires grouping "
+              "by `(provider, hub_idx, day)`, not `(hub_idx, day)` alone "
+              "— `hub_idx` is a per-provider-local index and is REUSED "
+              "across providers, so dropping `provider` merges different "
+              "providers' same-numbered hubs before the day-wise sum and "
+              "undercounts `Σ_h peak_h` (measured: 811 vs 819 for item 3; "
+              "1030 vs 1032 for item 1 P=0).\n")
 
     md.append("## Predicted vs actual saving vs the theta=0 baseline (item 0)\n")
-    srows = savings_vs_baseline(df)
+    queue_p = out_dir / QUEUE_CSV
+    assert queue_p.exists(), (
+        f"no instance queue at {queue_p} — a saving % vs the baseline needs "
+        "the census (it is the only record of which points are a G6 subset "
+        "and of their full census size); run the census (--census-only) "
+        "before --report-only")
+    queue_df = pd.read_csv(queue_p)
+    srows = savings_vs_baseline(df, queue_df)
     if not srows:
         md.append("Item 0 (the theta=0 daily baseline) has not been solved "
                   "yet in this output dir — an ACTUAL saving % needs an "
@@ -1931,19 +2045,42 @@ def write_report(out_dir: Path, args) -> None:
                   f"{b['base_opcost_act_all_eur']:,.0f} EUR.\n")
         md.append("| item | P | θ | plan | n (all/clean) | pred save % "
                   "routing | actual save % routing (clean) | actual save % "
-                  "routing (all) | pred save % OpCost | actual save % OpCost "
-                  "(clean) | actual save % OpCost (all) |")
-        md.append("|---|---:|---:|---|---|---:|---:|---:|---:|---:|---:|")
+                  "routing (all) | Σ pred routing € | Σ actual routing € | "
+                  "gap % routing | pred save % OpCost | actual save % "
+                  "OpCost (clean) | actual save % OpCost (all) | "
+                  "Σ pred OpCost € | Σ actual OpCost € | gap % OpCost |")
+        md.append("|---|---:|---:|---|---|---:|---:|---:|---:|---:|---:|"
+                  "---:|---:|---:|---:|---:|---:|")
+
+        NA = "n/a (G6 subset, not comparable to the full baseline)"
+
+        def _cell(is_subset: bool, value: float) -> str:
+            return NA if is_subset else f"{value:+.2f}"
+
+        def _n_cell(r: dict) -> str:
+            # A G6-restricted point's second number is its CENSUS (the full
+            # instance count before restriction), not its clean-solved count
+            # — that is what explains an "n/a" saving % at a glance.
+            return (f"{r['n_all']}/{r['n_census']}" if r["is_g6_subset"]
+                   else f"{r['n_all']}/{r['n_clean']}")
+
         for r in srows:
+            is_sub = bool(r["is_g6_subset"])
             md.append(
                 f"| {r['item']} | {r['penalty']:g} | {r['share_willing']:g} | "
-                f"{r['plan']} | {r['n_all']}/{r['n_clean']} | "
-                f"{r['pred_routing_save_pct']:+.2f} | "
-                f"{r['act_routing_save_pct_clean']:+.2f} | "
-                f"{r['act_routing_save_pct_all']:+.2f} | "
-                f"{r['pred_opcost_save_pct']:+.2f} | "
-                f"{r['act_opcost_save_pct_clean']:+.2f} | "
-                f"{r['act_opcost_save_pct_all']:+.2f} |")
+                f"{r['plan']} | {_n_cell(r)} | "
+                f"{_cell(is_sub, r['pred_routing_save_pct'])} | "
+                f"{_cell(is_sub, r['act_routing_save_pct_clean'])} | "
+                f"{_cell(is_sub, r['act_routing_save_pct_all'])} | "
+                f"{r['point_routing_pred_eur']:,.0f} | "
+                f"{r['point_routing_act_all_eur']:,.0f} | "
+                f"{r['gap_routing_pct']:+.2f} | "
+                f"{_cell(is_sub, r['pred_opcost_save_pct'])} | "
+                f"{_cell(is_sub, r['act_opcost_save_pct_clean'])} | "
+                f"{_cell(is_sub, r['act_opcost_save_pct_all'])} | "
+                f"{r['point_opcost_pred_eur']:,.0f} | "
+                f"{r['point_opcost_act_all_eur']:,.0f} | "
+                f"{r['gap_opcost_pct']:+.2f} |")
         md.append("")
         md.append("Saving % = `(baseline − point) / baseline * 100` in each "
                   "lens; predicted is read from the grid's pricing path "
@@ -1951,7 +2088,18 @@ def write_report(out_dir: Path, args) -> None:
                   "entirely (incl. from the peak-fleet term), \"all\" keeps "
                   "`operator_cost_actual`'s treatment (PARTIAL excluded from "
                   "cost, its vehicles still counted in the peak) — the two "
-                  "are the \"with and without PARTIAL rows\" totals.\n")
+                  "are the \"with and without PARTIAL rows\" totals. "
+                  "`gap %` = `(Σ pred − Σ actual) / Σ actual * 100` on the "
+                  "point's OWN solved set (\"all\"); it is valid regardless "
+                  "of subset status, unlike the saving % columns. A row "
+                  "whose solved instance set is a STRICT SUBSET of its own "
+                  "census (a G6 stratified fallback, ``--g6-fallback``) "
+                  "prints `n/a` in every saving-% cell — comparing a "
+                  "partial instance set's total to the FULL baseline is not "
+                  "a saving %, it is an artifact of comparing a part to a "
+                  "whole — and shows `n (all/census)` instead of `n "
+                  "(all/clean)` so the shortfall is visible at a glance; "
+                  "see the sampling note.\n")
     (out_dir / REPORT_MD).write_text("\n".join(md), encoding="utf-8")
     log(f"[report] wrote {out_dir / REPORT_MD}")
 

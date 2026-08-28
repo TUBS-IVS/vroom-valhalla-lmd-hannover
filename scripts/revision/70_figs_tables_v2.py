@@ -1284,26 +1284,57 @@ def write_co2(rev: Path, tables: Path) -> dict:
     t.to_csv(csv_p, index=False)
     print("\nCO2 / vehicle-km from validated VROOM routes "
           f"({H.CO2_KG_PER_KM} kg/vehicle-km, external assumption):")
-    print(t[["plan", "penalty", "share_willing", "n_instances", "km_week",
-             "co2_t_week", "vs_least_consolidated_pct",
+    print(t[["plan", "penalty", "share_willing", "n_instances", "n_census",
+             "km_week", "co2_t_week", "vs_least_consolidated_pct",
              "n_flagged"]].to_string(index=False))
-    tex = (t[["plan", "penalty", "km_week", "co2_t_week",
-              "vs_least_consolidated_pct"]]
+
+    # A G6-restricted point (67_'s --g6-fallback) is a COMPLETE validation
+    # of its own smaller, recorded scope -- co2_table() keeps its real
+    # n_instances/km_week rather than refusing the whole table over it (see
+    # g6_subset_targets). It is still not comparable to a full-census point,
+    # so it is excluded from the LaTeX comparison table and called out here
+    # and in the caption instead of a silent partial number.
+    has_subset_col = "is_g6_subset" in t.columns
+    subset = (t[t["is_g6_subset"].astype(bool)] if has_subset_col
+             else t.iloc[0:0])
+    tex_src = (t[~t["is_g6_subset"].astype(bool)] if has_subset_col else t)
+    if len(subset):
+        print("  NOTE: G6-restricted subset point(s) below -- solved/census "
+              "shown, excluded from the LaTeX table and from every other "
+              "point's 'vs least consolidated' reference:")
+        for r in subset.itertuples():
+            print(f"    plan={r.plan} P={r.penalty:g} "
+                  f"theta={r.share_willing:g}: {int(r.n_instances)}/"
+                  f"{int(r.n_census)} instances -- km not comparable to "
+                  "the full baseline")
+
+    tex = (tex_src[["plan", "penalty", "km_week", "co2_t_week",
+                   "vs_least_consolidated_pct"]]
            .rename(columns={"plan": "plan", "penalty": "$P$",
                             "km_week": "km/week",
                             "co2_t_week": "CO$_2$ t/week",
                             "vs_least_consolidated_pct":
                                 r"vs least consolidated [\%]"}))
-    H.to_latex(tex, tex_p,
-               caption=(r"Vehicle kilometres and CO$_2$ at the validated "
-                        r"operating points, from the actual VROOM routes of "
-                        r"this grid. CO$_2$ factor "
-                        f"{H.CO2_KG_PER_KM} kg/vehicle-km (external "
-                        r"assumption, not a model result). The reference is "
-                        r"the least consolidated \emph{validated} point of "
-                        r"the same plan; there is no VROOM baseline solve of "
-                        r"daily delivery on this allocation."),
-               label="tab:co2_km")
+    caption = (r"Vehicle kilometres and CO$_2$ at the validated "
+              r"operating points, from the actual VROOM routes of "
+              r"this grid. CO$_2$ factor "
+              f"{H.CO2_KG_PER_KM} kg/vehicle-km (external "
+              r"assumption, not a model result). The reference is "
+              r"the least consolidated \emph{validated} point of "
+              r"the same plan; there is no VROOM baseline solve of "
+              r"daily delivery on this allocation.")
+    if len(subset):
+        excl = "; ".join(
+            f"plan {r.plan}, $P$={r.penalty:g}, $\\theta$={r.share_willing:g} "
+            f"({int(r.n_instances)} of {int(r.n_census)} census instances)"
+            for r in subset.itertuples())
+        caption += (r" Excluded here: a point solved on a G6-restricted "
+                   r"subset ("
+                   + excl +
+                   r"), whose vehicle-km total is real for the instances it "
+                   r"solved but is not the plan's full weekly mileage and is "
+                   r"not comparable to the reference above.")
+    H.to_latex(tex, tex_p, caption=caption, label="tab:co2_km")
     return {"co2": csv_p}
 
 

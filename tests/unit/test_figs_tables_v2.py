@@ -1189,6 +1189,162 @@ def test_co2_decision_says_regenerated_when_it_can(tmp_path):
     assert str(H.CO2_KG_PER_KM) in msg
 
 
+# ---------------------------------------------------------------------
+# g6_subset_targets: the census accounting shared by 67_'s baseline-saving
+# table and 70_'s CO2 completeness gate (Task 12c).
+# ---------------------------------------------------------------------
+def test_g6_subset_targets_full_item_has_equal_census_and_target():
+    q = pd.DataFrame([dict(item=1, penalty=0.0, share_willing=1.0,
+                          plan="balanced", build_note="OK", g6_selected=True)
+                     for _ in range(3)])
+    t = H.g6_subset_targets(q)
+    assert len(t) == 1
+    r = t.iloc[0]
+    assert (r.n_census, r.n_target, r.is_g6_subset) == (3, 3, False)
+
+
+def test_g6_subset_targets_restricted_item_narrows_the_target():
+    q = pd.DataFrame([
+        dict(item=3, penalty=0.5, share_willing=1.0, plan="balanced",
+            build_note="OK", g6_selected=(i < 2))
+        for i in range(5)
+    ])
+    t = H.g6_subset_targets(q)
+    r = t.iloc[0]
+    assert (r.n_census, r.n_target, r.is_g6_subset) == (5, 2, True)
+
+
+def test_g6_subset_targets_ignores_unbuildable_rows():
+    q = pd.DataFrame([
+        dict(item=1, penalty=0.0, share_willing=1.0, plan="balanced",
+            build_note="OK", g6_selected=True),
+        dict(item=1, penalty=0.0, share_willing=1.0, plan="balanced",
+            build_note="NO_HUB", g6_selected=True),
+    ])
+    t = H.g6_subset_targets(q)
+    assert t.iloc[0].n_census == 1, "the unbuildable row never reaches VROOM"
+
+
+def test_g6_subset_targets_raises_when_every_row_is_excluded():
+    """g6_select always keeps the 3 smallest providers whole and >= 50% of
+    every other provider's demand -- an all-False group is not a shape it
+    produces, so this must not be silently called "a subset"."""
+    q = pd.DataFrame([dict(item=3, penalty=0.5, share_willing=1.0,
+                          plan="balanced", build_note="OK",
+                          g6_selected=False) for _ in range(4)])
+    with pytest.raises(H.SubsetStatusUnknown, match="cannot be attributed"):
+        H.g6_subset_targets(q)
+
+
+def test_g6_subset_targets_tolerates_a_minimal_queue_shape():
+    """No build_note, no g6_selected -- e.g. an older/minimal queue fixture:
+    every group is trivially its own full census."""
+    q = pd.DataFrame([dict(plan="balanced", penalty=0.0, share_willing=1.0)
+                      for _ in range(4)])
+    t = H.g6_subset_targets(q)
+    r = t.iloc[0]
+    assert (r.n_census, r.n_target, r.is_g6_subset) == (4, 4, False)
+
+
+# ---------------------------------------------------------------------
+# CO2 table + completeness gate: subset-aware (Task 12c). The v6 bug this
+# fixes: item 3 solved 1000 of a 1594-row census under --g6-fallback, and
+# the OLD completeness check (comparing against the full census) refused
+# the WHOLE co2_table() over it even though items 0-2 were fully solved.
+# ---------------------------------------------------------------------
+def _queue_g6(tmp_path, n_census=5, n_target=2, full_n=2):
+    """One G6-restricted point (item 3, P=0.5): *n_census* rows, *n_target*
+    of them selected. Plus one FULL point (item 1, P=0.0, *full_n* rows,
+    all selected) of the SAME plan, so a reference point exists."""
+    rows = [dict(instance_id=f"sub{i}", item=3, plan="balanced", penalty=0.5,
+                share_willing=1.0, build_note="OK",
+                g6_selected=(i < n_target)) for i in range(n_census)]
+    rows += [dict(instance_id=f"full{i}", item=1, plan="balanced",
+                 penalty=0.0, share_willing=1.0, build_note="OK",
+                 g6_selected=True) for i in range(full_n)]
+    d = tmp_path / "validation"
+    d.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(d / H.VALIDATION_QUEUE_NAME, index=False)
+    return tmp_path
+
+
+def _vroom_g6(tmp_path, n_solved_sub=2, n_solved_full=2, km_sub=50.0,
+             km_full=100.0):
+    """tab_vroom_v2.csv with *n_solved_sub* / *n_solved_full* rows solved."""
+    rows = [dict(instance_id=f"sub{i}", item=3, plan="balanced", penalty=0.5,
+                share_willing=1.0, vroom_distance_km=km_sub,
+                vroom_n_routes=1, vroom_status="OK", g6_selected=True)
+           for i in range(n_solved_sub)]
+    rows += [dict(instance_id=f"full{i}", item=1, plan="balanced",
+                 penalty=0.0, share_willing=1.0, vroom_distance_km=km_full,
+                 vroom_n_routes=1, vroom_status="OK", g6_selected=True)
+            for i in range(n_solved_full)]
+    d = tmp_path / "validation"
+    d.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(d / H.VALIDATION_NAME, index=False)
+    return tmp_path
+
+
+def test_co2_accepts_a_g6_restricted_point_once_its_target_is_fully_solved(
+        tmp_path):
+    """The v6 case: item 3's G6 target (2 of 5 census rows) is fully solved.
+    That is exactly as done as it will ever get under --g6-fallback --
+    comparing it to the FULL census must not refuse the whole table."""
+    _queue_g6(tmp_path, n_census=5, n_target=2, full_n=2)
+    _vroom_g6(tmp_path, n_solved_sub=2, n_solved_full=2)
+    t = H.co2_table(tmp_path)                            # must not raise
+    row = t[np.isclose(t.penalty, 0.5)].iloc[0]
+    assert bool(row.is_g6_subset)
+    assert row.n_instances == 2 and row.n_census == 5
+    assert np.isnan(row.vs_least_consolidated_pct), (
+        "a subset's mileage is not comparable to anything")
+    assert row.km_week == pytest.approx(100.0), (
+        "the subset's own km total is real, not zeroed or dropped")
+
+
+def test_co2_still_refuses_a_g6_point_short_of_its_own_target(tmp_path):
+    """Genuinely unfinished, restriction or not: only 1 of the 2 SELECTED
+    instances got solved. The fix narrows the target, it does not remove
+    the completeness check."""
+    _queue_g6(tmp_path, n_census=5, n_target=2, full_n=2)
+    _vroom_g6(tmp_path, n_solved_sub=1, n_solved_full=2)  # short by one
+    with pytest.raises(H.Co2Unavailable, match="INCOMPLETE"):
+        H.co2_table(tmp_path)
+
+
+def test_co2_subset_point_does_not_corrupt_another_points_reference(
+        tmp_path):
+    """A subset row must never become the 'least consolidated' reference for
+    another point of the same plan -- even a huge (unrepresentative)
+    per-instance km on the subset must not leak into the full point's %."""
+    rows_q = (
+        [dict(instance_id=f"full{i}", item=1, plan="balanced", penalty=0.0,
+             share_willing=1.0, build_note="OK", g6_selected=True)
+         for i in range(2)]
+        + [dict(instance_id=f"sub{i}", item=3, plan="balanced", penalty=0.9,
+                share_willing=1.0, build_note="OK", g6_selected=(i < 2))
+           for i in range(5)])
+    d = tmp_path / "validation"
+    d.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows_q).to_csv(d / H.VALIDATION_QUEUE_NAME, index=False)
+    rows_v = (
+        [dict(instance_id=f"full{i}", item=1, plan="balanced", penalty=0.0,
+             share_willing=1.0, vroom_distance_km=100.0, vroom_n_routes=1,
+             vroom_status="OK", g6_selected=True) for i in range(2)]
+        + [dict(instance_id=f"sub{i}", item=3, plan="balanced", penalty=0.9,
+                share_willing=1.0, vroom_distance_km=9999.0,
+                vroom_n_routes=1, vroom_status="OK", g6_selected=True)
+           for i in range(2)])
+    pd.DataFrame(rows_v).to_csv(d / H.VALIDATION_NAME, index=False)
+
+    t = H.co2_table(tmp_path)
+    full_row = t[np.isclose(t.penalty, 0.0)].iloc[0]
+    assert full_row.ref_km == pytest.approx(full_row.km_week), (
+        "with the subset excluded, the only remaining reference is the "
+        "full point itself, never the subset's inflated 9999 km/instance")
+    assert full_row.vs_least_consolidated_pct == pytest.approx(0.0)
+
+
 # ── the real region-type table ───────────────────────────────────────────
 def test_region_types_cover_the_grids_plz_universe():
     rt = H.region_types(ROOT)
@@ -1300,6 +1456,33 @@ def test_write_co2_refusal_with_nothing_stale_does_not_crash(tmp_path):
     assert out == {}
     assert not (tables / "tab_co2_km_v2.csv").exists()
     assert not (tables / "tab_co2_km_v2.tex").exists()
+
+
+# ── I-3: a G6-restricted point renders, but only in the CSV (Task 12c) ────
+def test_write_co2_keeps_g6_subset_in_csv_but_excludes_it_from_tex(tmp_path):
+    """co2_table() no longer refuses the whole table over item 3's subset
+    (see the H.co2_table tests above); write_co2 must still never let its
+    partial kilometres pass as a real comparison point in the PAPER table."""
+    rev = tmp_path / "rev"
+    _queue_g6(rev, n_census=5, n_target=2, full_n=2)
+    _vroom_g6(rev, n_solved_sub=2, n_solved_full=2)       # full=200km, sub=100km
+    tables = tmp_path / "tables"
+    tables.mkdir()
+
+    out = M70.write_co2(rev, tables)
+
+    assert out == {"co2": tables / "tab_co2_km_v2.csv"}
+    csv_df = pd.read_csv(tables / "tab_co2_km_v2.csv")
+    assert len(csv_df) == 2, "both points are kept in the CSV artifact"
+    sub_row = csv_df[np.isclose(csv_df.penalty, 0.5)].iloc[0]
+    assert bool(sub_row.is_g6_subset)
+    assert sub_row.n_instances == 2 and sub_row.n_census == 5
+
+    tex = (tables / "tab_co2_km_v2.tex").read_text(encoding="utf-8")
+    assert "200.00" in tex, "the FULL point's km stays in the paper table"
+    assert "100.00" not in tex, (
+        "the subset's km must not appear as a comparable paper-table row")
+    assert "G6-restricted subset" in tex, "the exclusion is explained"
 
 
 # ── I-1: no literal TAB where \theta belongs in a paper-facing caption ────

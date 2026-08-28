@@ -1022,12 +1022,86 @@ VALIDATION_NAME = "tab_vroom_v2.csv"
 #: finished one otherwise, and understates the week.
 VALIDATION_QUEUE_NAME = "instance_queue.csv"
 
+#: Grouping key for census accounting -- a 67_ ``instance_queue.csv`` /
+#: ``tab_vroom_v2.csv`` row's (item, P, theta, plan) identifies one
+#: validated point. Filtered down to whichever of these columns a given
+#: frame actually carries (older/minimal fixtures may lack ``item``).
+G6_GROUP_KEY = ["item", "penalty", "share_willing", "plan"]
+
 
 class Co2Unavailable(RuntimeError):
     """No validated route kilometres for this grid -- refuse, never carry."""
 
 
-def _assert_validation_complete(val_dir: Path, v: pd.DataFrame) -> None:
+class SubsetStatusUnknown(RuntimeError):
+    """A group's shortfall cannot be attributed to a recorded G6 restriction."""
+
+
+def g6_subset_targets(queue_df: pd.DataFrame,
+                      key: list[str] | None = None) -> pd.DataFrame:
+    """Per-group census accounting from a 67_ ``instance_queue.csv``.
+
+    One row per group of *key* (default :data:`G6_GROUP_KEY`, restricted to
+    whatever columns *queue_df* actually has) with:
+
+      * ``n_census``     -- buildable (``build_note == "OK"``) instances the
+        census produced for this group: the most it could ever solve.
+        Counts every row when *queue_df* carries no ``build_note`` column at
+        all (a minimal queue shape, e.g. in a unit-test fixture).
+      * ``n_target``      -- instances this run actually intends to solve:
+        equal to ``n_census`` unless a REAL G6 restriction narrowed it (some
+        buildable rows ``g6_selected``, some not), in which case it is the
+        selected count.
+      * ``is_g6_subset``  -- ``n_target < n_census``: a RECORDED, partial
+        selection -- never inferred from a bare row-count mismatch.
+
+    Shared by 67_'s baseline-saving table (a point solved on a G6 subset
+    cannot state an ACTUAL saving % against a FULL baseline) and 70_'s CO2
+    completeness gate (that same subset IS a complete validation of its own,
+    smaller, intended scope) -- so the two never disagree about which points
+    are comparable to what.
+
+    Raises :class:`SubsetStatusUnknown` for a group where ``g6_selected`` is
+    False for every buildable row: ``g6_select`` (67_) always keeps the
+    three smallest providers whole and >= 50% of every other provider's
+    demand, so an all-excluded group is not a shape it produces -- calling
+    that "a subset" would be a guess, not a recorded fact.
+    """
+    key = list(key) if key is not None else list(G6_GROUP_KEY)
+    key = [k for k in key if k in queue_df.columns]
+    assert key, f"queue_df has none of the grouping column(s) {G6_GROUP_KEY}"
+    ok = (queue_df[queue_df["build_note"] == "OK"]
+          if "build_note" in queue_df.columns else queue_df)
+    if "g6_selected" not in ok.columns or ok.empty:
+        out = ok.groupby(key).size().rename("n_census").reset_index()
+        out["n_target"] = out["n_census"]
+        out["is_g6_subset"] = False
+        return out
+    ok = ok.copy()
+    ok["g6_selected"] = ok["g6_selected"].astype(bool)
+    recs: list[dict] = []
+    for keys, g in ok.groupby(key, sort=True):
+        keys = keys if isinstance(keys, tuple) else (keys,)
+        n_census = int(len(g))
+        n_sel = int(g["g6_selected"].sum())
+        rec = dict(zip(key, keys))
+        if n_sel == n_census:
+            rec.update(n_census=n_census, n_target=n_census,
+                      is_g6_subset=False)
+        elif n_sel > 0:
+            rec.update(n_census=n_census, n_target=n_sel, is_g6_subset=True)
+        else:
+            raise SubsetStatusUnknown(
+                f"group {rec}: g6_selected is False for all {n_census} "
+                "buildable census row(s) -- not a shape g6_select() "
+                "produces, so this shortfall cannot be attributed to G6 "
+                "with confidence")
+        recs.append(rec)
+    return pd.DataFrame.from_records(recs)
+
+
+def _assert_validation_complete(val_dir: Path, v: pd.DataFrame
+                                ) -> pd.DataFrame | None:
     """Refuse a validation whose solved points are not finished.
 
     ``tab_vroom_v2.csv`` is appended as instances are solved, so a run in
@@ -1042,33 +1116,51 @@ def _assert_validation_complete(val_dir: Path, v: pd.DataFrame) -> None:
     theta) with no solved instance at all is simply a point this validation
     never ran; it does not appear in the CO2 table and is not a defect --
     v5, for instance, queued two such points and completed the six it did
-    run. A point that is PARTLY solved is the dangerous one.
+    run. A point that is short of its OWN target is the dangerous one.
+
+    A G6-restricted point counts as complete once every SELECTED instance is
+    solved -- comparing it against the FULL census instead of its recorded
+    target would call a finished restricted validation "incomplete" forever
+    (the v6 case this fixes: item 3 shows 1000/1594 and is exactly as done
+    as it will ever be under ``--g6-fallback``). See :func:`g6_subset_targets`
+    for how "target" is determined -- never guessed from a row-count gap.
+
+    Returns the per-group census accounting so callers (``co2_table``) can
+    LABEL a subset point instead of silently reporting its partial
+    kilometres as the plan's full week -- or ``None`` when there is no queue
+    to compare against (nothing to label either).
     """
     q_path = Path(val_dir) / VALIDATION_QUEUE_NAME
     if not q_path.exists():
-        return                      # nothing to compare against
+        return None                      # nothing to compare against
     q = pd.read_csv(q_path)
-    key = ["plan", "penalty", "share_willing"]
-    if not set(key) <= set(q.columns):
-        return
-    got = v.groupby(key).size().rename("solved")
-    want = q.groupby(key).size().rename("queued")
-    cmp = pd.concat([want, got], axis=1)
+    base_key = ["plan", "penalty", "share_willing"]
+    if not set(base_key) <= set(q.columns):
+        return None
+    key = [k for k in G6_GROUP_KEY if k in q.columns and k in v.columns]
+    if not set(base_key) <= set(key):
+        key = base_key
+    targets = g6_subset_targets(q, key=key)
+    got = v.groupby(key).size().rename("solved").reset_index()
+    cmp = targets.merge(got, on=key, how="left")
     cmp = cmp[cmp.solved.notna()]        # only points this run produced
-    short = cmp[cmp.solved < cmp.queued]
+    short = cmp[cmp.solved < cmp.n_target]
     if short.empty:
-        return
+        return targets
     rows = "; ".join(
-        f"{k}: {int(r.solved)}/{int(r.queued)}"
-        for k, r in short.iterrows())
+        f"{ {k: r[k] for k in key} }: {int(r.solved)}/{int(r.n_target)}"
+        + (" (G6 target)" if bool(r.is_g6_subset) else "")
+        for _, r in short.iterrows())
     raise Co2Unavailable(
         f"{val_dir / VALIDATION_NAME} is INCOMPLETE -- "
-        f"{int(short.solved.sum()):,d} of {int(short.queued.sum()):,d} "
-        f"queued instance(s) are solved in {len(short)} of {len(cmp)} "
-        "validated point(s). A kilometre sum over a validation that is "
-        "still running is not the plan's weekly mileage, it is a fraction "
-        "of it, and nothing in the file says so. Short: "
-        f"{rows}. Wait for the validation to finish, then re-run."
+        f"{int(short.solved.sum()):,d} of {int(short.n_target.sum()):,d} "
+        f"intended instance(s) are solved in {len(short)} of {len(cmp)} "
+        "validated point(s) (a G6-restricted point is compared against its "
+        "OWN recorded target, never the full census). A kilometre sum over "
+        "a validation that is still running is not the plan's weekly "
+        "mileage, it is a fraction of it, and nothing else would have "
+        f"caught it. Short: {rows}. Wait for the validation to finish, "
+        "then re-run."
     )
 
 
@@ -1087,6 +1179,14 @@ def co2_table(rev_dir: Path, factor: float = CO2_KG_PER_KM) -> pd.DataFrame:
     There is deliberately no fallback: the submitted table belongs to a
     different grid, a different plan and a different cost path, so carrying
     it over silently is exactly the failure 38.8 is about.
+
+    A G6-restricted point (67_'s ``--g6-fallback``, item 3 in the v6 grid)
+    is KEPT, not dropped: its own ``n_instances`` / ``km_week`` are real
+    numbers for the (smaller) instance set it actually solved. It is marked
+    ``is_g6_subset=True`` with its full census size in ``n_census``, its
+    ``vs_least_consolidated_pct`` is left ``NaN`` (comparing a subset's
+    mileage to anything is not the plan's weekly mileage), and it is
+    excluded from being the reference point for any OTHER row of its plan.
     """
     path = Path(rev_dir) / "validation" / VALIDATION_NAME
     if not path.exists():
@@ -1111,7 +1211,7 @@ def co2_table(rev_dir: Path, factor: float = CO2_KG_PER_KM) -> pd.DataFrame:
             f"{path}: {int((~sel).sum())} of {len(v)} row(s) are not "
             "g6_selected -- this validation is a SAMPLE, so its kilometre "
             "sum is not the plan's weekly mileage")
-    _assert_validation_complete(path.parent, v)
+    targets = _assert_validation_complete(path.parent, v)
 
     status = v.vroom_status.astype(str).str.upper()
     flagged = ~status.isin(["OK", "CACHED"])
@@ -1122,11 +1222,28 @@ def co2_table(rev_dir: Path, factor: float = CO2_KG_PER_KM) -> pd.DataFrame:
               n_routes=("vroom_n_routes", "sum"),
               n_flagged=("_flag", "sum")))
     g["co2_t_week"] = g.km_week * factor / 1000.0
-    ref = (g.sort_values("penalty").groupby("plan")
+
+    # G6-subset accounting -- never let a restricted point's partial total
+    # pass as a full week's mileage, and never let it anchor another
+    # point's "vs least consolidated" reference either.
+    base_key = ["plan", "penalty", "share_willing"]
+    if targets is not None:
+        sub = (targets[base_key + ["n_census", "is_g6_subset"]]
+              .drop_duplicates(base_key))
+        g = g.merge(sub, on=base_key, how="left")
+        g["is_g6_subset"] = g["is_g6_subset"].fillna(False)
+        g["n_census"] = g["n_census"].fillna(g["n_instances"]).astype(int)
+    else:
+        g["n_census"] = g["n_instances"]
+        g["is_g6_subset"] = False
+
+    ref_src = g[~g["is_g6_subset"]] if g["is_g6_subset"].any() else g
+    ref = (ref_src.sort_values("penalty").groupby("plan")
            .agg(ref_km=("km_week", "last"), ref_P=("penalty", "last"))
            .reset_index())
     g = g.merge(ref, on="plan", how="left")
     g["vs_least_consolidated_pct"] = 100 * (g.km_week - g.ref_km) / g.ref_km
+    g.loc[g["is_g6_subset"], "vs_least_consolidated_pct"] = np.nan
     g["co2_kg_per_km"] = factor
     return g.sort_values(["plan", "penalty"]).reset_index(drop=True)
 
@@ -1138,6 +1255,10 @@ def co2_decision(rev_dir: Path) -> str:
     except Co2Unavailable as exc:
         return f"REFUSED -- {exc}"
     plans = ", ".join(sorted(t.plan.unique()))
+    note = ""
+    if "is_g6_subset" in t.columns and bool(t["is_g6_subset"].any()):
+        note = (f" ({int(t['is_g6_subset'].sum())} of them a G6-restricted "
+                "subset, not compared to the least-consolidated reference)")
     return (f"REGENERATED from {len(t)} validated point(s) "
             f"(plans: {plans}) at {CO2_KG_PER_KM} kg CO2/vehicle-km "
-            "(external assumption, Kompendium 38.6).")
+            f"(external assumption, Kompendium 38.6).{note}")
