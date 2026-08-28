@@ -28,25 +28,26 @@ grid.  NOTE: this builder reads the 2026-07 STAGE-3 schema
 (``tab_costs_smoothed.csv`` etc.); pointing ``REV_DIR`` at a v5-schema grid
 gives it no inputs -- ``70_`` renders the v5 figures itself.
 
-DEPRECATED (2026-08 revision): superseded by scripts/revision/61_grid_run_v2.py,
-67_validate_vroom_v2.py, 70_figs_tables_v2.py and 73_tables_ops_v2.py.
+FROZEN (2026-08 revision): builds the accepted paper Fig. 5; see the banner
+below. Its plotting code must not change.
 """
 from __future__ import annotations
 import sys
 
-# --- DEPRECATED ENTRY POINT (2026-08 revision) -----------------------------
-import warnings as _deprecation_warnings
+# --- FROZEN ACCEPTED-FIGURE BUILDER (2026-08 revision) ----------------------
+import warnings as _frozen_notice
 
-_deprecation_warnings.warn(
-    "30_fig5_heatmap_smoothed.py is a STALE entry point: it recomputes totals WITHOUT the pool "
-    "term and predates the universal tour rule, the two cost lenses and the "
-    "operator polish. Its numbers are NOT comparable with the 2026-08 "
-    "revision. Use scripts/revision/61_grid_run_v2.py for the grid, "
-    "scripts/revision/67_validate_vroom_v2.py for VROOM validation, "
-    "scripts/revision/70_figs_tables_v2.py for figures and tables, and "
-    "scripts/revision/73_tables_ops_v2.py for the v2 ops/knee/value-of-"
-    "stage-2 tables.",
-    DeprecationWarning,
+_frozen_notice.warn(
+    "30_fig5_heatmap_smoothed.py is FROZEN: it builds the accepted paper "
+    "Fig. 5 and its plotting code must not change. Do NOT run it against "
+    "the 2026-07 tables and quote the result -- that schema has no pool "
+    "term and predates the universal tour rule and the two cost lenses. "
+    "Run it only through scripts/revision/74_v2_to_legacy_tables.py "
+    "--render, which adapts a v5/v6 grid to the schema this file reads and "
+    "sets REV_DIR / REV_RUN_DIR / REV_BASE_TOTAL / REV_BASELINE_CV "
+    "accordingly. The two-lens designs live in 70_figs_tables_v2.py as "
+    "supp_*.",
+    UserWarning,
     stacklevel=2,
 )
 # ---------------------------------------------------------------------------

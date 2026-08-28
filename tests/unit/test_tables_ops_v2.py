@@ -407,15 +407,17 @@ def test_value_of_stage2_theta0_noop_violation_raises():
 
 
 # ═════════════════════════════════════════════════════════════════════════
-# The eight old-schema scripts: import-time DeprecationWarning + one-line
+# The six old-schema scripts: import-time DeprecationWarning + one-line
 # docstring note. py_compile only -- these scripts are not safe to execute
 # in a unit test (module-level checkpoint/Docker/filesystem side effects).
+#
+# 30_/31_/32_ are NOT in this list: since 74_v2_to_legacy_tables.py they are
+# the FROZEN builders of the three ACCEPTED paper figures, not stale entry
+# points -- see FROZEN_BUILDER_SCRIPTS below (Task 13B review, I3).
 # ═════════════════════════════════════════════════════════════════════════
 DEPRECATED_SCRIPTS = [
     "scripts/revision/20_validate_vroom_smoothed.py",
     "scripts/revision/21_pstar_knees_smoothed.py",
-    "scripts/revision/30_fig5_heatmap_smoothed.py",
-    "scripts/revision/32_fig4_mix.py",
     "scripts/revision/40_tables_smoothed.py",
     "scripts/revision/41_op_kpi_tables_smoothed.py",
     "scripts/revision/50_recompute_fleet_wait_fixed.py",
@@ -454,4 +456,56 @@ def test_deprecated_script_warning_fires_before_any_filterwarnings(relpath):
     if fw_idx != -1:
         assert warn_idx < fw_idx, (
             f"{relpath}: deprecation warning appears AFTER "
+            "warnings.filterwarnings('ignore') -- it would be suppressed")
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# 30_/31_/32_: the three FROZEN accepted-paper-figure builders. Since
+# 74_v2_to_legacy_tables.py adapts a v5/v6 grid to the schema they read,
+# they are no longer stale entry points -- they build the submitted Fig.
+# 4/5/6 layouts on the new numbers, and their plotting code must not change.
+# The banner must say so and must not claim they are deprecated/stale
+# (Task 13B review, I3). py_compile only, same reason as above.
+# ═════════════════════════════════════════════════════════════════════════
+FROZEN_BUILDER_SCRIPTS = [
+    "scripts/revision/30_fig5_heatmap_smoothed.py",
+    "scripts/revision/31_fig6_structural_smoothed.py",
+    "scripts/revision/32_fig4_mix.py",
+]
+
+
+@pytest.mark.parametrize("relpath", FROZEN_BUILDER_SCRIPTS)
+def test_frozen_builder_script_py_compiles(relpath, tmp_path):
+    py_compile.compile(str(ROOT / relpath), cfile=str(tmp_path / "out.pyc"),
+                       doraise=True)
+
+
+@pytest.mark.parametrize("relpath", FROZEN_BUILDER_SCRIPTS)
+def test_frozen_builder_script_warns_with_expected_wording(relpath):
+    src = (ROOT / relpath).read_text(encoding="utf-8")
+    assert "DeprecationWarning" not in src, (
+        f"{relpath}: still raises DeprecationWarning -- it is FROZEN, not "
+        "deprecated, since it builds an accepted paper figure")
+    assert "STALE entry point" not in src
+    assert "FROZEN" in src
+    assert "accepted paper Fig." in src
+    assert "74_v2_to_legacy_tables.py" in src
+    for token in ("REV_DIR", "REV_RUN_DIR", "REV_BASE_TOTAL",
+                  "REV_BASELINE_CV"):
+        assert token in src, f"{relpath}: banner text lacks {token}"
+    docstring = src.split('"""', 2)[1]
+    assert "FROZEN (2026-08 revision)" in docstring, (
+        f"{relpath}: module docstring lacks the one-line FROZEN note")
+
+
+@pytest.mark.parametrize("relpath", FROZEN_BUILDER_SCRIPTS)
+def test_frozen_builder_warning_fires_before_any_filterwarnings(relpath):
+    """Same hazard as the deprecated scripts: a notice raised after
+    warnings.filterwarnings('ignore') is silently swallowed."""
+    src = (ROOT / relpath).read_text(encoding="utf-8")
+    warn_idx = src.index("_frozen_notice.warn(")
+    fw_idx = src.find("warnings.filterwarnings(")
+    if fw_idx != -1:
+        assert warn_idx < fw_idx, (
+            f"{relpath}: FROZEN notice appears AFTER "
             "warnings.filterwarnings('ignore') -- it would be suppressed")

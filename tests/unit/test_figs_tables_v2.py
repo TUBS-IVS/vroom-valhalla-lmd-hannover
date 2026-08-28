@@ -1179,3 +1179,111 @@ def test_co2_without_a_queue_file_still_works(tmp_path):
     compared against; that is a missing check, not a failure."""
     _vroom(tmp_path)
     assert len(H.co2_table(tmp_path)) == 2
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# scripts/revision/70_figs_tables_v2.py itself -- write_ablation's caption
+# (I1) and write_co2's refusal path (I2). Task 13B review fixes.
+# ═════════════════════════════════════════════════════════════════════════
+def _load70():
+    sys.path.insert(0, str(REV))
+    spec = importlib.util.spec_from_file_location(
+        "_figs_tables_v2_driver", REV / "70_figs_tables_v2.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+M70 = _load70()
+
+
+# ── I-2: a REFUSED render must not leave a stale CO2 table on disk ────────
+def test_write_co2_refusal_unlinks_a_stale_table_pair(tmp_path):
+    """The exact hazard report S11.3 describes, one step further: a render
+    taken mid-validation once wrote a wrong tab_co2_km_v2.{csv,tex}; the
+    next (correctly refusing) render must not let that stale pair survive
+    on disk for Task 18's collection pass to carry forward."""
+    rev = tmp_path / "rev"
+    rev.mkdir()
+    tables = tmp_path / "tables"
+    tables.mkdir()
+    csv_p = tables / "tab_co2_km_v2.csv"
+    tex_p = tables / "tab_co2_km_v2.tex"
+    csv_p.write_text("stale,csv\n1,2\n", encoding="utf-8")
+    tex_p.write_text("% stale tex\n", encoding="utf-8")
+
+    out = M70.write_co2(rev, tables)          # rev has no validation/ at all
+
+    assert out == {}
+    assert not csv_p.exists(), "REFUSED render left the stale CSV behind"
+    assert not tex_p.exists(), "REFUSED render left the stale TEX behind"
+
+
+def test_write_co2_refusal_with_nothing_stale_does_not_crash(tmp_path):
+    """unlink(missing_ok=True) must tolerate the common case: no prior
+    render, so there is nothing to remove."""
+    rev = tmp_path / "rev"
+    rev.mkdir()
+    tables = tmp_path / "tables"
+    tables.mkdir()
+
+    out = M70.write_co2(rev, tables)
+
+    assert out == {}
+    assert not (tables / "tab_co2_km_v2.csv").exists()
+    assert not (tables / "tab_co2_km_v2.tex").exists()
+
+
+# ── I-1: no literal TAB where \theta belongs in a paper-facing caption ────
+def _ablation_fixture(rev: Path) -> None:
+    """The three files write_ablation's OWN variant (``rev``) needs -- an
+    'ok' row at every ABLATION_POINTS entry plus a theta=0 baseline. run2/
+    v3/v4 are made DIR_MISSING by pointing M70.ROOT at an empty tmp dir
+    (see the test), so only this variant has to be real."""
+    costs, fleet, wait = [], [], []
+    for prov in PROVIDERS:
+        costs.append(dict(penalty=0.0, share_willing=0.0, provider=prov,
+                          cost_stage2_eur=1000.0, operator_cost_eur=1200.0))
+    for P, th in M70.ABLATION_POINTS:
+        for prov in PROVIDERS:
+            costs.append(dict(penalty=P, share_willing=th, provider=prov,
+                              cost_stage2_eur=800.0, operator_cost_eur=900.0))
+            fleet.append(dict(penalty=P, share_willing=th, provider=prov,
+                              hub="H1", fleet=5))
+        wait.append(dict(penalty=P, share_willing=th,
+                         wait_num_willing=50.0, total_parcels=500.0))
+    pd.DataFrame(costs).to_csv(rev / "tab_costs_v2.csv", index=False)
+    pd.DataFrame(fleet).to_csv(rev / "tab_fleet_per_hub_v2.csv", index=False)
+    pd.DataFrame(wait).to_csv(rev / "tab_wait_v2.csv", index=False)
+
+
+def test_ablation_caption_has_theta_and_no_tab_character(tmp_path,
+                                                          monkeypatch):
+    """I1 regression (Task 13B review): a literal TAB once stood where
+    \\theta belonged in this caption, so LaTeX silently typeset the wrong
+    baseline symbol ('heta = 0') in the published ablation table -- no
+    error, no warning, just a wrong PDF. This checks the WRITTEN .tex, not
+    just the source string, so a future edit that reintroduces a stray
+    control character is caught."""
+    rev = tmp_path / "rev"
+    rev.mkdir()
+    _ablation_fixture(rev)
+    tables = tmp_path / "tables"
+    tables.mkdir()
+    # run2/v3/v4 all live under ROOT/results/revision_2026_08* -- point
+    # ROOT at an empty directory so all three come back DIR_MISSING and
+    # only the rev fixture above is priced.
+    monkeypatch.setattr(M70, "ROOT", tmp_path / "empty_root")
+    v5_costs = pd.DataFrame({"penalty": [], "share_willing": [],
+                             "opcost_freqpres_start_eur": [],
+                             "opcost_range_start_eur": [],
+                             "operator_obj_eur": []})
+
+    M70.write_ablation(rev, {}, v5_costs, tables)
+
+    tex = (tables / "tab_stage2_ablation_v2.tex").read_text(encoding="utf-8")
+    assert "\t" not in tex, "a literal TAB character is in the emitted .tex"
+    caption_line = next(l for l in tex.splitlines()
+                        if l.startswith(r"\caption"))
+    assert r"\theta = 0" in caption_line, (
+        "the emitted caption lost \\theta -- see I1, 70_:1444")

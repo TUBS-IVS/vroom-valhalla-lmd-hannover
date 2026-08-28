@@ -1246,13 +1246,26 @@ def write_delta(rev: Path, compare: Path, full: pd.DataFrame,
 
 def write_co2(rev: Path, tables: Path) -> dict:
     """CO2 and vehicle-km from the grid's OWN validated route kilometres."""
+    csv_p = tables / "tab_co2_km_v2.csv"
+    tex_p = tables / "tab_co2_km_v2.tex"
     try:
         t = H.co2_table(rev)
     except H.Co2Unavailable as exc:
-        print(f"\nCO2 table (Kompendium 38.6): REFUSED -- {exc}")
+        # A refusal must not let a STALE tab_co2_km_v2.{csv,tex} from an
+        # earlier (e.g. partially-solved) render survive on disk -- Task 18's
+        # "collect everything" pass would otherwise carry it forward as if
+        # it were this grid's real result.
+        stale = [p for p in (csv_p, tex_p) if p.exists()]
+        for p in (csv_p, tex_p):
+            p.unlink(missing_ok=True)
+        if stale:
+            print(f"\nCO2 table (Kompendium 38.6): REFUSED -- {exc}\n"
+                  "  removed stale " +
+                  ", ".join(str(p) for p in stale))
+        else:
+            print(f"\nCO2 table (Kompendium 38.6): REFUSED -- {exc}")
         return {}
-    p = tables / "tab_co2_km_v2.csv"
-    t.to_csv(p, index=False)
+    t.to_csv(csv_p, index=False)
     print("\nCO2 / vehicle-km from validated VROOM routes "
           f"({H.CO2_KG_PER_KM} kg/vehicle-km, external assumption):")
     print(t[["plan", "penalty", "share_willing", "n_instances", "km_week",
@@ -1265,7 +1278,7 @@ def write_co2(rev: Path, tables: Path) -> dict:
                             "co2_t_week": "CO$_2$ t/week",
                             "vs_least_consolidated_pct":
                                 r"vs least consolidated [\%]"}))
-    H.to_latex(tex, tables / "tab_co2_km_v2.tex",
+    H.to_latex(tex, tex_p,
                caption=(r"Vehicle kilometres and CO$_2$ at the validated "
                         r"operating points, from the actual VROOM routes of "
                         r"this grid. CO$_2$ factor "
@@ -1275,7 +1288,7 @@ def write_co2(rev: Path, tables: Path) -> dict:
                         r"the same plan; there is no VROOM baseline solve of "
                         r"daily delivery on this allocation."),
                label="tab:co2_km")
-    return {"co2": p}
+    return {"co2": csv_p}
 
 
 
@@ -1441,7 +1454,7 @@ def write_ablation(rev: Path, base: dict, v5_costs: pd.DataFrame,
                         r"columns); stage~1 is bit-identical across all four "
                         r"variants by construction. Each variant is "
                         r"measured against \emph{its own} grid's "
-                        r"$	heta = 0$ baseline (carried as a column in "
+                        r"$\theta = 0$ baseline (carried as a column in "
                         r"the CSV): the grids are priced differently -- "
                         r"a bundle head prices the baseline's pooled "
                         r"tours too -- so one common denominator would "
@@ -1632,7 +1645,8 @@ def main(argv=None) -> int:
                   "(a single-carrier bucket cannot separate structure from "
                   "carrier identity):")
             print(comp.to_string(index=False))
-            comp.to_csv(figures / "fig6_bucket_composition.csv", index=False)
+            comp.to_csv(figures / "supp_fig6_bucket_composition.csv",
+                       index=False)
 
         if not args.no_legacy:
             produced += _render_accepted_figures(

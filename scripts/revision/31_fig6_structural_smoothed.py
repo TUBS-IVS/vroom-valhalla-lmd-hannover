@@ -31,9 +31,31 @@ reproduces the submitted revision figure when run with no environment set).
 grid.  NOTE: this builder reads the 2026-07 STAGE-3 schema
 (``tab_costs_smoothed.csv`` etc.); pointing ``REV_DIR`` at a v5-schema grid
 gives it no inputs -- ``70_`` renders the v5 figures itself.
+
+FROZEN (2026-08 revision): builds the accepted paper Fig. 6; see the banner
+below. Its plotting code must not change.
 """
 from __future__ import annotations
 import sys
+
+# --- FROZEN ACCEPTED-FIGURE BUILDER (2026-08 revision) ----------------------
+import warnings as _frozen_notice
+
+_frozen_notice.warn(
+    "31_fig6_structural_smoothed.py is FROZEN: it builds the accepted paper "
+    "Fig. 6 and its plotting code must not change. Do NOT run it against "
+    "the 2026-07 tables and quote the result -- that schema has no pool "
+    "term and predates the universal tour rule and the two cost lenses. "
+    "Run it only through scripts/revision/74_v2_to_legacy_tables.py "
+    "--render, which adapts a v5/v6 grid to the schema this file reads and "
+    "sets REV_DIR / REV_RUN_DIR / REV_BASE_TOTAL / REV_BASELINE_CV "
+    "accordingly. The two-lens designs live in 70_figs_tables_v2.py as "
+    "supp_*.",
+    UserWarning,
+    stacklevel=2,
+)
+# ---------------------------------------------------------------------------
+
 import warnings
 from pathlib import Path
 
