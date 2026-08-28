@@ -523,9 +523,10 @@ def write_readme(rows: list[dict], sync_log: Path, manifest_git: str) -> Path:
         + (" (70_ counts untracked files as dirty too; at render time the only"
            " untracked file was another agent's `AGENTS.md`, so the render came"
            " from committed source.)" if manifest_git.endswith("-dirty") else ""),
-        f"{len(rows)} files, {total / 1e6:.1f} MB. Every file was copied, never",
-        "moved, and re-hashed at both ends; the md5 below is the hash both",
-        "sides agreed on.", "",
+        f"{len(rows)} files, {total / 1e6:.1f} MB, all listed below (this",
+        "README is the list, so it does not list itself). Every file was",
+        "copied, never moved, and re-hashed at both ends; the md5 below is",
+        "the hash both sides agreed on.", "",
         "This pack supersedes `results/revision_2026_07/` and the Stage-3",
         "material for anything about the revision. It does not replace",
         "`paper/EWGT_2026/`, which stays frozen at the submission.", "",
