@@ -1,8 +1,10 @@
-# Response to Reviewers — skeleton (revision part A, 2026-08-27)
+# Response to Reviewers — skeleton (revision part B, 2026-08-28)
 
-**Status: skeleton.** Prose is drafted; every number marked `[P]` is provisional
-(v5 grid) and must be replaced from the final head-priced grid in part B, in
-lockstep with the `\provisional{}` markers in `tbc_preprint_main.tex`.
+**Status: skeleton, numbers final.** Prose is drafted; every number below now
+comes from grid v6 (`results/revision_2026_08_v6/`), matching
+`tbc_preprint_main.tex` and section F of `docs/CHANGES_rev1.md`. The `[P]`
+markers are gone. The one block still open is the VROOM re-validation of v6,
+which the manuscript carries as `\provisional{}` with `% PART C` comments.
 
 ## On the source of the reviewer comments
 
@@ -76,7 +78,8 @@ one, and the mechanism we offered for the persistent saving at high penalty and
 low adoption ("hub bundling covers the penalty") was an explanation of an
 artefact. The submitted claim that 42 % of areas remain non-daily at
 (P, theta) = (10, 0.1) with a 3.6 % system saving does not survive: under the
-corrected model the figures are 2.9 %[P] of areas and 0.03 %[P] of routing cost.
+corrected model the figures are 9.6 % of cells and 0.40 % of routing cost --
+reduced by almost an order of magnitude, but not to zero.
 The full-adoption headline is not affected — at theta = 1 no shared tour exists
 at all, which we verified directly — and a symmetric re-computation of the
 submitted grid bounds the whole effect at that point to 0.57 percentage points
@@ -121,17 +124,20 @@ every result under two lenses: a routing lens that charges each vehicle-day in
 full, identical to the submitted accounting, and an operator lens that charges
 only variable cost below each depot's weekly fleet peak, since drivers are
 employed and vans are owned for the week. The result is the central finding of
-this revision. Under the routing lens the cost-optimal plan saves 23.1 %[P];
-under the operator lens the very same plan is 7.8 %[P] worse than daily
+this revision. Under the routing lens the cost-optimal plan saves 22.6 %;
+under the operator lens the very same plan is 8.4 % worse than daily
 delivery, because its two-day patterns raise the summed depot peak by
-34.5 %[P]. Re-optimizing the second stage in the operator's currency turns this
-into 24.7 %[P] of operator saving at a 16.9 %[P] lower peak fleet. On cost alone
-both lenses still prefer the cost-optimal extreme, by 3.9 pp[P] and 1.9 pp[P];
-we recommend P = 0.25 EUR per parcel-day because that is where the service side
-is priced in, and because a flat 0.50 EUR discount per delayed parcel makes it
-the best point on the grid outright. The carrier taxonomy the reviewer asked us
-to justify turns out to be lens-dependent: three of the seven carriers move up
-one class under the operator lens.*
+34.5 %. Re-optimizing the second stage in the operator's currency turns this
+into 24.3 % of operator saving at a 16.9 % lower summed depot peak. On cost
+alone each lens, read on its own plan, still prefers the cost-optimal extreme,
+by 3.9 pp and 1.7 pp; we recommend P = 0.25 EUR per parcel-day because that is
+where the service side is priced in, and because a flat 0.50 EUR discount per
+delayed parcel makes it the best point on the grid in the operator lens, ahead
+of P = 0.5 by 0.8 pp, with the routing lens rating the two within 0.01 pp. The
+carrier taxonomy the reviewer asked us to justify turns out to be
+lens-dependent: it holds as stated in the routing lens, while under the
+operator lens Amazon and Hermes move up one class and GLS leaves the
+0.25-0.75 band altogether.*
 Entries: A6, A7, B1, B4, B5, B7, B8.
 
 ### Theme E — The second stage, honestly described
@@ -157,7 +163,8 @@ means in cash, we added an analysis in which it is actually paid out. Under a
 flat 0.50 EUR discount per delayed parcel the cost-optimal extreme is no longer
 best — it delays too many parcels — and the optimum moves to the same
 P = 0.25–0.5 range the lenses already indicate. The break-even discount is
-0.77–2.24 EUR[P] per delayed parcel in the operator lens.*
+0.75-2.25 EUR per delayed parcel in the operator lens and 0.56-1.21 EUR in the
+routing lens. The full scenario is in the supplementary material.*
 Entry: B9.
 
 ### Theme G — What is not yet validated
@@ -167,7 +174,9 @@ points available so far all lie at full adoption, where no pooled tour exists,
 so the partial-adoption regime is not yet validated against the solver; that
 validation is reported in Section 3.4. The operator-lens magnitude is shaped by
 one carrier's depot structure, pooling is within-depot only, and the pooled-tour
-head is certified on 44 %[P] of the instances that occur, with a conservative
+head prices 53.9 % of the pooled tours that occur and 27.2 % of the pooled
+cost -- three different coverage rates that we now report separately rather
+than under one number -- with a conservative
 fallback elsewhere. A dedicated limitations subsection now states all of this.*
 Entries: B10, B11.
 
@@ -176,10 +185,39 @@ Entries: B10, B11.
 ## Checklist before this becomes a real response letter
 
 - [ ] Paste the reviewers' verbatim comments and re-key Part 1 against them.
-- [ ] Replace every `[P]` value from the final head-priced grid.
+- [x] Replace every `[P]` value from the final head-priced grid (v6, part B).
+- [ ] Replace the VROOM-validation figures once the v6 re-validation lands
+      (the `% PART C` markers in `tbc_preprint_main.tex`).
 - [ ] Insert the completed validation results (both lenses, one partial-adoption
       point) into Theme G.
 - [ ] Supply the HAGRID full form (reviewer point 3).
 - [ ] Confirm the page budget after the mandatory trim pass.
 - [ ] Add per-change line/section references into the revised manuscript once
       the final layout is fixed.
+
+---
+
+## Part B addendum (2026-08-28) --- what changed since the part A skeleton
+
+Grid v6 (v5 plus the certified bundle head) is the production grid; every number
+above is now taken from it. Four statements changed in substance, not only in
+value, and the response letter must carry them:
+
+1. **The flat-discount optimum is a tie in the routing lens.** Part A claimed
+   P = 0.5 led P = 0.25 by 0.2 pp there. On v6 the two are 0.01 pp apart, which
+   is below the grid's own resolution. The operator lens prefers P = 0.25 by
+   0.8 pp.
+2. **The operator-lens carrier shifts are not the ones part A named.** Amazon
+   and Hermes move up one class; FedEx does not move; GLS moves to P* = 1.0 and
+   therefore out of the class band, so it is unclassified in that lens. The
+   three-class taxonomy is a routing-lens statement.
+3. **The (10, 0.1) corner is small, not flat.** 0.40 % of routing cost and
+   9.6 % non-daily cells against the submitted 3.6 % and 42 %. The mechanism
+   retraction stands; the wording "reduced to" replaces "gone".
+4. **Bundle-head coverage is three numbers, not one** (44.0 % pre-run
+   certification, 53.9 % of realised pooled tours, 27.2 % of pooled cost).
+
+Also corrected against part A: the claim that no pooled tour exists at theta = 1
+is false and has been removed from the validation subsection; the spatial
+breakdown that part A left pending is now derived on v6 and reproduces the
+submitted ordering, so the equity argument is restored unconditionally.

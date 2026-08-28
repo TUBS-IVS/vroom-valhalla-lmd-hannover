@@ -1,4 +1,4 @@
-# CHANGES rev1 — model revision of 2026-08 (paper text, part A)
+# CHANGES rev1 — model revision of 2026-08 (paper text, parts A and B)
 
 Scope: the changes the 2026-08 model revision forces on
 `paper/EWGT_2026_rev1/tbc_preprint_main.tex`. This file continues
@@ -6,11 +6,11 @@ Scope: the changes the 2026-08 model revision forces on
 reviewer-response round (11 reviewer points, mirrored into the preprint on
 2026-08-18). Nothing there is retracted; everything here is on top of it.
 
-**Status: PART A.** All grid numbers below are from
-`results/revision_2026_08_v5/tables/` and are marked in the manuscript with the
-`\provisional{...}` macro (prints a light superscript `p`). Part B replaces
-every one of them from the final head-priced grid and then deletes the macro.
-Before submission, `grep -c 'provisional{' tbc_preprint_main.tex` must reach 0.
+**Status: PART B done.** Sections A-D below record part A, written against the
+v5 grid. **Part B (section F, at the end of this file) replaces every one of
+those grid numbers from grid v6** and is the authoritative list; where A-D and F
+disagree, F wins. 21 `\provisional{}` markers remain in the manuscript, all
+validation-dependent and each carrying a `% PART C` comment.
 
 Evidence keys: `§n` = section of `docs/PAPER_COMPENDIUM_2026_05_24.md`;
 table files are relative to `results/revision_2026_08_v5/tables/`.
@@ -467,3 +467,315 @@ and in the response skeleton corrected to the revision's numbering; the
 4. Human read-through of the preprint.
 5. Part B: replace every `\provisional{}` value, insert the validation
    paragraph, sync the figures, and do a final lens/plan consistency pass.
+
+---
+
+# F. PART B — final numbers from grid v6 (2026-08-28)
+
+**Status: PART B done.** Every `\provisional{}` value whose source was the
+optimization grid has been replaced from
+`results/revision_2026_08_v6/` (grid v6 = v5 + the certified BundleHead, 616/616
+triples, no errors). **21 markers remain**, all of them validation-dependent
+(predicted-vs-actual, actual saving in per cent, MAPE/bias); each carries a
+`% PART C` comment and is replaced from the v6 VROOM validation report.
+
+**Baseline change, read this first.** Grid v6 prices the pooled tours that the
+*baseline itself* runs with the bundle head, so its θ = 0 denominator is
+1,898,091 EUR/wk routing and 2,098,401 EUR/wk operator, **0.6 % below** v5's
+1,909,432 / 2,109,742. Σ hub peaks are unchanged at 1,239. A v6 saving must
+never be normalised against a v5 or 2026-07 denominator. The manuscript now says
+this once, in the paragraph that introduces Table 2.
+
+Evidence keys below: table files are relative to
+`results/revision_2026_08_v6/tables/` unless stated; `_peek/` is
+`results/revision_2026_08_v6/_peek/`; `§n` is
+`docs/PAPER_COMPENDIUM_2026_05_24.md`.
+
+## B-I. Numbers replaced (old = part A / v5, new = v6)
+
+### Headline, θ = 1 — `tab_headline_theta1_v2.csv`, §40.21
+
+| Quantity | Old (v5) | New (v6) | Where |
+|---|---|---|---|
+| Routing saving, routing plan, (0,1) | 23.1 % | **22.6 %** | abstract, §3.2, Table 2, Conclusion |
+| Operator saving, routing plan, (0,1) | −7.8 % | **−8.4 %** | abstract, §3.2, Table 2, Conclusion |
+| Operator saving, operator plan, (0,1) | 24.7 % | **24.3 %** | abstract, §3.2, Table 2, Conclusion |
+| Routing saving, operator plan, (0,1) | 20.4 % | **20.0 %** | §3.2 |
+| Σ hub peak vs base, routing plan, (0,1) | +34.5 % | +34.5 % (unchanged) | abstract, §3.2, Conclusion |
+| Σ hub peak vs base, operator plan, (0,1) | −16.9 % | −16.9 % (unchanged) | abstract, §3.2, Conclusion |
+| Routing pp given up by the polish | 2.7 pp | 2.7 pp (unchanged) | §3.2, Conclusion |
+| Operator saving, operator plan, (0.25,1) | 22.8 % | **22.6 %** | §3.2, Conclusion |
+| Routing saving, operator plan, (0.25,1) | 17.1 % | **16.7 %** | §3.2 |
+| Σ hub peak vs base, operator plan, (0.25,1) | −17.1 % | **−17.2 %** | §3.2 |
+| Cost-only gap P = 0 vs 0.25, operator lens | 1.9 pp | **1.7 pp** | abstract, §3.2, Conclusion |
+| Cost-only gap P = 0 vs 0.25, routing lens | 3.9 pp | 3.9 pp (unchanged) | abstract, §3.2, Conclusion |
+| Worst operator-lens value of the routing plan | −10.4 % at (0,0.9) | **−10.3 %** at (0,0.9) | §3.2 |
+
+Table 2 (`tables/tab_two_lens.tex`) was rebuilt cell by cell from
+`tab_headline_theta1_v2.csv` and **regained its P = 1 row** (part A had moved it
+into the caption), which restores table backing for the mean-frequency figure
+quoted at P = 1 — this closes handover item M-g. The caption's tail now carries
+P = 2, 5 and 10 and no longer claims the routing-optimal plan yields 0 % there.
+
+### Frequency mix — recomputed from `_tab_chosen_v2.csv` + `enumerate_valid_schedules()`
+
+| Quantity | Old (v5) | New (v6) |
+|---|---|---|
+| Two-day share, routing plan, (0,1) | 97.4 % | 97.4 % (unchanged) |
+| f-bar, routing plan, (0,1) | 2.03 | 2.03 (unchanged) |
+| f-bar, routing plan, P = 0.5 | 3.95 | **4.12** |
+| f-bar, routing plan, P = 1 | 4.93 | **5.01** |
+| Two-day share, operator plan, (0,1) | 72.8 % | **72.4 %** |
+| f-bar, operator plan, (0,1) | 2.38 | **2.39** |
+| Cells off daily, operator plan, (5,1) | 4.8 % | 4.8 % (unchanged) |
+| Wait, (0.5,1), routing -> operator plan | 0.21 -> 0.23 d | **0.20 -> 0.22 d** |
+
+**Claim withdrawn.** Old: "for P >= 5 and theta >= 0.3 the routing-optimal plan
+reverts to fully daily delivery." On v6 that is false: 0.6 % of cells stay
+non-daily at (5,1), 3.5 % at (5,0.3) and 15.4 % at (5,0.1). New text names the
+0.6 % at full adoption and the 15.4 % at (5,0.1).
+
+### The retracted (10, 0.1) bulge — `tab_grid_full_v2.csv`, §40.22
+
+| Quantity | Submitted | Old (v5 text) | New (v6) |
+|---|---|---|---|
+| Routing saving, routing plan | 3.6 % | 0.03 % | **0.40 %** |
+| Operator saving, routing plan | — | 0.02 % | **0.37 %** |
+| Non-daily cells, routing plan | 42 % | 2.9 % | **9.6 %** |
+
+The retraction of the *mechanism* stands unchanged, but the wording no longer
+says the corner is "flat". It now says the corner "shrinks by almost an order of
+magnitude but does not disappear", per §40.22's ruling ("reduced to", not
+"gone"). The 0.74 % / 22.79 -> 22.22 % symmetric-recomputation bound is
+unchanged (it is a property of the submitted grid, not of v6). The surviving
+(0, 0.1) pair was cut in the trim; on v6 it would have read 1.8 % routing and
+4.1 % operator, against part A's 1.4 % and 3.9 %.
+
+### Fleet — `tab_fleet_diagnostics_v2.csv`
+
+| Quantity | Old (v5) | New (v6) |
+|---|---|---|
+| Baseline Mo–Sa CV | 0.139 | 0.139 (unchanged) |
+| CV at (0.25,1) | 0.024 (−83 %) | **0.023 (−84 %)** |
+| CV at (0.5,1) | 0.047 (−66 %) | **0.044 (−68 %)** |
+| Grid-max CV reduction | 88 % at (0,0.7) | **87 % at (0,0.7)** |
+| Abstract CV band over P in [0.25,0.75] | 52–83 % | **51–84 %** |
+| Σ peak vs flat bound, (0,1) | 1,030 vs 980 | 1,030 vs 980 (unchanged) |
+| Residual gap, (0.25,1) | 32 | 32 (unchanged) |
+
+**Old claim retracted (part A had already dropped it; recorded here for the
+response letter).** The submitted "total weekly fleet declines by 6.3–6.8 % at
+theta = 0.1" is replaced by the two quantities that actually exist under the
+tour rule: routing-plan vehicle-days −1.5 to −1.9 % and operator-plan Σ hub
+peaks −4.8 to −5.4 % over P in {0, 0.25, 0.5} at theta = 0.1
+(`tab_grid_full_v2.csv`, §40.21). The old figure was mostly spatial pooling of
+non-consolidated demand, which the universal tour rule removes.
+
+**New distinction (13B observation O2).** Fig. 5 (d) plots the *system peak day*
+(−17.5 % at (0,1)), not the summed depot peak (−16.9 %). The manuscript now
+states both and labels each; "peak fleet" alone no longer appears — the abstract
+and the Conclusion say "summed depot peak".
+
+### P* by lens — `tab_pstar_knees_v2.csv`, §40.22
+
+- Routing lens (routing-optimal plan): unchanged from the submission —
+  Amazon 0.25, DHL 0.25, FedEx 0.5, Hermes 0.5, UPS 0.5, DPD 0.75, GLS 0.75.
+- Operator lens (operator plan), **v6 corrects part A's v5 set**:
+
+| Provider | Routing P* | Part A said (v5) | v6 |
+|---|---|---|---|
+| Amazon | 0.25 | 0.5 | **0.5** |
+| Hermes | 0.5 | 0.75 | **0.75** |
+| FedEx | 0.5 | 0.75 | **0.5 (no move)** |
+| GLS | 0.75 | 0.75 (no move) | **1.0 — outside the 0.25–0.75 band** |
+| DHL / UPS / DPD | 0.25 / 0.5 / 0.75 | no move | no move |
+
+The manuscript now says the three-class taxonomy is a **routing-lens**
+statement, names Amazon and Hermes as the two that move up a class, and states
+that GLS leaves the band entirely and is therefore unclassified in the operator
+lens. The abstract carries the same qualification. This is the strongest
+qualification the revision puts on a submitted result and is called that in the
+text.
+
+### The discount scenario — `_peek/discount_scenarios_v6.csv`, §40.22
+
+Moved out of the main text into `paper/EWGT_2026_rev1/supplementary.tex`,
+Section S1 (page trim; one sentence with the break-even range stays in §3.2).
+All values from the CSV, which counts the realised demand on skipped days; the
+deep-dive prose in `DEEP_DIVE_V6_PAPER_IMPACT.md` used an even-weekday
+approximation and is **not** the source.
+
+| Quantity (theta = 1, operator plan) | Old (v5) | New (v6) |
+|---|---|---|
+| Delayed parcels, P = 0/0.25/0.5/0.75/1 (thousand) | 680/404/248/165/111 | **679/405/237/153/109** |
+| Rule (a) net, operator lens (%) | 24.7/17.0/11.6/8.4/6.2 | **24.3/16.6/11.2/8.1/6.1** |
+| Rule (a) net, routing lens (%) | 20.4/10.6/5.6/2.6/1.0 | **20.0/10.2/5.1/2.4/0.8** |
+| Rule (b) net, operator lens (%) | 8.6/13.2/12.6/10.9/9.2 | **8.1/12.9/12.1/10.4/9.1** |
+| Rule (b) net, routing lens (%) | 2.6/6.5/6.7/5.4/4.3 | **2.1/6.1/6.0/5.0/4.1** |
+| Break-even, operator lens (EUR) | 0.77 … 2.24 | **0.75/1.17/1.57/1.93/2.25** |
+| Break-even, routing lens (EUR) | 0.57 … 1.24 | **0.56/0.78/0.98/1.12/1.21** |
+| Partial adoption, P = 0.25, routing lens | −0.3 … −2.4 % | **+0.1 … −2.1 %** |
+| Partial adoption, P = 0.25, operator lens | +3 … +6 % | **+3.4 … +6.2 %** |
+
+**Claim corrected.** Part A said the routing lens prefers P = 0.5 by 0.2 pp
+under the flat rule. On v6 the routing lens returns 6.052 % at P = 0.25 against
+6.043 % at P = 0.5 — **0.01 pp, a tie at this grid's resolution**. The
+abstract, §3.2, the Conclusion and Supplementary S1 now say so, and the operator
+lens's margin for P = 0.25 grows from 0.6 to **0.8 pp**.
+
+### Bundle-head coverage — `tab_head_usage_summary*_v2.csv`, deep dive §1
+
+Part A reported one number, "certified on 44.0 % of the pooled instances that
+occur". That conflated three different rates. The manuscript now reports all
+three and says they are not interchangeable:
+
+- **44.0 %** — pre-run certified coverage of the expected pooled population.
+- **53.9 %** — of the pooled tours that actually occurred in the optimized grid.
+- **27.2 %** — of the pooled euro (68.9 % of tours and 53.0 % of euro at full
+  adoption); the conservative fallback keeps the largest groups.
+
+Limitation (v) now quotes the two realised rates rather than the pre-run one.
+
+### Partial-adoption mechanism (new; Amendment 6, §40.20)
+
+New paragraph in §3.2, all numbers recomputed on v6 from
+`_peek/results_overview_v6.csv` and `tab_grid_full_v2.csv`: at P = 0.25 the mean
+delivery frequency rises from theta = 0.8 to 0.9, 4.94 -> 5.17 d (routing plan)
+and 4.68 -> 4.89 d (operator plan), while the express residual falls from 9.6 %
+to 7.4 % of routing cost; at theta = 1 the residual vanishes and the frequency
+drops to 3.10 / 3.27 d. Two causes are named (the penalty scales with theta; the
+thin residual no longer fills a vehicle in small depots), and the theta =
+0.9 -> 1 jump is attributed to the disappearance of the express obligation.
+§40.20's v5 figures (4.66 -> 4.83 d, 8.3 -> 6.1 %) are superseded by these.
+The euro-per-vehicle-day figures mentioned in the Part B brief (339 -> 519 EUR
+vs ~298 EUR) are **not** in the compendium and could not be reproduced from any
+v6 table, so they are not in the manuscript; the cost-share evidence above
+carries the mechanism instead.
+
+### Spatial breakdown — the part A "(pending)" is closed
+
+Part A cut the submitted per-area block as resting on the retracted grid and
+left a "(pending)" placeholder plus a `% PART B EXIT GATE` comment questioning
+the abstract's "spatial signature" claim. Grid v6 plus
+`72_per_cell_costs_v2.py` supply the replacement, so the placeholder, the exit
+gate and the conditional "should the spatial pattern be confirmed" hedge are all
+gone, and the abstract's claim and contribution 4 stand. Values from
+`tab_per_cell_structural_v2.csv` (cell level, routing lens, operator plan, each
+LSP at its own routing-lens P*, theta = 1):
+
+| Breakdown | Submitted | v6 |
+|---|---|---|
+| Hub distance, Q1 -> Q4 | 8 % -> 28 % | **2.0 % -> 25.8 %** |
+| Area size, Q1 -> Q4 | 10 % -> 25 % | **8.8 % -> 24.6 %** |
+| Parcels per drop-site, Q1 -> Q4 | 27 % -> 4 % | **24.2 % -> 2.3 %** |
+| Rural vs urban median | 25 % vs 9 % | **23.7 % vs 7.9 %** |
+| Service-bound class cap | 10 % | **6.5 %** |
+| Hybrid / cost-aggressive at their P* | 22–24 % | **20.3 / 17.3 %** |
+| Service-bound cells with negative saving, theta <= 0.3 | 35–44 % | **21–41 %** |
+
+The ordering is reproduced in every breakdown, so the equity concern is restated
+unconditionally. The rho values of the submitted version are **not** restored:
+the medians shown in the figure carry the claim, and re-deriving correlations
+would add numbers no panel shows.
+
+**New sentence (13B observation O1).** Fig. 6 (b)–(f) are flat at exactly 0.0 %
+for theta <= 0.9 and jump only at theta = 1. The text now explains why — below
+full adoption the non-willing parcels still force a daily tour, so at each
+carrier's own P* the *median* cell saves nothing — so that a reader does not
+take the panels for a rendering fault.
+
+## B-II. Figures and captions
+
+Per the author's steer of 2026-08-28 (Amendment 5), the accepted paper keeps its
+**submitted figure layouts**; only the numbers change. Figs. 4, 5 and 6 are
+re-rendered on v6 by the frozen builders `30_`/`31_`/`32_` through
+`74_v2_to_legacy_tables.py --render`, and part A's 2x3 two-lens caption rewrites
+are therefore **undone**:
+
+- **Fig. 4** — back to the submitted single-plan mix caption, with three
+  corrections: "cells" not "areas"; the plotted plan is named (stage 1); and the
+  false frequency-invariance claim is replaced by the measured fact that the
+  delivery-day count differs in **20.1 % of the 27,456 cell–grid-point pairs**
+  (5,525), with a pointer to Supplementary Figs. S1–S2 (13B observation O4).
+- **Fig. 5** — back to the submitted caption. (a), (b) = cost saving of the
+  routing-optimal and of the operator-polished plan, both in the paper's routing
+  cost; (c) wait; (d)–(f) fleet metrics of the operator plan; the CV baseline is
+  named as this grid's own 0.139. Supplementary Figs. S3–S4 carry both lenses
+  and the two off-diagonal lens/plan combinations.
+- **Fig. 6** — back to the submitted caption: Pareto frontier (a) and median
+  per-cell saving by carrier type, region type, hub distance, area size and
+  parcels per drop-site (b)–(f), at each LSP's P*. The caption now defines that
+  P* as the routing-lens knee (13B observation O3) and states the express
+  allocation rule (per realised tour, O6). The hub-size panel that carried the
+  within-DHL rotation caveat is not in the submitted layout, so that caveat now
+  lives in the body text, in limitation (i) and in Supplementary Fig. S6.
+
+The figure PDFs in `paper/EWGT_2026_rev1/figures/` are still the previous
+renders; `71_sync_paper_figs.py` is out of this task's scope and must report an
+md5 PASS before any build circulates.
+
+## B-III. New in the methods
+
+- **G1a audit** (§40.23, `gates_report.md`): §2.4 now records that for every
+  cell that clears the tour minimum on all six weekdays, 1,651 of 1,656
+  cell–penalty pairs reproduce the plain-enumeration optimum, and the five that
+  differ are single-day neighbours worth at most 0.5 % of the cell's weekly
+  objective — near-ties produced by the paired move in the local search, not a
+  breach of the decoupling.
+- **Baseline note**: the −0.6 % head effect on the θ = 0 denominator, with the
+  explicit instruction never to normalise across grid versions.
+
+## B-IV. Validation — the one block still provisional
+
+Rewritten to keep three evidence levels apart, per the deep dive's §7:
+(1) the single-cell surrogate validation; (2) the bundle head's out-of-fold
+certification, which is a cross-validation result and not a re-routing; and
+(3) re-routing of the optimized plans, which is under way. **The false claim
+"at theta = 1 no pooled tour exists at all" is removed** — pooled delivery
+groups occur at full adoption (379 multi-cell groups, `tab_head_usage_summary_
+theta_kind_v2.csv`); the partial-adoption point is now motivated by pooled tours
+being *far more frequent* there, not by their absence at theta = 1.
+
+All 21 remaining `\provisional{}` markers are in this subsection, in the
+abstract's validation clause and in the feature-skew caveat, each with a
+`% PART C` comment.
+
+## B-V. Page trim
+
+17 pages -> **16 pages** (tectonic, preprint layout; the submitted version is
+11). Executed:
+
+1. The discount subsection moved to `supplementary.tex` S1; one sentence with
+   the break-even range kept in §3.2 with a pointer.
+2. Limitation (vii), the labour double count, moved to supplementary S2; one
+   clause kept in limitation (vi) and one in §2.1.
+3. The (0, 0.1) surviving-effect pair cut from the retraction paragraph
+   (header-comment candidate a).
+4. Fig. 5's panel list dropped with the return to the submitted caption
+   (candidate c); Fig. 4 and Fig. 6 captions shortened likewise.
+5. The CV cross-version warning stated once (limitation vi) instead of twice.
+6. A density pass on nine passages that lost no claim (surrogate calibration,
+   three-stage progression, feature list, willingness power law, the Nash
+   clause, the shadow-price clause, the retraction's asymmetry sentence, two
+   abstract sentences).
+
+Candidate b (the discount subsection's partial-adoption sentence) is subsumed by
+item 1. **Not** executed, and left as an author decision: any further reduction
+now has to come out of substance — the abstract, the surrogate subsection, or
+the validation subsection are the only blocks left with a page in them, and each
+carries claims that a review round explicitly asked for. The four protected
+items (two-lens table, the P* lens statement, the retraction, the limitations)
+are all intact.
+
+## B-VI. Supplementary document
+
+New file `paper/EWGT_2026_rev1/supplementary.tex` (7 pages, compiles with
+tectonic). Section S1 = the discount scenario with the v6 table; Section S2 =
+the labour double count; Figs. S1–S11 = the `supp_*` set from
+`results/revision_2026_08_v6/figures/` plus the maps. It reaches those PDFs
+through a second `\graphicspath` entry,
+`../../results/revision_2026_08_v6/figures/`, so it builds today; once
+`71_sync_paper_figs.py` has copied them into `paper/EWGT_2026_rev1/figures/`
+under the same stems the first entry wins and the relative path can be dropped.
+This closes handover item M9 — the main text's "supplementary material"
+pointers now resolve.
