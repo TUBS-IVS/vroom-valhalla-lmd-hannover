@@ -1,10 +1,11 @@
-# Response to Reviewers — skeleton (revision part B, 2026-08-28)
+# Response to Reviewers — skeleton (revision part C, 2026-08-28)
 
 **Status: skeleton, numbers final.** Prose is drafted; every number below now
-comes from grid v6 (`results/revision_2026_08_v6/`), matching
-`tbc_preprint_main.tex` and section F of `docs/CHANGES_rev1.md`. The `[P]`
-markers are gone. The one block still open is the VROOM re-validation of v6,
-which the manuscript carries as `\provisional{}` with `% PART C` comments.
+comes from grid v6 (`results/revision_2026_08_v6/`) or from that grid's VROOM
+validation (items 0, 1, 2), matching `tbc_preprint_main.tex` and sections F and
+G of `docs/CHANGES_rev1.md`. The one block still open is validation item 3, the
+partial-adoption point, which the manuscript carries as a single `% PART C3`
+marker.
 
 ## On the source of the reviewer comments
 
@@ -80,8 +81,7 @@ artefact. The submitted claim that 42 % of areas remain non-daily at
 (P, theta) = (10, 0.1) with a 3.6 % system saving does not survive: under the
 corrected model the figures are 9.6 % of cells and 0.40 % of routing cost --
 reduced by almost an order of magnitude, but not to zero.
-The full-adoption headline is not affected — at theta = 1 no shared tour exists
-at all, which we verified directly — and a symmetric re-computation of the
+The full-adoption headline is not affected — a symmetric re-computation of the
 submitted grid bounds the whole effect at that point to 0.57 percentage points
 (22.79 % to 22.22 %). We have also withdrawn the per-area saving figures of the
 submitted version rather than reprinting them: they rest on the same grid, and
@@ -169,10 +169,12 @@ Entry: B9.
 
 ### Theme G — What is not yet validated
 
-*Draft text.* *We are explicit about the limits. The solver-validated operating
-points available so far all lie at full adoption, where no pooled tour exists,
-so the partial-adoption regime is not yet validated against the solver; that
-validation is reported in Section 3.4. The operator-lens magnitude is shaped by
+*Draft text.* *We are explicit about the limits. We have now re-routed 7,610
+instances with the solver — the daily baseline and six full-adoption operating
+points across both plans — and report predicted and realised savings side by
+side. The partial-adoption regime, where the express residual makes pooled
+tours far more frequent, is still being re-routed; its figures remain
+predictions. That validation is reported in Section 3.3. The operator-lens magnitude is shaped by
 one carrier's depot structure, pooling is within-depot only, and the pooled-tour
 head prices 53.9 % of the pooled tours that occur and 27.2 % of the pooled
 cost -- three different coverage rates that we now report separately rather
@@ -221,3 +223,37 @@ Also corrected against part A: the claim that no pooled tour exists at theta = 1
 is false and has been removed from the validation subsection; the spatial
 breakdown that part A left pending is now derived on v6 and reproduces the
 submitted ordering, so the equity argument is restored unconditionally.
+
+---
+
+## Part C addendum (2026-08-28) --- the validation reverses one submitted claim
+
+The v6 VROOM re-validation (7,610 instances: the daily baseline plus, at full
+adoption, the operator-polished plan at P = 0/0.25/0.5/0.75 and the
+routing-optimal plan at P = 0/0.25; 1 PARTIAL) changes the direction of the
+paper's accuracy statement, and the response letter must say so before a
+reviewer notices:
+
+1. **The surrogate is not conservative; it over-prices.** Bias is positive in
+   every group: +5.4 % on the daily baseline (+4.9 % single-cell, +14.5 %
+   pooled) against +2.4 % at the consolidated points. Overall 3.51 % MAPE at
+   +3.05 % bias over the 7,609 clean instances.
+2. **Predicted savings are therefore an upper bound, by 1.3 to 2.5 pp.** The
+   over-priced baseline is the denominator. Realised against predicted:
+   operator plan 17.5 / 14.5 / 10.6 / 7.7 % routing saving (predicted 20.0 /
+   16.7 / 12.3 / 9.0) and 22.1 / 20.7 / 16.3 / 12.8 % operator saving
+   (predicted 24.3 / 22.6 / 17.8 / 14.1); routing-optimal plan 20.6 and
+   16.4 % routing saving (predicted 22.6 and 18.7).
+3. **The submitted claim of conservatism is withdrawn.** The submitted version
+   reported 23.7 % realised against 22.8 % predicted. That comparison predates
+   the universal tour rule, and this is the first validation in which the daily
+   baseline is itself solver-routed — the baseline's own over-pricing is what
+   reverses the sign.
+4. **No conclusion changes sign or order, and the central one strengthens.**
+   The operator-lens penalty of the routing-optimal plan is worse in reality:
+   −12.1 % against −8.4 % predicted at (0, 1). The fleet counting rule is
+   near-exact: summed depot peaks never differ by more than five vehicles in a
+   thousand.
+
+Still open: validation item 3, the partial-adoption point (P, theta) =
+(0.25, 0.5) on the operator plan.

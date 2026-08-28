@@ -5,12 +5,17 @@
 %
 % FIGURE SOURCES. Every figure below is produced by the revision scripts into
 %   results/revision_2026_08_v6/figures/
-% and is reached from here through the second \graphicspath entry, i.e. the
-% relative path ../../results/revision_2026_08_v6/figures/. Once
-% scripts/revision/71_sync_paper_figs.py has copied them into
-% paper/EWGT_2026_rev1/figures/ under the same stems, the first entry wins and
-% the relative path can be dropped. The stems are the supp_* names 70_ and 75_
-% write; they are NOT renamed on sync.
+% and is reached either from paper/EWGT_2026_rev1/figures/ (first \graphicspath
+% entry) or, for the five that 71_sync_paper_figs.py does not carry, through the
+% relative path ../../results/revision_2026_08_v6/figures/ (second entry).
+% 71_ RENAMES on sync: supp_fig4b_mean_days -> supp_fig4b_mean_delivery_days,
+% supp_fig5_grid_heatmap_v2 -> supp_fig5_two_lens_heatmaps,
+% supp_fig5b_offdiagonal_v2 -> supp_fig5b_offdiagonal_lens_plan,
+% supp_fig6_structural_v2 -> supp_fig6_per_cell_euro,
+% supp_fig6b_operator_lens_v2 -> supp_fig6b_operator_lens_hub. The six synced
+% files below use the DESTINATION names (md5-verified identical to the renders);
+% supp_fig7_* and the four supp_map_*/supp_penalty_* use the source names and
+% resolve through the relative path until 71_ carries them too.
 %
 % NUMBERS. All values come from grid v6 (results/revision_2026_08_v6/):
 %   Section S1  -> _peek/discount_scenarios_v6.csv
@@ -160,7 +165,7 @@ would lower the levels without materially changing the comparisons made here.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=\linewidth]{supp_fig4b_mean_days.pdf}
+  \includegraphics[width=\linewidth]{supp_fig4b_mean_delivery_days.pdf}
   \caption{Mean weekly delivery frequency $\bar{f}$ of both plans over the
   $(P, \theta)$ grid. The non-monotonicity in $\theta$ around
   $\theta = 0.8$--$0.9$ is the express-residual effect discussed in the main
@@ -171,7 +176,7 @@ would lower the levels without materially changing the comparisons made here.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=\linewidth]{supp_fig5_grid_heatmap_v2.pdf}
+  \includegraphics[width=\linewidth]{supp_fig5_two_lens_heatmaps.pdf}
   \caption{The $(P, \theta)$ grid in both cost lenses. Figure~5 of the main
   text reports all six panels in the routing lens; this version adds the
   operator lens, in which a vehicle-day below its depot's weekly peak carries
@@ -181,7 +186,7 @@ would lower the levels without materially changing the comparisons made here.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=\linewidth]{supp_fig5b_offdiagonal_v2.pdf}
+  \includegraphics[width=\linewidth]{supp_fig5b_offdiagonal_lens_plan.pdf}
   \caption{The two off-diagonal lens--plan combinations that Figure~5 of the
   main text does not show: the operator-lens outcome of the routing-optimal
   plan, which is negative over much of the grid, and the routing-lens outcome
@@ -191,7 +196,7 @@ would lower the levels without materially changing the comparisons made here.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=\linewidth]{supp_fig6_structural_v2.pdf}
+  \includegraphics[width=\linewidth]{supp_fig6_per_cell_euro.pdf}
   \caption{Per-cell structural breakdown of the saving in euro, by carrier
   class, region type, hub distance, postal-code area size and parcels per
   drop-site. Figure~6 of the main text shows the same breakdown as a
@@ -201,7 +206,7 @@ would lower the levels without materially changing the comparisons made here.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=\linewidth]{supp_fig6b_operator_lens_v2.pdf}
+  \includegraphics[width=\linewidth]{supp_fig6b_operator_lens_hub.pdf}
   \caption{The operator lens per depot: per-LSP knee $P^\star$ in both lenses,
   and the per-depot operator saving and delivery frequency by depot size in
   cells served ($1$, $2$--$4$, $5$--$12$, $\geq 13$). The buckets below $13$
@@ -249,7 +254,7 @@ would lower the levels without materially changing the comparisons made here.
   \caption{Parcel-weighted median weekly delivery frequency per postal-code
   area at $P = 0.25$, over the willingness-to-wait share $\theta$, for the
   operator-polished plan. Three delivery days per week dominate at full
-  adoption, with a two-day cluster in the south of the region.}
+  adoption; a single area reaches two.}
   \label{fig:supp_map_freq}
 \end{figure}
 
@@ -258,7 +263,7 @@ would lower the levels without materially changing the comparisons made here.
   \includegraphics[width=\linewidth]{supp_map_wait_theta_v2.pdf}
   \caption{Parcel-weighted mean additional wait of a held parcel per
   postal-code area at $P = 0.25$, over $\theta$, for the operator-polished
-  plan. The maximum area value is $0.7$ days at full adoption.}
+  plan. The maximum area value is $0.6$ days, at full adoption.}
   \label{fig:supp_map_wait}
 \end{figure}
 

@@ -1,4 +1,4 @@
-# CHANGES rev1 — model revision of 2026-08 (paper text, parts A and B)
+# CHANGES rev1 — model revision of 2026-08 (paper text, parts A, B and C)
 
 Scope: the changes the 2026-08 model revision forces on
 `paper/EWGT_2026_rev1/tbc_preprint_main.tex`. This file continues
@@ -6,11 +6,12 @@ Scope: the changes the 2026-08 model revision forces on
 reviewer-response round (11 reviewer points, mirrored into the preprint on
 2026-08-18). Nothing there is retracted; everything here is on top of it.
 
-**Status: PART B done.** Sections A-D below record part A, written against the
-v5 grid. **Part B (section F, at the end of this file) replaces every one of
-those grid numbers from grid v6** and is the authoritative list; where A-D and F
-disagree, F wins. 21 `\provisional{}` markers remain in the manuscript, all
-validation-dependent and each carrying a `% PART C` comment.
+**Status: PART C done.** Sections A-D record part A (v5 grid), section F
+part B (grid v6), section G part C (the v6 VROOM validation and the part-B
+review fixes). **Later sections win**: where A-D, F and G disagree, G is
+authoritative, then F. No `\provisional{}` marker remains; the macro is
+deleted. One `% PART C3` marker is left in the manuscript, for validation
+item 3 (the partial-adoption point), which was still solving.
 
 Evidence keys: `§n` = section of `docs/PAPER_COMPENDIUM_2026_05_24.md`;
 table files are relative to `results/revision_2026_08_v5/tables/`.
@@ -284,7 +285,9 @@ table files are relative to `results/revision_2026_08_v5/tables/`.
   pooled tours, is stated as **pending**.
 - **Evidence:** §39.5 (conservative bias, extrapolation is safe), §39.6 (all
   four validated points sit at theta = 1, where no pooled tour exists),
-  `task-12-brief.md`.
+  `task-12-brief.md`. **SUPERSEDED by section G**: pooled tours *do* occur at
+  theta = 1 (379 multi-cell groups), and the v6 validation shows the bias is
+  not conservative in the savings sense — see G2.
 
 ### B11 — Limitations (new subsection)
 
@@ -484,7 +487,7 @@ triples, no errors). **21 markers remain**, all of them validation-dependent
 1,898,091 EUR/wk routing and 2,098,401 EUR/wk operator, **0.6 % below** v5's
 1,909,432 / 2,109,742. Σ hub peaks are unchanged at 1,239. A v6 saving must
 never be normalised against a v5 or 2026-07 denominator. The manuscript now says
-this once, in the paragraph that introduces Table 2.
+this once, in the paragraph that introduces Table 1.
 
 Evidence keys below: table files are relative to
 `results/revision_2026_08_v6/tables/` unless stated; `_peek/` is
@@ -511,7 +514,7 @@ Evidence keys below: table files are relative to
 | Cost-only gap P = 0 vs 0.25, routing lens | 3.9 pp | 3.9 pp (unchanged) | abstract, §3.2, Conclusion |
 | Worst operator-lens value of the routing plan | −10.4 % at (0,0.9) | **−10.3 %** at (0,0.9) | §3.2 |
 
-Table 2 (`tables/tab_two_lens.tex`) was rebuilt cell by cell from
+Table 1 (`tables/tab_two_lens.tex`, the only table in the document) was rebuilt cell by cell from
 `tab_headline_theta1_v2.csv` and **regained its P = 1 row** (part A had moved it
 into the caption), which restores table backing for the mean-frequency figure
 quoted at P = 1 — this closes handover item M-g. The caption's tail now carries
@@ -540,7 +543,7 @@ non-daily at (5,1), 3.5 % at (5,0.3) and 15.4 % at (5,0.1). New text names the
 | Quantity | Submitted | Old (v5 text) | New (v6) |
 |---|---|---|---|
 | Routing saving, routing plan | 3.6 % | 0.03 % | **0.40 %** |
-| Operator saving, routing plan | — | 0.02 % | **0.37 %** |
+| Operator saving, routing plan | — | 0.02 % | **0.36 %** |
 | Non-daily cells, routing plan | 42 % | 2.9 % | **9.6 %** |
 
 The retraction of the *mechanism* stands unchanged, but the wording no longer
@@ -548,8 +551,9 @@ says the corner is "flat". It now says the corner "shrinks by almost an order of
 magnitude but does not disappear", per §40.22's ruling ("reduced to", not
 "gone"). The 0.74 % / 22.79 -> 22.22 % symmetric-recomputation bound is
 unchanged (it is a property of the submitted grid, not of v6). The surviving
-(0, 0.1) pair was cut in the trim; on v6 it would have read 1.8 % routing and
-4.1 % operator, against part A's 1.4 % and 3.9 %.
+(0, 0.1) pair was cut in the trim; on v6 it would have read 1.8 % routing saving
+for the routing-optimal plan and 4.1 % operator saving for the operator-polished
+plan (two plans, as in part A's 1.4 % and 3.9 %).
 
 ### Fleet — `tab_fleet_diagnostics_v2.csv`
 
@@ -639,10 +643,11 @@ Limitation (v) now quotes the two realised rates rather than the pre-run one.
 ### Partial-adoption mechanism (new; Amendment 6, §40.20)
 
 New paragraph in §3.2, all numbers recomputed on v6 from
-`_peek/results_overview_v6.csv` and `tab_grid_full_v2.csv`: at P = 0.25 the mean
-delivery frequency rises from theta = 0.8 to 0.9, 4.94 -> 5.17 d (routing plan)
-and 4.68 -> 4.89 d (operator plan), while the express residual falls from 9.6 %
-to 7.4 % of routing cost; at theta = 1 the residual vanishes and the frequency
+`tab_grid_full_v2.csv` (`mean_days_plan1` / `mean_days_plan2`, the cell-level
+means, **not** the `*_provmean` columns) and `_peek/results_overview_v6.csv`:
+at P = 0.25 the mean delivery frequency rises from theta = 0.8 to 0.9,
+4.93 -> 5.16 d (routing plan) and 4.68 -> 4.89 d (operator plan), while the
+express residual falls from 9.6 % to 7.4 % of routing cost; at theta = 1 the residual vanishes and the frequency
 drops to 3.10 / 3.27 d. Two causes are named (the penalty scales with theta; the
 thin residual no longer fills a vehicle in small depots), and the theta =
 0.9 -> 1 jump is attributed to the disappearance of the express obligation.
@@ -779,3 +784,128 @@ through a second `\graphicspath` entry,
 under the same stems the first entry wins and the relative path can be dropped.
 This closes handover item M9 — the main text's "supplementary material"
 pointers now resolve.
+
+---
+
+# G. PART C — the v6 VROOM validation, and the part-B review fixes (2026-08-28)
+
+**Status: PART C done.** The manuscript carries no `\provisional{}` marker any
+more (the macro is deleted, so no undecodable superscript reaches print). One
+`% PART C3` marker remains, for validation item 3.
+
+Source for every number in this section:
+`results/revision_2026_08_v6/validation/validation_report.md` (items 0, 1, 2)
+and `validation/tab_vroom_v2.csv`, independently recomputed over
+`item in {0,1,2}` with the report's own formulas
+(`variable = Σ(vroom_cost_eur − 189.15·vroom_n_routes)`,
+`peak_h = max_d Σ vroom_n_routes of hub h`,
+`OpCost = Σ variable + 1134.90·Σ_h peak_h`). Compendium §40.24 / §40.25 carry the
+same figures.
+
+## G1 — The validation itself (new, replaces the part-A/B placeholder text)
+
+7,610 instances re-routed: the complete daily baseline (item 0, 1,683
+instances), the operator-polished plan at θ = 1 and P ∈ {0, 0.25, 0.5, 0.75}
+(item 1) and the routing-optimal plan at θ = 1 and P ∈ {0, 0.25} (item 2). One
+PARTIAL (a DHL depot instance, PLZ 30855, one unassigned job) — excluded from
+the error statistics, kept in the cost totals.
+
+| Quantity | Value | Source |
+|---|---|---|
+| Overall error, 7,609 clean instances | 3.51 % MAPE, +3.05 % bias | recomputed |
+| Daily baseline | 5.80 % MAPE, +5.39 % bias | recomputed |
+| — single-cell tours / pooled tours | +4.88 % / +14.50 % bias | report, "Routing lens" |
+| Consolidated points | 2.85 % MAPE, +2.39 % bias; 2.3–3.7 % MAPE per point | recomputed |
+| Baseline totals, predicted vs actual | routing 1,898,091 / 1,818,360 €; OpCost 2,098,401 / 2,016,778 € | report, "Predicted vs actual" |
+| Surrogate above solver | +4.4 % (routing) / +4.0 % (OpCost) at the baseline; +0.9 … +2.9 % at the points | derived |
+| Σ depot peaks, predicted / actual | 1,239/1,249; 1,030/1,032; 1,026/1,026; 1,062/1,064; 1,091/1,096; 1,666/1,667; 1,314/1,314 | report, "Both lenses" |
+
+## G2 — The claim that changes direction
+
+- **Old (submitted, and repeated in parts A and B as "evidence on the
+  surrogate"):** "the surrogate is conservative — 22.8 % predicted against
+  23.7 % actual — so the reported savings are understated rather than
+  overstated."
+- **New:** the surrogate over-prices *every* instance class, and the thin daily
+  baseline tours (+5.4 %) much more than the consolidated ones (+2.4 %). The
+  over-priced baseline is the denominator of every saving, so **the predicted
+  savings are an upper bound, by 1.3 to 2.5 pp**.
+- **Why the submitted version saw the opposite:** its comparison predates the
+  universal tour rule, and no earlier validation re-routed the daily baseline
+  itself. Item 0 supplies that baseline for the first time.
+- **Realised against predicted (θ = 1):**
+
+| plan / lens | P = 0 | 0.25 | 0.5 | 0.75 |
+|---|---|---|---|---|
+| operator plan, routing lens | 17.48 (20.0) | 14.53 (16.7) | 10.59 (12.3) | 7.69 (9.0) |
+| operator plan, operator lens | 22.08 (24.3) | 20.73 (22.6) | 16.29 (17.8) | 12.84 (14.1) |
+| routing plan, routing lens | 20.58 (22.6) | 16.43 (18.7) | — | — |
+| routing plan, operator lens | −12.09 (−8.4) | +5.22 (+7.8) | — | — |
+
+  (20.58 % is the clean figure; 19.93 % if the PARTIAL row is kept.)
+- **Nothing changes sign or order, and the central result strengthens:** the
+  operator-lens penalty of the routing-optimal plan is *larger* in reality
+  (−12.1 % against −8.4 % predicted at (0, 1)), so a plan chosen on per-day
+  routing cost is a worse weekly proposition than the surrogate suggested.
+- The fleet counting rule `⌈p/Q⌉` is near-exact: over all seven re-routed
+  settings the summed depot peaks never differ by more than five vehicles in a
+  thousand.
+
+Text affected: the abstract's closing clause, the whole of §3.3, limitation
+(iv), and the feature-skew caveat (now "3.51 % MAPE at +3.05 % bias over 7,609
+solver-routed instances", replacing the v5 "3.03 % / +2.73 % / 1,247 cells").
+
+## G3 — Gate G1a in the methods (compendium §40.23, `gates_report.md`)
+
+§2.4 now states the tolerance rule rather than only the count: of 1,656
+cell–penalty pairs, 1,651 agree exactly with plain enumeration and five are
+accepted under a stated tolerance — a single-day change of the pattern whose
+objective differs by at most 20 € or 0.5 % of the cell's weekly objective,
+whichever is larger — all five arising from the paired move in the local search.
+`62_` on v6 reports **G1a PASS** (0 hard mismatches, 5 tolerated).
+
+## G4 — Fixes from the part-B review (`task-14b-review.md`)
+
+| ID | Fix |
+|---|---|
+| **I1** | The "all five breakdowns are flat at exactly zero for θ ≤ 0.9" sentence was false — five of six panels carry a rising mid-θ line. Replaced by the reviewer's verified wording: the medians stay in low single digits and jump at θ = 1, and only the service-bound class, urban cells and the nearest hub-distance quartile are flat at exactly zero. |
+| **I2** | The retracted "at θ = 1 no pooled tour exists" removed from `RESPONSE_TO_REVIEWERS_skeleton.md` Theme A and Theme G (it had been removed from the manuscript in part B but not from the reviewer letter). Theme G rewritten around the actual reason the partial-adoption regime is unvalidated. |
+| **I3** | Closed by the controller's `71_` run: `paper/EWGT_2026_rev1/figures/fig4/5/6*.pdf` are now md5-identical to `results/revision_2026_08_v6/figures/manifest.json`. Verified here. |
+| **I4** | Ruled by the controller: the in-figure label strings are corrected in the frozen builders by a separate task, so the captions describe the corrected labels and carry no clause about legacy strings. |
+| **I5** | The abstract's superseded validation clause replaced by the real v6 result, and the `\provisional` macro deleted entirely, so no undefined superscript reaches print. |
+| **I6** | `1.91 M€` → **1.90 M€** of baseline operating cost (the v5 value had survived because it was never wrapped). |
+| **M1** | Table 1's caption: the "all but 0.6 % of cells" clause scoped to P ≥ 5 (it is 9.94 % at P = 2). |
+| **M2** | Abstract: the 51–84 % CV band scoped to full adoption. |
+| **M3** | Supplementary Fig. S11 caption: maximum area wait 0.7 → **0.6 d**. |
+| **M4** | Supplementary Fig. S10 caption: "a two-day cluster" → "a single area reaches two" (n = 1 of 48). |
+| **M5** | The 159 km² cap: "the 95th percentile … −4.3 % at the training maximum" → "above which only 6.4 % of training rows lie … averaging −4.3 % over the 159–358 km² range". |
+| **M6** | "triples to 7.1 %" → "more than doubles, to 7.1 %" (7.14 against 2.91 % is a factor 2.4). |
+| **M7** | "comfortably above the 50 cents" → "above the 50 cents at every operating point" (the P = 0 routing-lens break-even is 0.558 €). |
+| **M8** | Fig. 5's caption now names the plan for panel (c). |
+| **M9** | This changelog corrected: the mechanism frequencies to the cell-level `mean_days_*` (4.93 → 5.16, matching the manuscript), the (10, 0.1) operator saving to 0.36 %, and the cut (0, 0.1) pair labelled with its two plans. |
+| **M10** | "Table 2" → "Table 1" throughout; the validation subsection is §3.3 and the limitations §3.4. |
+| **M11** | The file header no longer says "UNDER REVIEW — not yet accepted". |
+| **M13** | Closed: `62_` on v6 gives G1a PASS; §2.4's sentence matches the ruling (see G3). |
+
+`M12` needed no change: the express €/vehicle-day figures are in §40.20 but are
+ruled not citable until `77_mechanism_v2.py` lands, so not writing them was and
+remains correct.
+
+## G5 — Page budget
+
+Not applied. The review's §6.3 cut list is prepared as
+`paper/EWGT_2026_rev1/page_budget_cuts.patch` with
+`page_budget_cuts_README.md`; the author decides. The manuscript as committed is
+**16 pages** and the supplementary **7**.
+
+## G6 — Still open
+
+1. Validation item 3, the partial-adoption point (P, θ) = (0.25, 0.5) on the
+   operator plan — the single `% PART C3` marker.
+2. CO₂: the manuscript contains no CO₂ statement at all, so there is nothing to
+   refresh; `70_` was not re-run because `validation/67.lock` exists.
+3. `71_` does not yet carry `supp_fig7_*` or the four `supp_map_*` /
+   `supp_penalty_*` figures into `paper/EWGT_2026_rev1/figures/`; the
+   supplementary reaches them through its relative path.
+4. HAGRID acronym, the Elsevier 8-page check, the stale `%TODO` headers, the
+   human read-through.
