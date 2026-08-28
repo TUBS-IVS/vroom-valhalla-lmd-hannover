@@ -24,8 +24,20 @@ by 10_*..70_* through the shared colour system in `_style.py`.
 
 Usage:
     python scripts/presentation/91_build_pptx.py [--out PATH]
+    python scripts/presentation/91_build_pptx.py --out-suffix _rev2026-08
 
-The template is opened read-only and never written to.
+The template is opened read-only and never written to, and so is every deck
+that already exists: the output path goes through `_outguard.resolve()`, which
+refuses to overwrite a file unless `--overwrite` was passed on purpose.
+
+Revision numbers
+----------------
+Every grid figure on a results slide is read from `_revision.Facts`, which
+pulls it out of the grid `--rev-dir` (or `$PRES_REV_DIR`) points at and asserts
+it against the value the compendium records. Nothing numeric on those slides is
+a literal, so re-running against the v6 head grid restates the deck rather than
+requiring an edit. While the grid is provisional every such slide carries the
+small `v5 · provisional` footer tag; `--no-provisional` removes it.
 """
 from __future__ import annotations
 
@@ -33,12 +45,16 @@ import argparse
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
+
+import _outguard as G                                             # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 FIG = ROOT / "results" / "presentation_2026_08" / "slides"
@@ -596,8 +612,265 @@ def delete_slide(prs, index):
     lst.remove(items[index])
 
 
+# ── the 2026-08 revision ───────────────────────────────────────────────────
+def part_revision(prs, f, RV, *, tag: bool = True):
+    """What the revision changed: one tour rule, two lenses, two plans.
+
+    This block sits at the head of the results act, because every number after
+    it has to be read through it. Nothing here is a literal: `f` is a
+    `_revision.Facts` read from the grid in use, and each slide's speaker notes
+    carry the compendium section its claim comes from.
+    """
+    def mark(s, note, cite):
+        RV.notes(s, note, cite=cite)
+        RV.provisional(s, enabled=tag)
+        return s
+
+    divider(prs, "R", "Revision 1", "What changed\nsince the submission",
+            "One tour rule · two cost lenses · two weekly plans")
+
+    # ── 1 · the universal tour rule ───────────────────────────────────────
+    s = new_slide(prs, "Revision · 1",
+                  "One tour rule prices the baseline and the scenario",
+                  "Per-cell express with a 230-parcel minimum tour, applied "
+                  "scenario-blind. There is no longer a code branch that could "
+                  "treat the baseline differently.")
+    flow(s, [("Own tour per area", "every delivery day", S1),
+             ("Standard parcels ride it", "of a non-delivering area", S2),
+             ("Pooled below one van", "minimum tour 230 parcels", S3),
+             ("Same rule both sides", "baseline and scenario", S6)],
+         BODY_T, bh=1.55)
+    bullets(s, ["The old model pooled every non-delivering area of a hub into "
+                "one express tour.",
+                "That priced a tour no operator would dispatch — and only the "
+                "scenario could ever have one.",
+                "Removing it lowers the θ < 1 savings to an honest floor and "
+                "dissolves the θ = 10 % bump."],
+             BODY_T + 1.90, h=1.75)
+    _fl = RV.D.saving_grid_v2(RV.D.PLAN_ROUTING, RV.D.LENS_ROUTING)
+    _fl = _fl[_fl.penalty == 0.0].set_index("share_willing").saving_pct
+    stats(s, [(f"{_fl.loc[0.1]:.2f}%", "routing saving at θ = 10 %", False),
+              (f"{_fl.loc[0.5]:.2f}%", "at θ = 50 %", False),
+              (f"{_fl.loc[1.0]:.2f}%", "at full adoption", True)],
+          BODY_T + 3.70, h=1.00, sz=36)
+    mark(s, RV.TOUR_RULE_NOTES, ["§40.7", "§40.8", "§40.9"])
+
+    # ── 2 · two cost lenses ───────────────────────────────────────────────
+    s = new_slide(prs, "Revision · 2", "One euro is not one euro",
+                  f"Cost model: {RV.D.COST_MODEL_SENTENCE}. Both baselines "
+                  f"price the same daily-delivery system.")
+    _y = table(s, ["Lens", "What it counts", "Weekly baseline"],
+               [[(r[0], "key"), r[1], (r[2], "num")] for r in RV.lens_rows(f)],
+               BODY_T, widths=[2.6, 6.2, 3.0], reserve=2.15)
+    bullets(s, ["189.15 € per vehicle-day already contains the driver.",
+                "An operator staffs each hub for its weekly peak, so below "
+                "the peak only the kilometres are a real outlay.",
+                "A vehicle taken out of a hub's peak is worth 1 134.90 € a "
+                "week."], _y + 0.28, h=2.0)
+    mark(s, RV.LENS_NOTES, ["§40.11", "§40.12"])
+
+    # ── 3 · two plans ─────────────────────────────────────────────────────
+    h0 = f.headline[0.0]
+    s = new_slide(prs, "Revision · 3",
+                  "Two plans, because the two lenses disagree",
+                  f"θ = 100 %, P = 0 €/parcel/day. Baseline "
+                  f"{RV.eur(f.base_routing)} € routing / "
+                  f"{RV.eur(f.base_operator)} € operator, "
+                  f"Σ hub peak {f.base_peak}.")
+    _y = table(s, ["Weekly plan", "Routing saving", "Operator saving",
+                   "Σ hub peak", "Added wait"],
+               [[(r[0], "key"), (r[1], "num"), (r[2], "num"), r[3], r[4]]
+                for r in RV.plan_rows(f)],
+               BODY_T, widths=[3.6, 2.3, 2.4, 1.9, 2.0], reserve=2.30)
+    label_box(s, L, _y + 0.26, W, 0.92, BLUSH,
+              [("The routing optimum is worse than doing nothing for an "
+                "operator: two-day patterns treble the hub peaks.",
+                SZ_LEAD, True, RED)], line_col=RED)
+    bullets(s, ["Stage 2 may now change how OFTEN an area is served, not "
+                "only on which days.",
+                "That is what turns −7.8 % into 24.7 % — and it shortens the "
+                "wait at the same time."], _y + 1.38, h=1.18)
+    mark(s, RV.PLAN_NOTES, ["§40.14", "§40.15"])
+
+    # ── 4 · the one-cell depot ────────────────────────────────────────────
+    s = new_slide(prs, "Revision · 4",
+                  "A one-area depot cannot rotate its delivery days",
+                  f"{f.bantorf_hub_name}, Mon–Sat vehicles at P = 0, "
+                  f"θ = 100 %. The routing-optimal profile is quoted from the "
+                  f"compendium; the v2 tables keep only the final plan.")
+    top = max(max(f.BANTORF_BEFORE), max(f.bantorf_after))
+    ROW, BAR = 1.80, 0.80        # row pitch and bar-well height, in inches
+    for i, (lbl, prof, peak) in enumerate(
+            [("Routing-optimal plan", f.BANTORF_BEFORE, max(f.BANTORF_BEFORE)),
+             ("Operator-polished plan", f.bantorf_after, max(f.bantorf_after))]):
+        y = BODY_T + i * ROW
+        txt(s, L, y, 5.0, 0.34, lbl, SZ_BODY, bold=True, color=INK)
+        for k, v in enumerate(prof):
+            x = L + k * 0.72
+            hgt = BAR * v / top
+            # A zero day is a hairline on the axis, not a stub: the profile
+            # "0 0 33 0 0 29" is the whole point of the slide.
+            rect(s, x, y + 0.70 + (BAR - max(hgt, 0.03)), 0.52,
+                 max(hgt, 0.03), CRIM if v == peak else (S4 if v else LINE))
+            txt(s, x, y + 0.40, 0.52, 0.26, str(v), SZ_DIA, bold=True,
+                color=INK if v else DIM, align=PP_ALIGN.CENTER)
+            txt(s, x, y + 1.54, 0.52, 0.26, "MTWTFS"[k], SZ_DIA, color=DIM,
+                align=PP_ALIGN.CENTER)
+        txt(s, L + 4.85, y + 0.86, 3.0, 0.50, f"peak {peak}", 30, bold=True,
+            color=CRIM if i == 0 else TEAL)
+    bullets(s, [f"{f.DHL_ONE_CELL} of DHL's {f.DHL_HUBS} depots serve exactly "
+                f"one postal-code area.",
+                "Their peak falls only by delivering on more days — no "
+                "re-timing can help.",
+                "Consolidation buys fleet where a depot rotates days across "
+                "areas; elsewhere it buys kilometres."],
+             BODY_T + 2 * ROW + 0.10, h=1.45)
+    mark(s, RV.ONE_CELL_NOTES, ["§40.14", "§40.18"])
+
+    # ── 5 · the operator headline ─────────────────────────────────────────
+    s = new_slide(prs, "Revision · 5",
+                  "In the operator lens the headline changes hands",
+                  f"Operator-polished plan at P = 0, θ = 100 %, against the "
+                  f"daily-delivery baseline of {RV.eur(f.base_operator)} € "
+                  f"and {f.base_peak} peak vehicles.")
+    stats(s, [(f"{h0['op2']:.1f}%", "operator-cost saving", True),
+              (f"{h0['peak2_pct']:+.0f}%", "peak vehicles across all hubs",
+               True),
+              (f"{h0['rout2']:.1f}%", "routing-cost saving of the same plan",
+               False)], BODY_T, h=1.5)
+    bullets(s, [f"The submission's headline was a routing-cost figure: "
+                f"{h0['rout1']:.1f} % at the routing optimum.",
+                f"That same plan costs an operator {abs(h0['op1']):.1f} % MORE "
+                f"than delivering daily.",
+                "The polished plan gives up 2.7 points of routing saving and "
+                "buys 32 points of operator saving."],
+             BODY_T + 1.85, h=2.4)
+    mark(s, "The revision's headline number. The routing lens is the one "
+            "comparable with the submission; the operator lens is the one an "
+            "LSP with salaried drivers actually faces. Report both, and never "
+            "pair a plan with the other plan's lens.", ["§40.12", "§40.15"])
+
+    # ── 6 · the recommended point ─────────────────────────────────────────
+    r = f.recommended()
+    s = new_slide(prs, "Revision · 6",
+                  "P = 0.25 €/parcel/day is the point that works in both lenses",
+                  "θ = 100 %. Savings against the daily-delivery baseline of "
+                  "the same grid; wait is parcel-weighted over all parcels.")
+    _y = table(s, ["Operating point", "Routing saving", "Operator saving",
+                   "Added wait", "Σ hub peak"],
+               [[("P = 0", "key"), (f"{h0['rout2']:.1f} %", "num"),
+                 (f"{h0['op2']:.1f} %", "num"), f"{h0['wait2']:.2f} d",
+                 f"{h0['peak2_pct']:+.1f} %"],
+                [("P = 0.25", "key"), (f"{r['rout2']:.1f} %", "num"),
+                 (f"{r['op2']:.1f} %", "num"), f"{r['wait2']:.2f} d",
+                 f"{r['peak2_pct']:+.1f} %"]],
+               BODY_T, widths=[2.9, 2.4, 2.5, 2.1, 2.3], reserve=2.30)
+    label_box(s, L, _y + 0.26, W, 0.92, BLUSH,
+              [("Half the waiting time for two points of operator saving — "
+                "and the same peak-fleet cut.", SZ_LEAD, True, RED)],
+              line_col=RED)
+    bullets(s, ["Both rows are the operator-polished plan, so the comparison "
+                "is one plan family, not two.",
+                "P = 0 wins on paper; P = 0.25 is the point to defend in "
+                "front of a customer."], _y + 1.38, h=1.18)
+    mark(s, "At P = 0 the operator lens is 24.7 % against 22.8 % at P = 0.25, "
+            "but the wait is 0.77 d against 0.39 d and the peak cut is the "
+            "same. The knee of the front stays at P = 0.25.",
+         ["§40.15", "§40.18"])
+
+    # ── 7 · the knee is lens-dependent ────────────────────────────────────
+    s = new_slide(prs, "Revision · 7", "The knee depends on which lens you use",
+                  "Chord-distance knee on the (saving, wait) front at θ = 1, "
+                  "per LSP, in each lens. Carrier classes are a heuristic, "
+                  "not a recommendation.")
+    table(s, ["LSP", "P* routing lens", "P* operator lens",
+              "Class · routing", "Class · operator"],
+          [[(r0[0], "key"), (r0[1], "body"),
+            (r0[2], "num" if r0[1] != r0[2] else "body"), r0[3],
+            (r0[4], "num" if r0[3] != r0[4] else "body")]
+           for r0 in RV.pstar_rows(f)],
+          BODY_T, widths=[1.9, 2.5, 2.6, 2.6, 2.6], reserve=1.15)
+    txt(s, L, BODY_B - 0.90, W, 0.80,
+        "Three LSPs move up one class in the operator lens: peak smoothing "
+        "only starts to pay at a higher penalty.", SZ_LEAD, bold=True,
+        color=RED, line=1.25)
+    mark(s, RV.PSTAR_NOTES, "§40.18")
+
+    # ── 8 · partial adoption ──────────────────────────────────────────────
+    rows = {th: (a, b) for th, a, b in f.partial_adoption(0.0)}
+    s = new_slide(prs, "Revision · 8",
+                  "Below full adoption only the operator lens pays",
+                  "Operator-polished plan at P = 0 across the adoption grid. "
+                  "Both columns are the same plan, priced in the two lenses.")
+    _y = table(s, ["Willing to wait", "Routing saving", "Operator saving"],
+               [[(f"θ = {int(th * 100)} %", "key"),
+                 f"{rows[th][0]:.1f} %", (f"{rows[th][1]:.1f} %", "num")]
+                for th in (0.1, 0.3, 0.5, 0.8, 1.0) if th in rows],
+               BODY_T, widths=[3.2, 4.0, 4.0], reserve=1.95)
+    bullets(s, ["Two delivery systems run in parallel at low adoption: the "
+                "batched one and the daily one.",
+                "The kilometres barely move — but the weekly peak does, and "
+                "that is what an operator staffs for.",
+                "Nowhere in the grid is the operator lens negative at P = 0."],
+             _y + 0.26, h=1.70)
+    mark(s, "Partial adoption is positive only in the operator lens: routing "
+            "saving 0.4-4.6 % against operator saving 3.9 % at θ = 0.1 rising "
+            "to 11.0 % at θ = 0.8, and never negative (the previous grid "
+            "reached −2.1 % at θ = 0.9).", "§40.15")
+
+    # ── 9 · the penalty as a real payout ──────────────────────────────────
+    s = new_slide(prs, "Revision · 9",
+                  "If the penalty is actually paid out, P = 0 stops winning",
+                  "θ = 100 %, operator-polished plan. Flat discount = 0.50 € "
+                  "per delayed willing parcel; delayed parcels are demand on "
+                  "non-delivery days times the willing share.")
+    table(s, ["Operating point", "Delayed parcels/wk", "Saving, shadow price",
+              "Net after 0.50 € discount", "Break-even discount"],
+          [[(r0[0], "key"), r0[1], r0[2], (r0[3], "num"), (r0[4], "num")]
+           for r0 in RV.discount_rows(f)],
+          BODY_T, widths=[2.4, 2.6, 2.6, 2.9, 2.5], reserve=1.15)
+    txt(s, L, BODY_B - 0.90, W, 0.80,
+        "Read as a payout the penalty halves the saving — it does not remove "
+        "it, and it moves the optimum to P = 0.25–0.5.", SZ_LEAD, bold=True,
+        color=RED, line=1.25)
+    mark(s, RV.DISCOUNT_NOTES, "§40.17")
+    return prs
+
+
+def slide_bulge_replacement(prs, f, RV, *, tag: bool = True):
+    """Replaces the old "the θ = 10 % bump survives a punitive fee" slide.
+
+    That slide described an artefact of the pre-revision pooled express price.
+    Under the universal tour rule the cell it was built on consolidates almost
+    nothing and saves almost nothing, so the slide is not corrected — it is
+    withdrawn, and this one says why.
+    """
+    s = new_slide(prs, "Appendix · withdrawn finding",
+                  "The bump at θ = 10 % was a pricing artefact",
+                  "Share of the 312 delivery areas that give up daily "
+                  "delivery, and the routing saving at the same cell, on the "
+                  "revision grid (routing-optimal plan).")
+    _rows = RV.bulge_rows(f)
+    _old, _new = 41.7, float(_rows[2][1].rstrip(" %"))
+    _y = table(s, ["Operating point", "Areas consolidating", "Routing saving"],
+               [[(r[0], "key"), (r[1], "num"), r[2]] for r in _rows],
+               BODY_T, widths=[4.0, 4.0, 3.2], reserve=2.55)
+    label_box(s, L, _y + 0.24, W, 0.92, BLUSH,
+              [(f"The old deck said {_old:.1f} % of areas still consolidated "
+                f"at P = 10, θ = 10 %. Here it is {_new:.1f} %.",
+                SZ_LEAD, True, RED)], line_col=RED)
+    bullets(s, ["The bump was paid for by a hub-pooled express tour no "
+                "operator would dispatch.",
+                "The P · θ reading of that slide is withdrawn."],
+             _y + 1.34, h=1.05)
+    RV.notes(s, RV.BULGE_NOTES, cite=["§40.7", "§40.8", "§40.15"])
+    RV.provisional(s, enabled=tag)
+    return s
+
+
 # ── the deck ───────────────────────────────────────────────────────────────
-def build(out: Path, keep_template_slides: bool) -> Path:
+def build(out: Path, keep_template_slides: bool, *, facts=None,
+          revision=None, tag: bool = True) -> Path:
     prs = Presentation(str(TEMPLATE))
 
     # The template master's footer still names the previous talk. Retitle it
@@ -1693,57 +1966,102 @@ def build(out: Path, keep_template_slides: bool) -> Path:
     divider(prs, "04", "Part four", "What we\nfound",
             "The cost–service frontier · where it pays · what it does to the fleet")
 
-    # ═══ saving vs wait ═══════════════════════════════════════════════════
-    s = new_slide(prs, "Results", "Service improves faster than savings disappear",
-                  "Stage 3 (per-hub balancing + within-provider system smoothing), "
-                  "complete θ grid. Baseline = 1 909 748 € per week.")
-    pic(s, A / "fig31_saving_grid.png", L, BODY_T, 5.85, 3.55)
-    pic(s, A / "fig32_wait_grid.png", COL2, BODY_T, 5.85, 3.55)
-    bullets(s, ["Saving peaks at 22.8%; added wait never exceeds 0.98 days.",
-                "The first small penalty halves the wait, keeping most of the "
-                "saving."], BODY_T + 3.75, h=1.7)
+    # ═══ the revision block ═══════════════════════════════════════════════
+    # Everything after this reads through the revision's frame, so the frame
+    # comes first.
+    if facts is not None:
+        part_revision(prs, facts, revision, tag=tag)
 
     # ═══ the trade-off in numbers ═════════════════════════════════════════
+    # Numbers from the grid in use, both plans, both lenses. The submission's
+    # single "cost saving" column no longer exists: it was the routing lens of
+    # the routing-optimal plan, which is now one of four cells.
     s = new_slide(prs, "Results", "The efficient range sits between 0.25 and 0.5",
-                  "All figures predicted by the Stage-3 surrogate at θ = 1; 18 of 80 "
-                  "grid cells lie on the efficient front.")
-    _y = table(s, ["Penalty", "Cost saving", "Added wait", "What it buys"],
-          [[("P = 0", "key"), ("22.8%", "num"), "0.98 d",
-            "the cost-optimal extreme"],
-           [("P = 0.25", "key"), ("18.5%", "num"), "0.46 d",
-            "wait halves for ≈4.2 pp of saving"],
-           [("P = 0.5", "key"), ("13.5%", "num"), "0.23 d",
-            "12.9% peak-fleet reduction"]],
-          BODY_T, widths=[2.2, 2.4, 2.2, 4.4], reserve=1.35)
+                  "θ = 100 %, surrogate-predicted, on the revision grid. "
+                  "Routing = what the tours cost to drive; operator = "
+                  "kilometres plus 1 134.90 € per peak vehicle and hub.")
+    _rows = []
+    if facts is not None:
+        for _P in (0.0, 0.25, 0.5):
+            _h = facts.headline[_P]
+            _rows.append([(f"P = {_P:g}", "key"),
+                          (f"{_h['rout2']:.1f} %", "num"),
+                          (f"{_h['op2']:.1f} %", "num"),
+                          f"{_h['wait2']:.2f} d",
+                          f"{_h['peak2_pct']:+.1f} %"])
+    else:
+        # --no-revision: the submission's own figures, with no second lens
+        _rows = [[("P = 0", "key"), ("22.8 %", "num"), ("n/a", "body"),
+                  "0.98 d", "n/a"],
+                 [("P = 0.25", "key"), ("18.5 %", "num"), ("n/a", "body"),
+                  "0.46 d", "n/a"],
+                 [("P = 0.5", "key"), ("13.5 %", "num"), ("n/a", "body"),
+                  "0.23 d", "n/a"]]
+    _y = table(s, ["Penalty", "Routing saving", "Operator saving",
+                   "Added wait", "Σ hub peak"],
+               _rows, BODY_T, widths=[2.0, 2.6, 2.6, 2.4, 2.6], reserve=1.45)
     txt(s, L, _y + 0.30, W, 1.0,
-        "At P = 0.5 the Mon–Sat fleet variation falls by 54%.\nThe expensive part "
-        "of the trade is the last points of saving, not the first.", SZ_LEAD,
+        "Every row is the operator-polished plan.\nThe expensive part of the "
+        "trade is the last points of saving, not the first.", SZ_LEAD,
         bold=True, color=RED, line=1.3)
+    if facts is not None:
+        revision.notes(
+            s, "The submission quoted 22.8 / 18.5 / 13.5 % here. Those were "
+               "routing euro on the routing-optimal plan and are superseded "
+               "twice over: by the universal tour rule and by the operator "
+               "polish. This table is one plan (operator-polished) in both "
+               "lenses.", cite=["§40.15", "§40.18"])
+        revision.provisional(s, enabled=tag)
 
     # ═══ pareto ═══════════════════════════════════════════════════════════
+    # The shape of the front is what this slide argues, and it is unchanged;
+    # the levels on it are not, so the source line says which grid drew it.
     s = new_slide(prs, "Results", "The cost–service frontier",
                   "Each line is one penalty level swept across adoption; the dashed "
-                  "line is the efficient front.")
+                  "line is the efficient front. Rendered from the submission grid "
+                  "— the revision restates the levels, not the shape.")
     pic(s, A / "fig34_pareto.png", L, BODY_T, 7.5, 4.85)
-    bullets(s, ["Every point is a fully balanced Stage-3 schedule.",
+    bullets(s, ["Every point is a fully balanced weekly schedule.",
                 "The knee, not the extreme, is the operating point.",
                 "Beyond it, waiting grows faster than saving."],
             BODY_T + 0.7, l=8.4, w=4.4, h=3.2)
 
     # ═══ frequency mix ════════════════════════════════════════════════════
     s = new_slide(prs, "Results", "The penalty shifts the delivery-frequency mix",
-                  "Frequency is invariant from Stage 2 to Stage 3; only weekday "
-                  "placement changes. Frequencies stay within {2,…,6}.")
+                  "Shares are the revision grid at θ = 100 %; the figure is the "
+                  "submission render of the same quantity. Frequencies stay "
+                  "within {2,…,6}.")
     pic(s, A / "fig35_schedule_mix.png", L, BODY_T, W, 3.55)
-    bullets(s, ["At P = 0, two-day patterns dominate — 97.4% of areas.",
-                "The 2.6% that resist are urban cells at their capacity limit.",
-                "At P ≥ 5 the system reverts to daily delivery once θ ≥ 0.3."],
-            BODY_T + 3.70, h=2.1)
+    if facts is not None:
+        _mix = {p: revision.D.chosen_sizes_v2(p) for p in revision.D.PLANS}
+        def _two_day(plan):
+            m = _mix[plan]
+            m = m[(m.penalty == 0.0) & (m.share_willing == 1.0)]
+            return 100.0 * (m.schedule_size == 2).mean()
+        bullets(s, [f"At P = 0 the routing optimum is almost all two-day "
+                    f"patterns — {_two_day(revision.D.PLAN_ROUTING):.1f} % of "
+                    f"areas.",
+                    f"The operator polish pulls that back to "
+                    f"{_two_day(revision.D.PLAN_OPERATOR):.1f} %, because a "
+                    f"two-day pattern is what makes a hub peak.",
+                    "At P ≥ 5 the system reverts to daily delivery."],
+                BODY_T + 3.70, h=2.1)
+        revision.notes(s, "The frequency mix is now a two-plan quantity: the "
+                          "routing optimum consolidates hard, the operator "
+                          "polish trades some of that back for a flatter week.",
+                       cite=["§40.14", "§40.15"])
+        revision.provisional(s, enabled=tag)
+    else:
+        bullets(s, ["At P = 0, two-day patterns dominate the routing optimum.",
+                    "At P ≥ 5 the system reverts to daily delivery."],
+                BODY_T + 3.70, h=2.1)
 
     # ═══ maps ═════════════════════════════════════════════════════════════
     s = new_slide(prs, "Results", "Where the delivery days land",
-                  "At P = 0.25 €/p/d. Values are per merged cluster, so member "
-                  "polygons of one cluster share a value.")
+                  "At P = 0.25 €/p/d, submission grid. Values are per merged "
+                  "cluster, so member polygons of one cluster share a value. "
+                  "The revision has no per-area euro map: its per-cell plan "
+                  "costs are still being produced.")
     pic(s, A / "fig41_map_freq_by_theta.png", L, BODY_T, W, 3.45)
     bullets(s, ["Dark means changed most: two delivery days a week.",
                 "The periphery consolidates first.",
@@ -1751,9 +2069,14 @@ def build(out: Path, keep_template_slides: bool) -> Path:
             BODY_T + 3.60, h=2.2)
 
     # ═══ where it pays ════════════════════════════════════════════════════
+    # Per-area EURO only exists on the submission grid: the revision's per-cell
+    # plan costs (Task 11) are not in the tables yet, so this slide says which
+    # grid it is on rather than implying the revision restated it.
     s = new_slide(prs, "Results", "TBC pays where delivery is sparse and far",
-                  "Paper Fig. 6 · provider-specific P* at θ = 1 · median per "
-                  "postal-code area.")
+                  "Median per postal-code area at each provider's P*, "
+                  "submission grid — the only grid with a per-area euro "
+                  "decomposition. On the revision grid the same structure is "
+                  "visible in delivery frequency (next slides).")
     stats(s, [("9%", "urban median saving", False),
               ("25%", "rural median saving", True)], BODY_T, w=5.9, h=1.35)
     bullets(s, ["The gap is structural, not a modelling artefact.",
@@ -1765,7 +2088,8 @@ def build(out: Path, keep_template_slides: bool) -> Path:
     # ═══ drivers ══════════════════════════════════════════════════════════
     s = new_slide(prs, "Results", "Three structural drivers, one direction",
                   "Spearman correlations across the 312 provider–area cells at each "
-                  "provider's own P*.")
+                  "provider's own P*, submission grid. The revision reproduces the "
+                  "same three directions in delivery frequency (Fig. 6 d–f).")
     _y = table(s, ["Driver", "Correlation", "Reading"],
           [[("Hub distance", "key"), ("ρ = +0.53", "num"),
             "Long stems are amortised by batching"],
@@ -1779,14 +2103,33 @@ def build(out: Path, keep_template_slides: bool) -> Path:
                 "degradation.", SZ_LEAD + 2, True, RED)], line_col=RED)
 
     # ═══ carrier classes ══════════════════════════════════════════════════
+    # The classes are now lens-qualified: three LSPs move up one class in the
+    # operator lens, so the card grid is built from the grid's own table.
     s = new_slide(prs, "Results", "One policy does not fit every carrier",
-                  "Provider-specific chord-distance knees at θ = 1; heuristic "
-                  "operating points, not a normative recommendation.")
-    classes = [("Service-bound", "P* = 0.25", "Amazon · DHL",
-                "Dense, high parcels-per-stop", S4),
-               ("Hybrid", "P* = 0.5", "FedEx · Hermes · UPS", "Mixed density", S5),
-               ("Cost-aggressive", "P* = 0.75", "DPD · GLS", "Sparse, long stems",
-                S6)]
+                  "Chord-distance knees at θ = 1 in the ROUTING lens; heuristic "
+                  "operating points, not a normative recommendation. Three LSPs "
+                  "sit one class higher in the operator lens — see Revision · 7.")
+    if facts is not None:
+        _by_class = {}
+        for _p in facts.pstar:
+            _by_class.setdefault(_p["class_routing"], []).append(_p)
+        classes = []
+        for _nm, _why, _col in (
+                ("Service-bound", "Dense, high parcels-per-stop", S4),
+                ("Hybrid", "Mixed density", S5),
+                ("Cost-aggressive", "Sparse, long stems", S6)):
+            _members = _by_class.get(_nm, [])
+            _ps = sorted({m["p_routing"] for m in _members})
+            classes.append((
+                _nm, "P* = " + " / ".join(f"{v:g}" for v in _ps),
+                " · ".join(m["provider"] for m in _members), _why, _col))
+    else:
+        classes = [("Service-bound", "P* = 0.25", "Amazon · DHL",
+                    "Dense, high parcels-per-stop", S4),
+                   ("Hybrid", "P* = 0.5", "FedEx · Hermes · UPS",
+                    "Mixed density", S5),
+                   ("Cost-aggressive", "P* = 0.75", "DPD · GLS",
+                    "Sparse, long stems", S6)]
     cwd = (W - 2 * 0.5) / 3
     for i, (nm, pstar, who, why, col) in enumerate(classes):
         x = L + i * (cwd + 0.5)
@@ -1795,15 +2138,28 @@ def build(out: Path, keep_template_slides: bool) -> Path:
         txt(s, x, BODY_T + 0.80, cwd, 0.60, pstar, 32, bold=True, color=RED)
         txt(s, x, BODY_T + 1.50, cwd, 0.42, who, SZ_BODY, bold=True, color=INK)
         txt(s, x, BODY_T + 1.98, cwd, 0.75, why, SZ_BODY, color=INK2, line=1.2)
-    bullets(s, ["Tolerance for waiting tracks how much a network gains.",
-                "DHL already carries 41% of volume at the lowest unit cost.",
-                "So at its knee it reaches only 4.1% — against 22.4% for GLS."],
-            BODY_T + 2.90, h=2.2)
+    if facts is not None:
+        _sv = {p["provider"]: p for p in facts.pstar}
+        _k = revision.D.load_pstar_v2().set_index("provider")
+        bullets(s, ["Tolerance for waiting tracks how much a network gains.",
+                    "DHL already carries 41% of volume at the lowest unit cost.",
+                    f"So at its knee it reaches only "
+                    f"{_k.loc['DHL', 'saving_pct_routing']:.1f} % — against "
+                    f"{_k.loc['GLS', 'saving_pct_routing']:.1f} % for GLS."],
+                BODY_T + 2.90, h=2.2)
+        revision.notes(s, revision.PSTAR_NOTES, cite="§40.18")
+        revision.provisional(s, enabled=tag)
+    else:
+        bullets(s, ["Tolerance for waiting tracks how much a network gains.",
+                    "DHL already carries 41% of volume at the lowest unit cost.",
+                    "So at its knee it reaches the least of any carrier."],
+                BODY_T + 2.90, h=2.2)
 
     # ═══ knees figure ═════════════════════════════════════════════════════
     s = new_slide(prs, "Results", "Each carrier's own operating point",
-                  "Chord-distance knee per provider at θ = 1; saving against added "
-                  "wait.")
+                  "Chord-distance knee per provider at θ = 1, submission render; "
+                  "the revision's knees and their second lens are on "
+                  "Revision · 7.")
     pic(s, A / "fig36_pstar_knees.png", L, BODY_T, 7.5, 4.85)
     bullets(s, ["The knee is where the curve stops paying.",
                 "It differs by network, not by preference.",
@@ -1811,9 +2167,16 @@ def build(out: Path, keep_template_slides: bool) -> Path:
             BODY_T + 0.8, l=8.4, w=4.4, h=3.2)
 
     # ═══ parallel systems ═════════════════════════════════════════════════
+    if facts is not None:
+        _g = revision.D.load_grid_full_v2()
+        _vd_lo = float(_g.vehicle_days_plan2_vs_base_pct.min())
+        _vd_hi = float(_g.vehicle_days_plan2_vs_base_pct.max())
+    else:
+        _vd_lo, _vd_hi = -10.0, 4.6
     s = new_slide(prs, "Results", "Low adoption creates parallel delivery systems",
-                  "Fleet totals span −10.0% to +4.6% across the grid; peak and CV "
-                  "benefits arise earlier than absolute reductions.")
+                  f"Weekly vehicle-days span {_vd_lo:+.1f} % to {_vd_hi:+.1f} % "
+                  f"across the grid; peak and CV benefits arise earlier than "
+                  f"absolute reductions.")
     for i, (nm, col) in enumerate([("Conventional tour", S4),
                                    ("Batched tour", RED)]):
         y = BODY_T + 0.10 + i * 0.88
@@ -1825,17 +2188,29 @@ def build(out: Path, keep_template_slides: bool) -> Path:
     label_box(s, L, BODY_T + 1.98, 6.2, 0.85, BLUSH,
               [("At low θ, both systems must run.", SZ_LEAD, True, RED)],
               line_col=RED)
-    stats(s, [("+4.6%", "worst-case fleet rise", True),
-              ("−10.0%", "best case, only at high θ", False)],
+    stats(s, [(f"{_vd_hi:+.1f}%", "worst-case vehicle-day rise", True),
+              (f"{_vd_lo:+.1f}%", "best case, only at high θ", False)],
           BODY_T + 3.10, w=6.2, h=1.35, sz=40)
     pic(s, B / "fig52_fleet_per_provider.png", COL2 + 0.35, BODY_T, 5.5, 4.4)
+    if facts is not None:
+        revision.notes(s, "Weekly vehicle-days of the operator-polished plan "
+                          "against the daily baseline. The submission's +4.6 % "
+                          "worst case came from the old pooled-express fleet "
+                          "count and is gone: on the revision grid no cell "
+                          "raises vehicle-days by more than "
+                          f"{_vd_hi:+.2f} %.", cite=["§40.9", "§40.15"])
+        revision.provisional(s, enabled=tag)
 
     # ═══ validation ═══════════════════════════════════════════════════════
+    # The revision's VROOM validation (both plans, both lenses) is still being
+    # produced; until it is, these two slides stay on the submission's
+    # validation and say so.
     s = new_slide(prs, "Validation",
                   "Real routing confirms a conservative surrogate",
-                  "Four out-of-sample Stage-3 operating points at θ = 1 "
-                  "(P ∈ {0, 0.25, 0.5, 0.75}), re-routed with VROOM/Valhalla. "
-                  "n = 1 248 · bias = +2.73%.")
+                  "Four out-of-sample operating points at θ = 1 "
+                  "(P ∈ {0, 0.25, 0.5, 0.75}), re-routed with VROOM/Valhalla, "
+                  "SUBMISSION grid. n = 1 248 · bias = +2.73%. The revision's "
+                  "re-validation of both plans is in progress.")
     stats(s, [("+0.9 … +2.7 pp", "realized saving above prediction", True),
               ("3.04%", "cost error against the solver", False),
               ("0.997", "R² over 1 248 observations", False)], BODY_T, h=1.15,
@@ -1846,7 +2221,8 @@ def build(out: Path, keep_template_slides: bool) -> Path:
     # ═══ the error direction ══════════════════════════════════════════════
     s = new_slide(prs, "Validation", "The error points in the safe direction",
                   "Predicted versus realised saving at the four validated operating "
-                  "points; the surrogate is conservative at every one.")
+                  "points of the SUBMISSION grid; the surrogate is conservative at "
+                  "every one. The direction, not the level, is what carries over.")
     _y = table(s, ["Operating point", "Predicted", "Realised", "Gap"],
           [[("P = 0", "key"), "22.8%", ("23.7%", "good"), "+0.9 pp"],
            [("P = 0.25", "key"), "18.5%", ("19.8%", "good"), "+1.3 pp"],
@@ -1888,10 +2264,17 @@ def build(out: Path, keep_template_slides: bool) -> Path:
             BODY_T + 2.00, h=3.3)
 
     # ═══ takeaway ═════════════════════════════════════════════════════════
+    if facts is not None:
+        _r, _h = facts.recommended(), facts.headline[0.5]
+        _close = (f"{_h['op2']:.1f}–{_r['op2']:.1f}% operator saving in the "
+                  f"efficient range at full adoption, with "
+                  f"{abs(_r['peak2_pct']):.0f}% fewer peak vehicles.")
+    else:
+        _close = "Saving in the efficient range at full adoption."
     full_bleed(prs, "The takeaway", "Batch where it is\nsparse and far.",
                "Temporal flexibility creates the density that non-urban delivery "
                "is missing — without new infrastructure.",
-               closing="13.5–18.5% saving in the efficient range at full adoption.")
+               closing=_close)
 
     # ═══ appendix: invariants 1 ═══════════════════════════════════════════
     s = new_slide(prs, "Appendix", "Hard invariants of the model",
@@ -1905,7 +2288,9 @@ def build(out: Path, keep_template_slides: bool) -> Path:
            [("Weekly patterns", "key"), ("39 per cell", "num"),
             "the same candidate set for every cell"],
            [("Baseline", "key"), ("daily delivery", "num"),
-            "no batching; 1 909 748 € per week"]],
+            (f"no batching; {revision.eur(facts.base_routing)} € routing / "
+             f"{revision.eur(facts.base_operator)} € operator per week"
+             if facts is not None else "no batching")]],
           BODY_T, widths=[3.0, 3.2, 4.8])
 
     # ═══ appendix: invariants 2 ═══════════════════════════════════════════
@@ -1916,12 +2301,55 @@ def build(out: Path, keep_template_slides: bool) -> Path:
           [[("Provider scope", "key"), ("separate networks", "num"),
             "no cross-carrier sharing of parcels, routes or vehicles"],
            [("Service penalty", "key"), ("P [€/parcel/day]", "num"),
-            "steering term, never booked as cost"],
+            "steering term; booked as cost only in the discount scenario"],
            [("Vehicle capacity", "key"), ("Q = 230 parcels", "num"),
-            "189.15 € per van-day, including labour"],
-           [("Distance cost", "key"), ("0.386 €/km", "num"),
-            "line-haul 50 km/h, service 120 s per parcel"]],
+            "also the minimum tour size of the universal tour rule"],
+           [("Cost model", "key"), ("189.15 € + 0.3864 €/km", "num"),
+            "per vehicle-day and per kilometre, plus 36 € per route-hour "
+            "(VROOM per_hour default, active in every label)"]],
           BODY_T, widths=[3.0, 3.2, 4.8])
+    if facts is not None:
+        revision.notes(
+            s, "The effective cost model measured on the training pool is "
+               f"{revision.D.COST_MODEL_SENTENCE} — 72 / 6 / 22 % of the "
+               "total. The route-hour term is VROOM's per_hour default, "
+               "active in every label because requests.py does not set "
+               "per_hour when it is 0. The pipeline is internally consistent "
+               "(labels = surrogate = validation = bundle pool, same "
+               "builder); the direction is conservative, because service time "
+               "is nearly constant between baseline and scenario and a "
+               "near-constant term in numerator and denominator depresses the "
+               "percentage.", cite="§40.12")
+        revision.provisional(s, enabled=tag)
+        # the withdrawn theta = 10 % finding, immediately after the parameters
+        slide_bulge_replacement(prs, facts, revision, tag=tag)
+        # the revision's own multi-panel figures, adopted by
+        # 95_adopt_paper_figs.py. Backup tier: too dense to project as a
+        # statement, exactly right when somebody asks for the whole grid.
+        for _nm, _subj, _src in (
+                ("fig90_grid_two_lenses", "The whole grid, in both lenses",
+                 "Revision grid. Panels (a) and (b) are different lenses AND "
+                 "different plans — do not read them as one series."),
+                ("fig91_offdiagonal", "Each plan priced in the other lens",
+                 "Revision grid: the two off-diagonal combinations."),
+                ("fig92_freq_mix_two_plans",
+                 "Delivery-frequency mix, both plans",
+                 "Revision grid, routing-optimal above, operator-polished "
+                 "below."),
+                ("fig93_mean_days", "Mean delivery days per area",
+                 "Revision grid, both plans."),
+                ("fig94_structural_two_lenses",
+                 "Fronts, knees and structure",
+                 "Revision grid. Panel (f) is a within-DHL statement: the "
+                 "hub-size buckets hold DHL cells only, because DHL is the "
+                 "only multi-depot network in the case study.")):
+            _p = B / f"{_nm}.png"
+            if not _p.exists():
+                print(f"  ! {_nm}.png missing — run 95_adopt_paper_figs.py")
+                continue
+            _s = new_slide(prs, "Appendix · revision figures", _subj, _src)
+            pic(_s, _p, L, BODY_T, W, 5.05)
+            revision.provisional(_s, enabled=tag)
 
     # ═══ appendix: limitations 1 ══════════════════════════════════════════
     s = new_slide(prs, "Appendix", "Limitations · what bounds the result",
@@ -1971,12 +2399,36 @@ def build(out: Path, keep_template_slides: bool) -> Path:
     return out
 
 
+def load_facts(rev_dir: Path | None):
+    """Read the revision grid and its facts, or explain why it cannot be."""
+    import _data as D
+    import _revision as RV
+    if rev_dir is not None:
+        D.set_rev_dir(rev_dir)
+    if D.SCHEMA != D.SCHEMA_V2:
+        raise SystemExit(
+            f"{D.REV} is a {D.SCHEMA} grid; the revision slides need the "
+            f"two-plan tables. Pass --rev-dir or set PRES_REV_DIR.")
+    print(f"  revision grid: {D.REV.relative_to(D.ROOT)}")
+    return RV.Facts.load(), RV
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--keep-template-slides", action="store_true",
                     help="append after the template's own slides instead of "
                          "starting from an empty deck")
+    ap.add_argument("--rev-dir", type=Path, default=None,
+                    help="the revision grid to read (default: $PRES_REV_DIR, "
+                         "else results/revision_2026_08_v5)")
+    ap.add_argument("--no-provisional", action="store_true",
+                    help="drop the 'v5 · provisional' footer tag — for Part B, "
+                         "once the head grid is final")
+    ap.add_argument("--no-revision", action="store_true",
+                    help="build the submission-era deck without the revision "
+                         "block and without reading any grid")
+    G.add_args(ap)
     a = ap.parse_args()
     if not TEMPLATE.exists():
         print(f"template not found: {TEMPLATE}", file=sys.stderr)
@@ -1985,7 +2437,10 @@ def main() -> int:
     if missing:
         print(f"figure directories missing: {missing}", file=sys.stderr)
         return 1
-    p = build(a.out, a.keep_template_slides)
+    out = G.resolve(a.out, a.out_suffix, overwrite=a.overwrite)
+    facts, revision = (None, None) if a.no_revision else load_facts(a.rev_dir)
+    p = build(out, a.keep_template_slides, facts=facts, revision=revision,
+              tag=not a.no_provisional)
     print(f"wrote {p}")
     print(f"  {len(Presentation(str(p)).slides)} slides, "
           f"{p.stat().st_size / 1048576:.1f} MB")

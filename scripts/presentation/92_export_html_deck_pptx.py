@@ -9,9 +9,13 @@ shape by shape.
 Use it when the HTML deck itself is the artefact worth carrying into PowerPoint.
 For an editable deck, use 91_build_pptx.py, which emits native shapes.
 
+The output goes through `_outguard.resolve()`, so a rebuild lands beside the
+existing export instead of on top of it unless `--overwrite` says otherwise.
+
 Usage:
     python scripts/presentation/92_export_html_deck_pptx.py
     python scripts/presentation/92_export_html_deck_pptx.py --src DECK.html --out OUT.pptx
+    python scripts/presentation/92_export_html_deck_pptx.py --out-suffix _rev2026-08
     python scripts/presentation/92_export_html_deck_pptx.py --scale 2   # 2x raster
 """
 from __future__ import annotations
@@ -26,6 +30,10 @@ from pathlib import Path
 
 from pptx import Presentation
 from pptx.util import Inches
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _outguard as G                                             # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SRC = Path(r"C:/Users/bienzeisler/.agent/diagrams/tbc-ewgt2026-slides.html")
@@ -134,13 +142,15 @@ def main() -> int:
                          "either way, so raising this sharpens the image "
                          "without shrinking the deck's type.")
     ap.add_argument("--keep-renders", action="store_true")
+    G.add_args(ap)
     a = ap.parse_args()
     if not a.src.exists():
         print(f"source deck not found: {a.src}", file=sys.stderr)
         return 1
+    out = G.resolve(a.out, a.out_suffix, overwrite=a.overwrite)
     print(f"exporting {a.src.name} at {1920 * a.scale}x{1080 * a.scale} "
           f"per slide (1920x1080 CSS px at {a.scale}x)")
-    p = render(a.src, a.out, a.scale, a.keep_renders)
+    p = render(a.src, out, a.scale, a.keep_renders)
     print(f"wrote {p}")
     print(f"  {len(Presentation(str(p)).slides)} slides, "
           f"{p.stat().st_size / 1048576:.1f} MB")

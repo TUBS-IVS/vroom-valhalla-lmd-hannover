@@ -9,18 +9,33 @@ slide with the backup material behind it.
 The deck is generated into the institutional template, so master, theme, fonts
 and furniture are inherited rather than re-implemented.
 
+The deck's default output used to be the same path as `91_build_pptx.py`'s,
+so whichever ran last silently replaced the other's deck. It now writes
+`EWGT_26_Bienzeisler_TBC_house_deck.pptx`, and every write goes through
+`_outguard.resolve()`, which refuses to overwrite an existing file without
+`--overwrite`.
+
+Every grid number on a results slide is read from `_revision.Facts` on the grid
+that `--rev-dir` (or `$PRES_REV_DIR`) names, and each such slide carries the
+`v5 · provisional` footer tag until Part B drops it with `--no-provisional`.
+
 Usage:
     python scripts/presentation/94_build_house_deck.py [--out PATH] [--hero NAME]
+    python scripts/presentation/94_build_house_deck.py --out-suffix _rev2026-08
 """
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
 
 import _house as H
+import _outguard as G
 from _house import (AMBER, BLACK, BLUSH, BODY_B, BODY_T, COL_W, CRIM, DIM, FIG,
                     FIG_W, FIG_X, GREEN, INK, INK2, L, LINE, PANEL, RED, S1,
                     S2, S3, S4, S5, S6, SW, SZ_BIG, SZ_BODY, SZ_DIA, SZ_LEAD,
@@ -43,6 +58,38 @@ SEC_CASE = "Case Study: Region Hannover"
 SEC_RES = "Results"
 SEC_IMP = "Implications and Outlook"
 SEC_BAK = "Backup"
+SEC_REV = "Revision 1: What Changed"
+
+# The revision grid, read once by build_deck() and shared by the content
+# functions below, which take only `prs` by design. `_F` is a _revision.Facts;
+# `_RV` is the _revision module. Both are None when --no-revision is passed,
+# and every use is guarded, so the submission-era deck still builds.
+_F = None
+_RV = None
+_TAG = True
+
+
+def mark(s, note, cite):
+    """Speaker notes with their compendium section, plus the provisional tag."""
+    if _RV is None:
+        return s
+    _RV.notes(s, note, cite=cite)
+    _RV.provisional(s, enabled=_TAG)
+    return s
+
+
+def _KNEE(provider: str) -> float:
+    """That LSP's routing-lens saving at its own knee, from the grid."""
+    k = _RV.D.load_pstar_v2().set_index("provider")
+    return float(k.loc[provider, "saving_pct_routing"])
+
+
+def _VEHDAY_RANGE() -> tuple:
+    """Weekly vehicle-days of the operator plan against the daily baseline."""
+    if _F is None:
+        return -10.0, 4.6
+    g = _RV.D.load_grid_full_v2().vehicle_days_plan2_vs_base_pct
+    return float(g.min()), float(g.max())
 
 # The opening image. These are the study's own results rendered chrome-free by
 # 95_title_heroes.py — the talk no longer opens on a generated illustration.
@@ -1123,36 +1170,58 @@ def part_results(prs):
         pic(s, A / "fig31_saving_grid.png", L, BODY_T, 5.85, 3.55)
         pic(s, A / "fig32_wait_grid.png", L + 6.36, BODY_T, 5.85, 3.55)
 
-    build(prs, SEC_RES, "Service improves faster than savings disappear",
-          "Stage 3 (per-hub balancing plus within-provider system smoothing), "
-          "complete θ grid. Baseline = 1 909 748 € per week.",
-          [("DownwardTrend_LTR", RED,
-            "Cost saving peaks at 22.8 % and the added wait never exceeds "
-            "0.98 days"),
-           ("ThumbsUpSign", GREEN,
-            "The first small penalty halves the waiting time while keeping most "
-            "of the saving")],
-          draw=grids, t=BODY_T + 3.70)
+    _h0 = _F.headline[0.0] if _F is not None else None
+    for _sl in build(
+            prs, SEC_RES, "Service improves faster than savings disappear",
+            "Rendered from the submission grid — the revision restates the "
+            "levels, not the shape of the trade-off.",
+            [("DownwardTrend_LTR", RED,
+              (f"On the revision grid the routing saving peaks at "
+               f"{_h0['rout1']:.1f} % and the added wait never exceeds "
+               f"{_h0['wait1']:.2f} days" if _h0 else
+               "Cost saving peaks at the routing optimum and the added wait "
+               "never exceeds one day")),
+             ("ThumbsUpSign", GREEN,
+              "The first small penalty halves the waiting time while keeping "
+              "most of the saving")],
+            draw=grids, t=BODY_T + 3.70):
+        mark(_sl, "Figure from the submission grid; the bullet numbers are "
+                  "read from the revision grid, routing-optimal plan.",
+             "§40.15")
 
     s = hslide(prs, SEC_RES,
                "The efficient range sits between P = 0.25 and P = 0.5",
-               "All figures predicted by the Stage-3 surrogate at θ = 1; 18 of "
-               "80 grid cells lie on the efficient front.")
-    H.B.table(s, ["Penalty", "Cost saving", "Added wait", "What it buys"],
-              [[("P = 0", "key"), ("22.8 %", "num"), "0.98 d",
-                "the cost-optimal extreme"],
-               [("P = 0.25", "key"), ("18.5 %", "num"), "0.46 d",
-                "wait halves for about 4.2 pp of saving"],
-               [("P = 0.5", "key"), ("13.5 %", "num"), "0.23 d",
-                "12.9 % peak-fleet reduction"]],
-              BODY_T, widths=[2.2, 2.4, 2.2, 4.4], sz=SZ_BODY, reserve=2.20)
+               "θ = 100 %, surrogate-predicted, on the revision grid. Every "
+               "row is the operator-polished plan, priced in both lenses.")
+    if _F is not None:
+        _rows = [[(f"P = {P:g}", "key"),
+                  (f"{_F.headline[P]['rout2']:.1f} %", "num"),
+                  (f"{_F.headline[P]['op2']:.1f} %", "num"),
+                  f"{_F.headline[P]['wait2']:.2f} d",
+                  f"{_F.headline[P]['peak2_pct']:+.1f} %"]
+                 for P in (0.0, 0.25, 0.5)]
+    else:
+        _rows = [[("P = 0", "key"), ("22.8 %", "num"), ("n/a", "body"),
+                  "0.98 d", "n/a"],
+                 [("P = 0.25", "key"), ("18.5 %", "num"), ("n/a", "body"),
+                  "0.46 d", "n/a"],
+                 [("P = 0.5", "key"), ("13.5 %", "num"), ("n/a", "body"),
+                  "0.23 d", "n/a"]]
+    H.B.table(s, ["Penalty", "Routing saving", "Operator saving",
+                  "Added wait", "Σ hub peak"],
+              _rows, BODY_T, widths=[2.0, 2.6, 2.6, 2.4, 2.6], sz=SZ_BODY,
+              reserve=2.20)
     badges(s, [("Target", RED,
-                "At P = 0.5 the Monday-to-Saturday fleet variation falls by "
-                "54 %"),
+                "The peak-fleet cut is already complete at P = 0.25, and the "
+                "waiting time there is half what it is at P = 0"),
                ("MagnifyingGlass", BLACK,
                 "The expensive part of the trade is the last points of saving, "
                 "not the first")],
            BODY_T + 2.55)
+    mark(s, "The submission quoted 22.8 / 18.5 / 13.5 % here. Those were "
+            "routing euro on the routing-optimal plan and are superseded "
+            "twice over: by the universal tour rule and by the operator "
+            "polish.", ["§40.15", "§40.18"])
 
     split_slide(prs, SEC_RES, "The cost–service frontier",
                 "Each line is one penalty level swept across adoption; the "
@@ -1173,8 +1242,9 @@ def part_results(prs):
                  "placement changes. Frequencies stay within {2,…,6}.",
                  A / "fig35_schedule_mix.png",
                  items=[("DownwardTrend_LTR", RED,
-                         "At P = 0 two-day patterns dominate 97.4 % of areas; "
-                         "the 2.6 % that resist are urban cells at their "
+                         "At P = 0 two-day patterns dominate the routing "
+                         "optimum; the areas that resist are urban cells at "
+                         "their "
                          "capacity limit"),
                         ("UpwardTrend_LTR", BLACK,
                          "At P ≥ 5 the system reverts to daily delivery once "
@@ -1246,8 +1316,11 @@ def part_results(prs):
             "Tolerance for waiting tracks how much a network actually gains from "
             "consolidating"),
            ("MagnifyingGlass", RED,
-            "DHL already carries 41 % of volume at the lowest unit cost, so at "
-            "its knee it reaches only 4.1 % — against 22.4 % for GLS")],
+            (f"DHL already carries 41 % of volume at the lowest unit cost, so "
+             f"at its knee it reaches only {_KNEE('DHL'):.1f} % — against "
+             f"{_KNEE('GLS'):.1f} % for GLS" if _F is not None else
+             "DHL already carries 41 % of volume at the lowest unit cost, so "
+             "at its knee it gains least of any carrier"))],
           draw=classes, t=BODY_T + 2.72)
 
     split_slide(prs, SEC_RES, "Each carrier's own operating point",
@@ -1272,15 +1345,17 @@ def part_results(prs):
             for k in range(6):
                 rect(s, L + 3.55 + k * 0.44, y + 0.12, 0.32, 0.34,
                      col if (i == 0 or k % 3 == 1) else S1)
-        H.B.stats(s, [("+4.6 %", "worst-case fleet rise", True),
-                      ("−10.0 %", "best case, only at high θ", False)],
+        _lo, _hi = _VEHDAY_RANGE()
+        H.B.stats(s, [(f"{_hi:+.1f} %", "worst-case vehicle-day rise", True),
+                      (f"{_lo:+.1f} %", "best case, only at high θ", False)],
                   BODY_T + 1.90, w=6.2, h=1.25, sz=40)
         pic(s, BK / "fig52_fleet_per_provider.png", L + 6.90, BODY_T, 5.30,
             4.30)
 
+    _lo, _hi = _VEHDAY_RANGE()
     build(prs, SEC_RES, "Low adoption creates parallel delivery systems",
-          "Fleet totals span −10.0 % to +4.6 % across the grid; peak and CV "
-          "benefits arise earlier than absolute reductions.",
+          f"Weekly vehicle-days span {_lo:+.1f} % to {_hi:+.1f} % across the "
+          f"grid; peak and CV benefits arise earlier than absolute reductions.",
           [("TrafficCone", AMBER,
             "At low θ both systems must run at once, and the total fleet can "
             "grow rather than shrink")],
@@ -1297,7 +1372,7 @@ def part_results(prs):
             3.30)
 
     build(prs, SEC_RES, "Real routing confirms a conservative surrogate",
-          "Four out-of-sample Stage-3 operating points at θ = 1 "
+          "SUBMISSION grid — four out-of-sample operating points at θ = 1 "
           "(P ∈ {0, 0.25, 0.5, 0.75}), re-routed with VROOM/Valhalla. "
           "n = 1 248 · bias = +2.73 %.",
           [("Checkmark", GREEN,
@@ -1326,6 +1401,251 @@ def part_results(prs):
 # ═══════════════════════════════════════════════════════════════════════════
 # 7 · Implications
 # ═══════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
+# 8b · Revision 1 — what changed since the submission
+# ═══════════════════════════════════════════════════════════════════════════
+def part_revision(prs):
+    """The revision's frame, in the house grammar.
+
+    It opens the results section rather than closing it: every number after it
+    has to be read through the two lenses and the two plans. Each slide's
+    speaker notes carry the compendium section its claim comes from, and
+    nothing on them is a typed-in figure.
+    """
+    if _F is None:
+        return
+    f, RV, D = _F, _RV, _RV.D
+    h0 = f.headline[0.0]
+
+    section_divider(prs, "Revision 1", "What changed since the submission",
+                    "One tour rule · two cost lenses · two weekly plans")
+
+    # ── the universal tour rule ───────────────────────────────────────────
+    def floors(s):
+        g = D.saving_grid_v2(D.PLAN_ROUTING, D.LENS_ROUTING)
+        g = g[g.penalty == 0.0].set_index("share_willing").saving_pct
+        H.B.stats(s, [(f"{g.loc[0.1]:.2f} %", "routing saving at θ = 10 %",
+                       False),
+                      (f"{g.loc[0.5]:.2f} %", "at θ = 50 %", False),
+                      (f"{g.loc[1.0]:.2f} %", "at full adoption", True)],
+                  BODY_T + 2.95, h=1.05, sz=38)
+
+    sl = build(prs, SEC_REV, "One tour rule prices baseline and scenario alike",
+               "Per-cell express with a 230-parcel minimum tour, applied "
+               "scenario-blind: there is no longer a code branch that could "
+               "treat the baseline differently.",
+               [("Truck", RED,
+                 [("Every area keeps its own tour: ", True),
+                  ("the standard parcels of an area that is not delivered "
+                   "today ride that area's own tour, not a hub-wide pooled "
+                   "one", False)]),
+                ("TrafficCone", AMBER,
+                 [("The old pooled express tour is gone: ", True),
+                  ("it priced a tour no operator would dispatch, and only the "
+                   "scenario could ever have one", False)]),
+                ("ThumbsUpSign", GREEN,
+                 [("The θ < 1 savings fall to an honest floor: ", True),
+                  ("the apparent bump at θ = 10 % was that pricing artefact "
+                   "and disappears with it", False)])],
+               draw=floors)
+    for x in sl:
+        mark(x, RV.TOUR_RULE_NOTES, ["§40.7", "§40.8", "§40.9"])
+
+    # ── two cost lenses ───────────────────────────────────────────────────
+    s = hslide(prs, SEC_REV, "One euro is not one euro",
+               f"Cost model: {D.COST_MODEL_SENTENCE}. Both baselines price "
+               f"the same daily-delivery system.")
+    y = H.B.table(s, ["Lens", "What it counts", "Weekly baseline"],
+                  [[(r[0], "key"), r[1], (r[2], "num")]
+                   for r in RV.lens_rows(f)],
+                  BODY_T, widths=[2.6, 6.2, 3.0], sz=SZ_BODY, reserve=2.55)
+    badges(s, [("Truck", BLACK,
+                [("189.15 € per vehicle-day already contains the driver: ",
+                  True),
+                 ("a saving on a skipped delivery day is mostly avoided "
+                  "driver cost", False)]),
+               ("Target", RED,
+                [("An operator staffs each hub for its weekly peak: ", True),
+                 ("below the peak only the kilometres are real, and a vehicle "
+                  "taken out of the peak is worth 1 134.90 € a week", False)])],
+           y + 0.26)
+    mark(s, RV.LENS_NOTES, ["§40.11", "§40.12"])
+
+    # ── two plans ─────────────────────────────────────────────────────────
+    s = hslide(prs, SEC_REV, "Two plans, because the two lenses disagree",
+               f"θ = 100 %, P = 0 €/parcel/day. Baseline "
+               f"{RV.eur(f.base_routing)} € routing / "
+               f"{RV.eur(f.base_operator)} € operator, "
+               f"Σ hub peak {f.base_peak}.")
+    y = H.B.table(s, ["Weekly plan", "Routing saving", "Operator saving",
+                      "Σ hub peak", "Added wait"],
+                  [[(r[0], "key"), (r[1], "num"), (r[2], "num"), r[3], r[4]]
+                   for r in RV.plan_rows(f)],
+                  BODY_T, widths=[3.6, 2.3, 2.4, 1.9, 2.0], sz=SZ_BODY,
+                  reserve=2.55)
+    label_box(s, L, y + 0.24, W, 0.86, H.BLUSH,
+              [("The routing optimum is worse than doing nothing for an "
+                "operator: two-day patterns treble the hub peaks.",
+                SZ_LEAD, True, RED)], line_col=RED)
+    badges(s, [("Gears", RED,
+                [("Stage 2 may now change how OFTEN an area is served: ",
+                  True),
+                 ("that is what turns −7.8 % into 24.7 %, and it shortens the "
+                  "wait at the same time", False)])], y + 1.24)
+    mark(s, RV.PLAN_NOTES, ["§40.14", "§40.15"])
+
+    # ── the one-area depot ────────────────────────────────────────────────
+    def profiles(s):
+        top = max(max(f.BANTORF_BEFORE), max(f.bantorf_after))
+        for i, (lbl, prof) in enumerate(
+                [("Routing-optimal plan", f.BANTORF_BEFORE),
+                 ("Operator-polished plan", f.bantorf_after)]):
+            y0 = BODY_T + i * 1.72
+            peak = max(prof)
+            txt(s, L, y0, 5.0, 0.32, lbl, SZ_SUB, bold=True, color=INK)
+            for k, v in enumerate(prof):
+                x = L + k * 0.70
+                hgt = 0.74 * v / top
+                rect(s, x, y0 + 0.66 + (0.74 - max(hgt, 0.03)), 0.50,
+                     max(hgt, 0.03), CRIM if v == peak else (S4 if v else LINE))
+                txt(s, x, y0 + 0.38, 0.50, 0.25, str(v), SZ_DIA, bold=True,
+                    color=INK if v else DIM, align=PP_ALIGN.CENTER)
+                txt(s, x, y0 + 1.44, 0.50, 0.25, "MTWTFS"[k], SZ_DIA,
+                    color=DIM, align=PP_ALIGN.CENTER)
+            txt(s, L + 4.70, y0 + 0.80, 3.0, 0.46, f"peak {peak}", 28,
+                bold=True, color=CRIM if i == 0 else TEAL)
+
+    sl = build(prs, SEC_REV, "A one-area depot cannot rotate its delivery days",
+               f"{f.bantorf_hub_name}, Monday-to-Saturday vehicles at P = 0, "
+               f"θ = 100 %. The routing-optimal profile is quoted from the "
+               f"compendium; the revision tables keep only the final plan.",
+               [("Truck", BLACK,
+                 f"{f.DHL_ONE_CELL} of DHL's {f.DHL_HUBS} depots serve exactly "
+                 f"one postal-code area, and their peak falls only by "
+                 f"delivering on more days"),
+                ("Target", RED,
+                 "Consolidation buys fleet where a depot can rotate delivery "
+                 "days across several areas; elsewhere it buys kilometres")],
+               draw=profiles, t=BODY_T + 3.55)
+    for x in sl:
+        mark(x, RV.ONE_CELL_NOTES, ["§40.14", "§40.18"])
+
+    # ── the operator headline ─────────────────────────────────────────────
+    def head(s):
+        H.B.stats(s, [(f"{h0['op2']:.1f} %", "operator-cost saving", True),
+                      (f"{h0['peak2_pct']:+.0f} %", "peak vehicles, all hubs",
+                       True),
+                      (f"{h0['rout2']:.1f} %", "routing saving, same plan",
+                       False)], BODY_T, h=1.35, sz=42)
+
+    sl = build(prs, SEC_REV, "In the operator lens the headline changes hands",
+               f"Operator-polished plan at P = 0, θ = 100 %, against the "
+               f"daily-delivery baseline of {RV.eur(f.base_operator)} € and "
+               f"{f.base_peak} peak vehicles.",
+               [("MagnifyingGlass", BLACK,
+                 f"The submission's headline was a routing-cost figure: "
+                 f"{h0['rout1']:.1f} % at the routing optimum"),
+                ("TrafficCone", AMBER,
+                 f"That same plan costs an operator {abs(h0['op1']):.1f} % "
+                 f"MORE than simply delivering every day"),
+                ("ThumbsUpSign", GREEN,
+                 "The polished plan gives up 2.7 points of routing saving and "
+                 "buys 32 points of operator saving")],
+               draw=head, t=BODY_T + 1.75)
+    for x in sl:
+        mark(x, "The revision's headline number. Report both lenses, and "
+                "never pair one plan with the other plan's lens.",
+             ["§40.12", "§40.15"])
+
+    # ── the recommended point ─────────────────────────────────────────────
+    r = f.recommended()
+    s = hslide(prs, SEC_REV,
+               "P = 0.25 €/parcel/day works in both lenses",
+               "θ = 100 %, operator-polished plan in both rows. Savings "
+               "against the daily-delivery baseline of the same grid.")
+    y = H.B.table(s, ["Operating point", "Routing saving", "Operator saving",
+                      "Added wait", "Σ hub peak"],
+                  [[("P = 0", "key"), (f"{h0['rout2']:.1f} %", "num"),
+                    (f"{h0['op2']:.1f} %", "num"), f"{h0['wait2']:.2f} d",
+                    f"{h0['peak2_pct']:+.1f} %"],
+                   [("P = 0.25", "key"), (f"{r['rout2']:.1f} %", "num"),
+                    (f"{r['op2']:.1f} %", "num"), f"{r['wait2']:.2f} d",
+                    f"{r['peak2_pct']:+.1f} %"]],
+                  BODY_T, widths=[2.9, 2.4, 2.5, 2.1, 2.3], sz=SZ_BODY,
+                  reserve=2.45)
+    label_box(s, L, y + 0.24, W, 0.86, H.BLUSH,
+              [("Half the waiting time for two points of operator saving — "
+                "and the same peak-fleet cut.", SZ_LEAD, True, RED)],
+              line_col=RED)
+    badges(s, [("Target", RED,
+                "P = 0 wins on paper; P = 0.25 is the point to defend in "
+                "front of a customer")], y + 1.24)
+    mark(s, "At P = 0 the operator lens gives 24.7 % against 22.8 % at "
+            "P = 0.25, but the wait is 0.77 d against 0.39 d and the "
+            "peak-fleet cut is the same. The knee stays at P = 0.25.",
+         ["§40.15", "§40.18"])
+
+    # ── the lens-dependent knee ───────────────────────────────────────────
+    s = hslide(prs, SEC_REV, "The knee depends on which lens you use",
+               "Chord-distance knee on the (saving, wait) front at θ = 1, per "
+               "LSP, in each lens. Carrier classes are a heuristic, not a "
+               "recommendation.")
+    H.B.table(s, ["LSP", "P* routing lens", "P* operator lens",
+                  "Class · routing", "Class · operator"],
+              [[(r0[0], "key"), (r0[1], "body"),
+                (r0[2], "num" if r0[1] != r0[2] else "body"), r0[3],
+                (r0[4], "num" if r0[3] != r0[4] else "body")]
+               for r0 in RV.pstar_rows(f)],
+              BODY_T, widths=[1.9, 2.5, 2.6, 2.6, 2.6], sz=SZ_BODY,
+              reserve=1.05)
+    txt(s, L, BODY_B - 0.88, W, 0.86,
+        "Three LSPs move up one class in the operator lens: peak smoothing "
+        "only starts to pay at a higher penalty.", SZ_LEAD, bold=True,
+        color=RED, line=1.22)
+    mark(s, RV.PSTAR_NOTES, "§40.18")
+
+    # ── partial adoption ──────────────────────────────────────────────────
+    rows = {th: (a, b) for th, a, b in f.partial_adoption(0.0)}
+    s = hslide(prs, SEC_REV, "Below full adoption only the operator lens pays",
+               "Operator-polished plan at P = 0 across the adoption grid; both "
+               "columns are that one plan, priced in the two lenses.")
+    y = H.B.table(s, ["Willing to wait", "Routing saving", "Operator saving"],
+                  [[(f"θ = {int(th * 100)} %", "key"),
+                    f"{rows[th][0]:.1f} %", (f"{rows[th][1]:.1f} %", "num")]
+                   for th in (0.1, 0.3, 0.5, 0.8, 1.0) if th in rows],
+                  BODY_T, widths=[3.2, 4.0, 4.0], sz=SZ_BODY, reserve=1.95)
+    badges(s, [("TrafficCone", AMBER,
+                "Two delivery systems run in parallel at low adoption, so the "
+                "kilometres barely move"),
+               ("ThumbsUpSign", GREEN,
+                "The weekly peak does move — and that is what an operator "
+                "staffs for; nowhere in the grid is the operator lens "
+                "negative at P = 0")], y + 0.26)
+    mark(s, "Partial adoption is positive only in the operator lens: routing "
+            "saving 0.4-4.6 % against operator saving 3.9 % at θ = 0.1 rising "
+            "to 11.0 % at θ = 0.8, never negative (the previous grid reached "
+            "−2.1 % at θ = 0.9).", "§40.15")
+
+    # ── the penalty as a real payout ──────────────────────────────────────
+    s = hslide(prs, SEC_REV,
+               "If the penalty is paid out, P = 0 stops winning",
+               "θ = 100 %, operator-polished plan. Flat discount = 0.50 € per "
+               "delayed willing parcel; delayed parcels are demand on "
+               "non-delivery days times the willing share.")
+    H.B.table(s, ["Operating point", "Delayed parcels/wk",
+                  "Saving, shadow price", "Net after 0.50 €",
+                  "Break-even discount"],
+              [[(r0[0], "key"), r0[1], r0[2], (r0[3], "num"), (r0[4], "num")]
+               for r0 in RV.discount_rows(f)],
+              BODY_T, widths=[2.4, 2.6, 2.6, 2.6, 2.7], sz=SZ_BODY,
+              reserve=1.05)
+    txt(s, L, BODY_B - 0.88, W, 0.86,
+        "Read as a payout the penalty halves the saving — it does not remove "
+        "it, and it moves the optimum to P = 0.25–0.5.", SZ_LEAD, bold=True,
+        color=RED, line=1.22)
+    mark(s, RV.DISCOUNT_NOTES, "§40.17")
+
+
 def part_implications(prs):
     def steps(s):
         for i, (n, nm, body) in enumerate([
@@ -1423,7 +1743,9 @@ def part_backup(prs):
                [("Weekly patterns", "key"), ("39 per cell", "num"),
                 "the same candidate set for every cell"],
                [("Baseline", "key"), ("daily delivery", "num"),
-                "no batching; 1 909 748 € per week"]],
+                (f"no batching; {_RV.eur(_F.base_routing)} € routing / "
+                 f"{_RV.eur(_F.base_operator)} € operator per week"
+                 if _F is not None else "no batching")]],
               BODY_T, widths=[3.0, 3.2, 4.8], sz=SZ_BODY)
 
     s = hslide(prs, SEC_BAK, "Scope and cost parameters",
@@ -1433,11 +1755,12 @@ def part_backup(prs):
               [[("Provider scope", "key"), ("separate networks", "num"),
                 "no cross-carrier sharing of parcels, routes or vehicles"],
                [("Service penalty", "key"), ("P [€/parcel/day]", "num"),
-                "steering term, never booked as cost"],
+                "steering term; booked as cost only in the discount scenario"],
                [("Vehicle capacity", "key"), ("Q = 230 parcels", "num"),
-                "189.15 € per van-day, including labour"],
-               [("Distance cost", "key"), ("0.386 €/km", "num"),
-                "line-haul 50 km/h, service 120 s per parcel"]],
+                "also the minimum tour size of the universal tour rule"],
+               [("Cost model", "key"), ("189.15 € + 0.3864 €/km", "num"),
+                "per vehicle-day and per kilometre, plus 36 € per route-hour "
+                "(VROOM per_hour default, active in every label)"]],
               BODY_T, widths=[3.0, 3.2, 4.8], sz=SZ_BODY)
 
     s = hslide(prs, SEC_BAK, "Limitations",
@@ -1460,30 +1783,52 @@ def part_backup(prs):
         "Neither bound changes the direction of the result.", SZ_LEAD,
         bold=True, color=RED)
 
-    # Answers the question the frequency-mix figure provokes: why is there a
-    # bump of consolidation at theta = 10 % even at a punitive penalty?
-    s = hslide(prs, SEC_BAK,
-               "Why consolidation survives at θ = 10 % even at P = 10",
-               "Derived from the Stage-3 grid "
-               "(_tab_chosen_with_system_smoothing.csv, 27 456 rows). Share = "
-               "cells choosing fewer than six delivery days.")
-    y = H.B.table(s, ["Operating point", "P · θ", "Cells consolidating"],
-                  [[("P = 10, θ = 0.1", "key"), ("1.0", "num"), "41.7 %"],
-                   [("P = 1, θ = 1.0", "key"), ("1.0", "num"), "45.8 %"],
-                   [("P = 10, θ = 0.2", "key"), ("2.0", "num"), "10.9 %"],
-                   [("P = 2, θ = 1.0", "key"), ("2.0", "num"), "9.9 %"]],
-                  BODY_T, widths=[4.2, 2.4, 4.4], sz=SZ_BODY, reserve=2.35)
-    badges(s, [("Gears", RED,
-                [("The penalty scales with θ, the routing gain does not: ",
-                  True),
-                 ("at θ = 10 % the batched stream is a median 92 parcels a "
-                  "service day — well under one 230-parcel van", False)]),
-               ("MagnifyingGlass", BLACK,
-                "So the effective knob is the product P · θ: Spearman −0.97 "
-                "against −0.95 for P alone and −0.19 for θ alone")],
-           y + 0.24)
+    # WITHDRAWN. This slot used to argue that consolidation survives at
+    # theta = 10 % even at P = 10, and read the product P x theta as the real
+    # knob. Both were descriptions of the pre-revision pooled-express price.
+    # Under the universal tour rule the cell they were built on consolidates
+    # almost nothing, so the finding is not corrected here -- it is withdrawn.
+    if _F is not None:
+        _rows = _RV.bulge_rows(_F)
+        s = hslide(prs, SEC_BAK, "The bump at θ = 10 % was a pricing artefact",
+                   "Share of the 312 delivery areas that give up daily "
+                   "delivery, and the routing saving at the same cell, on the "
+                   "revision grid (routing-optimal plan).")
+        y = H.B.table(s, ["Operating point", "Areas consolidating",
+                          "Routing saving"],
+                      [[(r[0], "key"), (r[1], "num"), r[2]] for r in _rows],
+                      BODY_T, widths=[4.0, 4.0, 3.2], sz=SZ_BODY, reserve=2.55)
+        label_box(s, L, y + 0.24, W, 0.86, H.BLUSH,
+                  [(f"The old deck said 41.7 % of areas still consolidated at "
+                    f"P = 10, θ = 10 %. Here it is {_rows[2][1]}.",
+                    SZ_LEAD, True, RED)], line_col=RED)
+        badges(s, [("TrafficCone", AMBER,
+                    "The bump was paid for by a hub-pooled express tour that "
+                    "no operator would dispatch, so the P · θ reading of that "
+                    "slide is withdrawn")], y + 1.24)
+        mark(s, _RV.BULGE_NOTES, ["§40.7", "§40.8", "§40.15"])
 
     extras = [
+        # The revision's own figures, adopted by 95_adopt_paper_figs.py from
+        # <rev>/figures/. Backup tier: they are dense multi-panel paper
+        # figures, shown when somebody wants the whole grid.
+        (BK / "fig90_grid_two_lenses.png",
+         "The whole grid, in both lenses",
+         "Revision grid. Panels (a) and (b) are different lenses AND "
+         "different plans — do not read them as one series."),
+        (BK / "fig91_offdiagonal.png",
+         "Each plan priced in the other lens",
+         "Revision grid: the two off-diagonal combinations."),
+        (BK / "fig92_freq_mix_two_plans.png",
+         "Delivery-frequency mix, both plans",
+         "Revision grid, routing-optimal above, operator-polished below."),
+        (BK / "fig93_mean_days.png", "Mean delivery days per area",
+         "Revision grid, both plans."),
+        (BK / "fig94_structural_two_lenses.png",
+         "Fronts, knees and structure",
+         "Revision grid. Panel (f) is a within-DHL statement: the hub-size "
+         "buckets hold DHL cells only, because DHL is the only multi-depot "
+         "network in the case study."),
         (A / "fig14_headline.png", "Headline result at a glance",
          "Stage-3 summary across the penalty grid."),
         (A / "fig33_fleet_grid.png", "Peak-fleet reduction across the grid",
@@ -1528,7 +1873,10 @@ def part_backup(prs):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-def build_deck(out: Path, hero: str = "week") -> Path:
+def build_deck(out: Path, hero: str = "week", *, facts=None, revision=None,
+               tag: bool = True) -> Path:
+    global _F, _RV, _TAG
+    _F, _RV, _TAG = facts, revision, tag
     prs = Presentation(str(H.TEMPLATE))
 
     # The template master's footer still names the previous talk.
@@ -1552,6 +1900,7 @@ def build_deck(out: Path, hero: str = "week") -> Path:
     part_combinatorics(prs)
     part_method(prs)
     part_case(prs)
+    part_revision(prs)
     part_results(prs)
     part_implications(prs)
     contact(prs)
@@ -1566,13 +1915,37 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", type=Path,
                     default=H.TEMPLATE.parent /
-                    "EWGT_26_Bienzeisler_TBC_deck.pptx")
+                    "EWGT_26_Bienzeisler_TBC_house_deck.pptx")
     ap.add_argument("--hero", choices=sorted(HEROES), default="week",
                     help="which opening image to use (default: week)")
+    ap.add_argument("--rev-dir", type=Path, default=None,
+                    help="the revision grid to read (default: $PRES_REV_DIR, "
+                         "else results/revision_2026_08_v5)")
+    ap.add_argument("--no-provisional", action="store_true",
+                    help="drop the 'v5 · provisional' footer tag")
+    ap.add_argument("--no-revision", action="store_true",
+                    help="build the submission-era deck, reading no grid")
+    G.add_args(ap)
     a = ap.parse_args()
-    p = build_deck(a.out, a.hero)
+    out = G.resolve(a.out, a.out_suffix, overwrite=a.overwrite)
+    if a.no_revision:
+        facts, revision = None, None
+    else:
+        import _data as D
+        import _revision as RV
+        if a.rev_dir is not None:
+            D.set_rev_dir(a.rev_dir)
+        if D.SCHEMA != D.SCHEMA_V2:
+            raise SystemExit(
+                f"{D.REV} is a {D.SCHEMA} grid; the revision slides need the "
+                f"two-plan tables. Pass --rev-dir or set PRES_REV_DIR.")
+        print(f"  revision grid: {D.REV.relative_to(D.ROOT)}")
+        facts, revision = RV.Facts.load(), RV
+    p = build_deck(out, a.hero, facts=facts, revision=revision,
+                   tag=not a.no_provisional)
     print(f"wrote {p}")
-    print(f"  {len(Presentation(str(p)).slides)} slides")
+    print(f"  {len(Presentation(str(p)).slides)} slides, "
+          f"{p.stat().st_size / 1048576:.1f} MB")
     return 0
 
 

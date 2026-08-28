@@ -1,0 +1,357 @@
+"""The presentation layer's v2-schema adapter, on a synthetic grid.
+
+`scripts/presentation/_data.py` serves the talk decks from either of two grid
+schemas: the submission-era one (`revision_2026_07`, one plan and one cost
+lens) or the revision's (`revision_2026_08_v*`, two plans and two lenses). The
+deck builders read it through the same loader names either way, which is
+exactly the kind of adapter that goes quietly wrong.
+
+These tests build a five-row grid by hand, with numbers chosen so that every
+saving comes out round, and check the three things a wrong adapter would get
+wrong without failing:
+
+* it picks the right column for each (plan, lens) pair -- swapping two of them
+  would still produce plausible percentages;
+* it forms each percentage against the baseline of the grid it is reading, not
+  against the other grid's pinned baseline;
+* it refuses to write over a deck that already exists.
+
+No file in `results/` is read: the fixtures are written into `tmp_path`, so the
+tests run without the real grid and cannot be satisfied by it.
+"""
+from __future__ import annotations
+
+import importlib
+import sys
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+PRES = ROOT / "scripts" / "presentation"
+
+# 189.15 EUR per vehicle-day, six days a week, per peak vehicle and hub.
+WEEK_FIXED = 6 * 189.15
+
+PROVIDERS = ["DHL", "Amazon", "DPD", "FedEx", "GLS", "Hermes", "UPS"]
+
+
+# ── fixtures ───────────────────────────────────────────────────────────────
+def _cost_row(P, th, prov, *, rout1, rout2, var1, var2, peak1, peak2,
+              vd1=100.0, vd2=100.0, pen1=0.0, pen2=0.0):
+    """One row of tab_costs_v2, in the grid's own column convention.
+
+    Plain names are the STAGE-2 (operator-polished) plan; the stage-1 values
+    carry `_stage1` or live in a `*_before` column. `cost_stage1_eur` and
+    `routing_total_eur` are both pure routing euro -- no penalty in either.
+    """
+    return dict(
+        penalty=P, share_willing=th, provider=prov,
+        dd_cost_eur=rout2, express_cost_eur=0.0, pool_cost_eur=0.0,
+        routing_total_eur=rout2, penalty_eur=pen2,
+        cost_stage1_eur=rout1, cost_stage2_eur=rout2, cost_stage3_eur=rout2,
+        vehicle_days=vd2, fixed_cost_eur=0.0, variable_cost_eur=var2,
+        sum_hub_peak=peak2, week_fixed_cost_eur=WEEK_FIXED * peak2,
+        operator_cost_eur=var2 + WEEK_FIXED * peak2,
+        operator_obj_eur=var2 + WEEK_FIXED * peak2 + pen2,
+        operator_cost_before_eur=var1 + WEEK_FIXED * peak1,
+        variable_before_eur=var1, variable_after_eur=var2,
+        sum_hub_peak_before=peak1, sum_hub_peak_after=peak2,
+        vehicle_days_before=vd1, vehicle_days_after=vd2,
+        penalty_before_eur=pen1,
+    )
+
+
+@pytest.fixture
+def grid(tmp_path):
+    """A minimal but complete v2 grid: baseline plus two operating points."""
+    rev = tmp_path / "revision_synthetic_v2"
+    (rev / "tables").mkdir(parents=True)
+    (rev / "_peek").mkdir()
+
+    rows = []
+    # (P = 0, theta = 0) is the baseline: both plans coincide, by construction
+    # and by the grid's own theta = 0 pin.
+    for prov in PROVIDERS:
+        rows.append(_cost_row(0.0, 0.0, prov, rout1=1000.0, rout2=1000.0,
+                              var1=400.0, var2=400.0, peak1=10, peak2=10))
+    # (P = 0, theta = 1): the routing optimum saves routing euro and RAISES
+    # the hub peak; the operator polish gives some of that back and cuts the
+    # peak. The four (plan, lens) cells are deliberately all different.
+    for prov in PROVIDERS:
+        rows.append(_cost_row(0.0, 1.0, prov, rout1=800.0, rout2=900.0,
+                              var1=320.0, var2=360.0, peak1=14, peak2=8))
+    # (P = 1, theta = 1): a penalty-bearing point, so a loader that mistakes
+    # the penalty for cost shows up.
+    for prov in PROVIDERS:
+        rows.append(_cost_row(1.0, 1.0, prov, rout1=950.0, rout2=960.0,
+                              var1=380.0, var2=384.0, peak1=11, peak2=9,
+                              pen1=50.0, pen2=30.0))
+    pd.DataFrame(rows).to_csv(rev / "tab_costs_v2.csv", index=False)
+
+    wait = []
+    for P, th, n1, n2, d1, d2 in ((0.0, 0.0, 0.0, 0.0, 6.0, 6.0),
+                                  (0.0, 1.0, 1000.0, 700.0, 2.0, 2.4),
+                                  (1.0, 1.0, 200.0, 250.0, 5.0, 4.8)):
+        for prov in PROVIDERS:
+            wait.append(dict(
+                penalty=P, share_willing=th, provider=prov,
+                wait_num_willing=n2, wait_num_all=n2, total_parcels=1000.0,
+                willing_parcels=1000.0 * th, wait_num_willing_stage1=n1,
+                wait_num_all_stage1=n1, mean_days=d2, mean_days_stage1=d1))
+    pd.DataFrame(wait).to_csv(rev / "tab_wait_v2.csv", index=False)
+
+    fleet = []
+    for P, th in ((0.0, 0.0), (0.0, 1.0), (1.0, 1.0)):
+        for prov in PROVIDERS:
+            for day in range(6):
+                fleet.append(dict(
+                    penalty=P, share_willing=th, provider=prov,
+                    hub=f"{prov} depot", day=day, dd_single_veh=1.0,
+                    dd_pool_veh=0.0, express_veh=0.0, fleet=float(day + 1)))
+    pd.DataFrame(fleet).to_csv(rev / "tab_fleet_per_hub_v2.csv", index=False)
+
+    # 38 is the daily schedule in enumerate_valid_schedules(); 0 is a two-day
+    # one. The routing optimum consolidates one of the two cells, the operator
+    # polish puts it back on six days.
+    chosen = []
+    for P, th, s1, s2 in ((0.0, 0.0, 38, 38), (0.0, 1.0, 0, 38),
+                          (1.0, 1.0, 0, 0)):
+        for prov in PROVIDERS:
+            for plz in ("30159", "30169"):
+                idx1 = s1 if plz == "30159" else 38
+                idx2 = s2 if plz == "30159" else 38
+                chosen.append(dict(
+                    penalty=P, share_willing=th, provider=prov, plz=plz,
+                    schedule_idx_stage1=idx1, schedule_idx_balanced=idx2,
+                    schedule_idx_system_smoothed=idx2))
+    pd.DataFrame(chosen).to_csv(rev / "_tab_chosen_v2.csv", index=False)
+
+    pd.DataFrame([dict(
+        provider=p, P_star_submission=0.25, class_submission="Service-bound",
+        P_star_routing=0.25, carrier_class_routing="Service-bound",
+        saving_pct_routing=10.0, wait_d_routing=0.5,
+        P_star_operator=0.5 if p == "Amazon" else 0.25,
+        carrier_class_operator="Hybrid" if p == "Amazon" else "Service-bound",
+        saving_pct_operator=12.0, wait_d_operator=0.3)
+        for p in PROVIDERS]).to_csv(
+            rev / "tables" / "tab_pstar_knees_v2.csv", index=False)
+    return rev
+
+
+@pytest.fixture
+def D(grid, monkeypatch):
+    """`_data`, imported fresh and pointed at the synthetic grid."""
+    monkeypatch.syspath_prepend(str(PRES))
+    monkeypatch.setenv("PRES_REV_DIR", str(grid))
+    sys.modules.pop("_data", None)
+    mod = importlib.import_module("_data")
+    assert mod.SCHEMA == mod.SCHEMA_V2
+    assert mod.REV == grid.resolve()
+    # the synthetic baseline is not the real one, so relax the pins that
+    # exist to catch a real grid drifting
+    monkeypatch.setattr(mod, "BASE_ROUTING_V2", 7000.0)
+    monkeypatch.setattr(mod, "BASE_OPERATOR_V2", 2800.0 + 7 * WEEK_FIXED * 10)
+    monkeypatch.setattr(mod, "BASE_HUB_PEAK_V2", 70)
+    monkeypatch.setattr(mod, "BASE_VEHICLE_DAYS_V2", 700)
+    mod._CACHE.clear()
+    yield mod
+    sys.modules.pop("_data", None)
+
+
+# ── the baseline ───────────────────────────────────────────────────────────
+def test_baseline_comes_from_the_grid_not_from_the_other_grid(D):
+    b = D.baseline_v2()
+    assert b["routing_eur"] == pytest.approx(7000.0)
+    assert b["operator_eur"] == pytest.approx(2800.0 + 7 * WEEK_FIXED * 10)
+    assert b["hub_peak"] == 70
+    # the legacy pin must not leak into a v2 percentage
+    assert D.baseline_eur(D.LENS_ROUTING) != D.BASE_TOTAL
+
+
+def test_baseline_fails_loudly_when_the_grid_moves(D, monkeypatch):
+    monkeypatch.setattr(D, "BASE_ROUTING_V2", 1.0)
+    D._CACHE.clear()
+    with pytest.raises(AssertionError, match="baseline routing_eur"):
+        D.baseline_v2()
+
+
+# ── two plans x two lenses ─────────────────────────────────────────────────
+def test_each_plan_lens_pair_reads_its_own_column(D):
+    assert D.cost_column(D.PLAN_ROUTING, D.LENS_ROUTING) == "cost_stage1_eur"
+    assert D.cost_column(D.PLAN_OPERATOR, D.LENS_ROUTING) == "routing_total_eur"
+    assert (D.cost_column(D.PLAN_ROUTING, D.LENS_OPERATOR)
+            == "operator_cost_before_eur")
+    assert D.cost_column(D.PLAN_OPERATOR, D.LENS_OPERATOR) == "operator_cost_eur"
+
+
+@pytest.mark.parametrize("plan,lens,want", [
+    # routing lens: 7 x 800 vs 7 x 1000 = 20 %; 7 x 900 = 10 %
+    ("routing", "routing", 20.0),
+    ("operator", "routing", 10.0),
+    # operator lens: variable + 1134.90 per peak vehicle and hub, against a
+    # baseline of 7 x (400 + 10 x 1134.90) = 82 243 EUR
+    ("routing", "operator", -37.96),
+    ("operator", "operator", 19.66),
+])
+def test_saving_of_each_plan_in_each_lens(D, plan, lens, want):
+    g = D.saving_grid_v2(plan, lens)
+    row = g[(g.penalty == 0.0) & (g.share_willing == 1.0)].iloc[0]
+    assert row.saving_pct == pytest.approx(want, abs=0.01)
+
+
+def test_the_operator_lens_can_be_negative_where_routing_is_positive(D):
+    """The revision's central finding, on a grid built to reproduce it."""
+    rout = D.saving_grid_v2(D.PLAN_ROUTING, D.LENS_ROUTING)
+    oper = D.saving_grid_v2(D.PLAN_ROUTING, D.LENS_OPERATOR)
+    at = lambda g: g[(g.penalty == 0.0) & (g.share_willing == 1.0)].iloc[0]
+    assert at(rout).saving_pct > 0 > at(oper).saving_pct
+
+
+def test_peak_fleet_follows_the_plan_not_the_lens(D):
+    for lens in D.LENSES:
+        r = D.saving_grid_v2(D.PLAN_ROUTING, lens)
+        o = D.saving_grid_v2(D.PLAN_OPERATOR, lens)
+        at = lambda g: g[(g.penalty == 0.0) & (g.share_willing == 1.0)].iloc[0]
+        assert at(r).hub_peak == 7 * 14
+        assert at(o).hub_peak == 7 * 8
+
+
+def test_the_service_penalty_is_not_counted_as_cost(D):
+    """At P = 1 both plans carry a penalty; neither cost column may include it."""
+    g = D.saving_grid_v2(D.PLAN_ROUTING, D.LENS_ROUTING)
+    row = g[(g.penalty == 1.0)].iloc[0]
+    assert row.total_eur == pytest.approx(7 * 950.0)
+    assert row.penalty_eur == pytest.approx(7 * 50.0)
+
+
+def test_an_unknown_plan_or_lens_is_refused(D):
+    with pytest.raises(ValueError, match="unknown plan"):
+        D.saving_grid_v2("stage7", D.LENS_ROUTING)
+    with pytest.raises(ValueError, match="unknown lens"):
+        D.saving_grid_v2(D.PLAN_ROUTING, "carbon")
+
+
+# ── wait, frequency and the per-area fallback ──────────────────────────────
+def test_wait_is_per_plan_and_weighted_over_all_parcels(D):
+    r = D.wait_grid_v2(D.PLAN_ROUTING)
+    o = D.wait_grid_v2(D.PLAN_OPERATOR)
+    at = lambda g: g[(g.penalty == 0.0) & (g.share_willing == 1.0)].iloc[0]
+    assert at(r).wait_d == pytest.approx(1.0)      # 7x1000 / 7x1000
+    assert at(o).wait_d == pytest.approx(0.7)
+    assert at(r).mean_days == pytest.approx(2.0)
+    assert at(o).mean_days == pytest.approx(2.4)
+
+
+def test_delivery_frequency_comes_from_the_schedule_enumeration(D):
+    s1 = D.chosen_sizes_v2(D.PLAN_ROUTING)
+    s2 = D.chosen_sizes_v2(D.PLAN_OPERATOR)
+    at = lambda s: s[(s.penalty == 0.0) & (s.share_willing == 1.0)]
+    assert set(at(s1).schedule_size) == {2, 6}
+    assert set(at(s2).schedule_size) == {6}
+    # half the cells consolidate under the routing optimum, none after the
+    # operator polish -- the shape of the one-area-depot finding
+    assert D.consolidating_share_v2(0.0, 1.0, D.PLAN_ROUTING) == 50.0
+    assert D.consolidating_share_v2(0.0, 1.0, D.PLAN_OPERATOR) == 0.0
+
+
+def test_per_area_euro_is_unavailable_until_task_11_lands(D):
+    """The decks must fall back to the frequency view AND say so."""
+    assert D.per_plz_eur_available() is False
+
+
+def test_hub_day_profile_is_matched_by_name_and_must_be_unique(D):
+    hub, prof = D.hub_day_profile_v2("DHL", 0.0, 1.0)
+    assert hub == "DHL depot"
+    assert prof == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    with pytest.raises(AssertionError, match="matches 7 hubs"):
+        D.hub_day_profile_v2("depot", 0.0, 1.0)
+
+
+# ── legacy loader names, served from the v2 tables ─────────────────────────
+def test_legacy_loader_names_still_work_on_a_v2_grid(D):
+    c = D.load_costs(D.PLAN_OPERATOR)
+    assert "total_stage3_eur" in c.columns
+    assert c.total_stage3_eur.equals(c.routing_total_eur)
+    w = D.load_wait(D.PLAN_OPERATOR)
+    assert "avg_wait_d_stage3" in w.columns
+    f = D.load_fleet_fixed()
+    assert {"fleet_fixed", "fleet_stage2", "fleet_stage3"} <= set(f.columns)
+    e = D.load_express()
+    assert "express_stage3_eur" in e.columns
+    k = D.load_pstar()
+    assert set(k.P_star) == {0.25} and "P_star_operator" in k.columns
+
+
+def test_saving_grid_dispatches_to_the_v2_path(D):
+    a = D.saving_grid()
+    b = D.saving_grid_v2(D.PLAN_ROUTING, D.LENS_ROUTING)
+    assert a.saving_pct.tolist() == b.saving_pct.tolist()
+
+
+def test_unchanged_analyses_stay_pinned_to_the_submission_grid(D):
+    """These four must not follow PRES_REV_DIR, or they change meaning."""
+    import inspect
+    for fn in (D.load_alpha_sensitivity, D.load_cd_restart_spread,
+               D.load_per_plz):
+        assert "REV_LEGACY" in inspect.getsource(fn), fn.__name__
+    assert D.REV_LEGACY != D.REV
+
+
+def test_v2_only_loaders_say_what_is_missing_on_a_legacy_grid(D, tmp_path):
+    legacy = tmp_path / "revision_legacy"
+    legacy.mkdir()
+    (legacy / "tab_costs_smoothed.csv").write_text(
+        "penalty,share_willing,provider,dd_cost_stage3_eur,"
+        "express_stage3_eur,total_stage3_eur\n0.0,1.0,DHL,1.0,0.0,1.0\n")
+    D.set_rev_dir(legacy)
+    assert D.SCHEMA == D.SCHEMA_LEGACY
+    with pytest.raises(RuntimeError, match="needs a v2 revision grid"):
+        D.load_costs_v2()
+
+
+def test_a_directory_that_is_neither_schema_is_refused(D, tmp_path):
+    empty = tmp_path / "nothing"
+    empty.mkdir()
+    with pytest.raises(FileNotFoundError, match="neither a v2 grid"):
+        D.set_rev_dir(empty)
+
+
+# ── the copy-only guard ────────────────────────────────────────────────────
+@pytest.fixture
+def guard(monkeypatch):
+    monkeypatch.syspath_prepend(str(PRES))
+    sys.modules.pop("_outguard", None)
+    return importlib.import_module("_outguard")
+
+
+def test_the_suffix_lands_on_the_stem_and_is_idempotent(guard):
+    p = Path("x/EWGT_deck.pptx")
+    once = guard.apply_suffix(p, "_rev2026-08")
+    assert once.name == "EWGT_deck_rev2026-08.pptx"
+    assert guard.apply_suffix(once, "_rev2026-08") == once
+
+
+def test_writing_over_an_existing_deck_is_refused(guard, tmp_path):
+    original = tmp_path / "EWGT_deck.pptx"
+    original.write_bytes(b"the author's own file")
+    with pytest.raises(SystemExit, match="refusing to overwrite"):
+        guard.resolve(original)
+    # and the file is untouched
+    assert original.read_bytes() == b"the author's own file"
+
+
+def test_the_suffix_is_what_makes_the_build_copy_only(guard, tmp_path):
+    original = tmp_path / "EWGT_deck.pptx"
+    original.write_bytes(b"the author's own file")
+    target = guard.resolve(original, "_rev2026-08")
+    assert target.name == "EWGT_deck_rev2026-08.pptx"
+    assert not target.exists()
+    assert original.read_bytes() == b"the author's own file"
+
+
+def test_overwrite_is_the_only_way_past_the_guard(guard, tmp_path):
+    original = tmp_path / "EWGT_deck.pptx"
+    original.write_bytes(b"x")
+    assert guard.resolve(original, overwrite=True) == original

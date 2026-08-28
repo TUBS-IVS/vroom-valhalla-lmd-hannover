@@ -19,8 +19,18 @@ recomputes each figure and fails loudly if it has moved.
 
 The source deck is never written to. Output goes to a new file.
 
+The 2026-08 revision withdrew the first chapter. It explained the bump of
+consolidation at theta = 10 %, which the universal tour rule showed to be a
+pricing artefact rather than a behaviour of the system; `block_mix_rev()`
+replaces it with the withdrawal and the revision grid's own numbers. Pass
+`--no-revision` to rebuild the submission-era backup unchanged.
+
+The source deck is never written to, and neither is any deck that already
+exists: the output goes through `_outguard.resolve()`.
+
 Usage:
     python scripts/presentation/96_explainers.py [--out PATH] [--audit]
+    python scripts/presentation/96_explainers.py --out-suffix _rev2026-08
 """
 from __future__ import annotations
 
@@ -40,6 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "revision"))
 
 import _house as H                                                # noqa: E402
+import _outguard as G                                             # noqa: E402
 from _house import (AMBER, BODY_T, CRIM, DIM, GREEN, INK, INK2, L, LINE,
                     PANEL, RED, S1, S3, S4, S5, S6, SW, TEAL, W, WHITE,
                     hrule, hslide, label_box, pic, rect, txt)      # noqa: E402
@@ -88,6 +99,13 @@ def resolve_targets(prs) -> dict:
 
 VAN = 189.15        # EUR per van-day, config/constants.py
 CAP = 230           # parcels per van
+
+# The revision grid, set by main() and read by block_mix_rev(). None when
+# --no-revision is passed, in which case the submission-era block_mix() runs
+# and the deck is exactly what it was.
+_F = None
+_RV = None
+_TAG = True
 
 
 # ── slide scaffolding: house headline, v1 body ──────────────────────────────
@@ -325,6 +343,91 @@ def block_mix(prs):
 # ═══════════════════════════════════════════════════════════════════════════
 # part 2 · what a fee buys
 # ═══════════════════════════════════════════════════════════════════════════
+def block_mix_rev(prs):
+    """Replaces part 1, which explained an artefact.
+
+    The old chapter took ten slides to work out why bundling survives a
+    punitive fee when almost nobody takes part, and concluded that the real
+    knob is the product P x theta. Both the phenomenon and the conclusion were
+    consequences of the pre-revision express price: standard parcels of every
+    non-delivering area of a hub rode ONE pooled tour, which no operator would
+    dispatch and which only the scenario could ever have. With one universal
+    tour rule the phenomenon is gone, so the chapter is not corrected -- it is
+    withdrawn, and these three slides say so and show what replaced it.
+    """
+    f, RV = _F, _RV
+    chapter(prs, "A finding this deck has withdrawn",
+            "The bump at 10 % adoption was a pricing artefact, not a mechanism")
+
+    def mark(s, note, cite):
+        RV.notes(s, note, cite=cite)
+        RV.provisional(s, enabled=_TAG)
+        return s
+
+    # ── 1 · what the old chapter claimed ─────────────────────────────────
+    s = xslide(prs, "mix", "Part 1 · Withdrawn", "What this chapter used to say",
+               "The claim, as it stood in the submission-era deck.")
+    y = B.table(s, ["Fee", "10 % join", "20 % join", "30 % join"],
+                [[("none", "key"), "87.5 %", "92.0 %", "94.2 %"],
+                 [("P = 5", "key"), ("49.7 %", "num"), ("42.9 %", "num"),
+                  "14.7 %"],
+                 [("P = 10", "key"), ("41.7 %", "num"), ("10.9 %", "num"),
+                  "0 %"]],
+                BODY_T + 0.30, widths=[2.6, 3.2, 3.2, 3.2], reserve=2.60)
+    label_box(s, L, y + 0.28, W, 0.85, H.BLUSH,
+              [("The old reading: the effective knob is the product P x theta "
+                "— bundling survives a punitive fee when few people join.",
+                22, True, RED)], line_col=RED)
+    vbullets(s, ["Those shares came from the submission grid, where the "
+                 "standard parcels of every non-delivering area of a hub rode "
+                 "one pooled express tour.",
+                 "That tour was cheap because it was one tour — and no "
+                 "operator would ever dispatch it."],
+             y + 1.28, label="withdrawn/claim")
+    mark(s, RV.BULGE_NOTES, ["§40.7", "§40.8", "§40.15"])
+
+    # ── 2 · what the revision grid says ──────────────────────────────────
+    rows = RV.bulge_rows(f)
+    s = xslide(prs, "mix", "Part 1 · Withdrawn",
+               "What the same cells do under one tour rule",
+               "Share of the 312 delivery areas that give up daily delivery, "
+               "and the routing saving at the same cell, on the revision grid "
+               "(routing-optimal plan).")
+    y = B.table(s, ["Operating point", "Areas consolidating", "Routing saving"],
+                [[(r[0], "key"), (r[1], "num"), r[2]] for r in rows],
+                BODY_T + 0.30, widths=[4.0, 4.0, 3.2], reserve=2.60)
+    label_box(s, L, y + 0.28, W, 0.85, H.BLUSH,
+              [(f"41.7 % becomes {rows[2][1]}, and the saving that went with "
+                f"it becomes {rows[2][2]}.", 22, True, RED)], line_col=RED)
+    vbullets(s, ["Per-cell express with a 230-parcel minimum tour, applied "
+                 "scenario-blind: there is no code branch left that could "
+                 "price the baseline differently.",
+                 "The theta < 1 column falls to an honest floor — and the "
+                 "bump falls out of it."],
+             y + 1.28, label="withdrawn/now")
+    mark(s, RV.TOUR_RULE_NOTES, ["§40.7", "§40.8", "§40.9"])
+
+    # ── 3 · what to say if asked ─────────────────────────────────────────
+    s = xslide(prs, "mix", "Part 1 · Withdrawn", "What to say if you are asked",
+               "The honest framing of a withdrawn result.")
+    vbullets(s, ["The bump was real in the model and it is gone from the "
+                 "model — because the model changed, not because the data did.",
+                 "The change was a modelling correction we made ourselves: "
+                 "one tour rule for baseline and scenario, and a minimum tour "
+                 "size of one van-load.",
+                 "It cost us the most interesting-looking finding in the "
+                 "submission, and it is the reason the theta < 1 column is now "
+                 "small rather than surprising.",
+                 "Nothing in the full-adoption column depended on it: at "
+                 "theta = 1 the express path is provably dead."],
+             BODY_T + 0.35, label="withdrawn/framing")
+    mark(s, "The withdrawal itself is the reviewer-facing point: the finding "
+            "was retracted by our own correction, before review, and the "
+            "theta = 1 anchor is untouched because the express path is "
+            "provably inactive there (fast_share = 0).",
+         ["§40.7", "§40.8"])
+
+
 def block_trade(prs):
     chapter(prs, "What a fee actually buys",
             "Why the middle of the range beats both ends")
@@ -664,7 +767,10 @@ def build(out: Path) -> Path:
             "Seven parts, each answering the questions a close reader asks — "
             "in the order they come up")
     block_contents(prs)
-    block_mix(prs)         # 1 · the odd thing in the frequency picture
+    if _F is None:
+        block_mix(prs)     # 1 · the odd thing in the frequency picture
+    else:
+        block_mix_rev(prs)  # 1 · withdrawn: it explained a pricing artefact
     block_trade(prs)       # 2 · what a fee actually buys
     block_maps(prs)        # 3 · where it happens first
     block_where(prs)       # 4 · why dense areas gain nothing
@@ -680,7 +786,14 @@ def build(out: Path) -> Path:
 
 
 def audit() -> int:
-    """Recompute every measured figure on these slides; fail if one moved."""
+    """Recompute every measured figure on these slides; fail if one moved.
+
+    These are the SUBMISSION-era numbers of `block_mix()` and the results
+    blocks, so the audit only means anything against the submission grid: run
+    it with `PRES_REV_DIR=results/revision_2026_07`. On the revision grid it
+    is expected to fail, and the failures are the reason `block_mix_rev()`
+    exists.
+    """
     import _data as D
     import _stage3_common as C
     bad = []
@@ -767,23 +880,45 @@ def audit() -> int:
 
 
 def main() -> int:
+    global _F, _RV, _TAG
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--audit", action="store_true",
                     help="recompute every number on these slides and stop")
+    ap.add_argument("--rev-dir", type=Path, default=None,
+                    help="the revision grid to read (default: $PRES_REV_DIR, "
+                         "else results/revision_2026_08_v5)")
+    ap.add_argument("--no-provisional", action="store_true",
+                    help="drop the 'v5 · provisional' footer tag")
+    ap.add_argument("--no-revision", action="store_true",
+                    help="keep the submission-era chapter 1 and read no grid")
+    G.add_args(ap)
     a = ap.parse_args()
     if a.audit:
         return audit()
     if not SRC.exists():
         print(f"source deck not found: {SRC}", file=sys.stderr)
         return 1
+    out = G.resolve(a.out, a.out_suffix, overwrite=a.overwrite)
+    if not a.no_revision:
+        import _data as D
+        import _revision as RV
+        if a.rev_dir is not None:
+            D.set_rev_dir(a.rev_dir)
+        if D.SCHEMA != D.SCHEMA_V2:
+            raise SystemExit(
+                f"{D.REV} is a {D.SCHEMA} grid; the withdrawal chapter needs "
+                f"the two-plan tables. Pass --rev-dir or set PRES_REV_DIR.")
+        print(f"  revision grid: {D.REV.relative_to(D.ROOT)}")
+        _F, _RV, _TAG = RV.Facts.load(), RV, not a.no_provisional
     keep = SRC.with_name(SRC.stem + "_untouched_copy.pptx")
     if not keep.exists():
         shutil.copy2(SRC, keep)
         print(f"kept an untouched copy at {keep.name}")
-    p = build(a.out)
+    p = build(out)
     print(f"wrote {p}")
-    print(f"  {len(Presentation(str(p)).slides)} slides total")
+    print(f"  {len(Presentation(str(p)).slides)} slides total, "
+          f"{p.stat().st_size / 1048576:.1f} MB")
     return 0
 
 
