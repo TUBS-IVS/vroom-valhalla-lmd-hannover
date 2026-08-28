@@ -9,9 +9,11 @@
    routing-optimal plan of stage~1 (S1) and the operator-polished plan of stage~2
    (S2). Savings are relative to the daily-delivery baseline evaluated in the same
    lens. $\Sigma$~peak is the summed depot peak fleet, $\bar{w}$ the parcel-weighted
-   additional customer wait, $\bar{f}$ the mean weekly delivery frequency. For
-   $P \geq 5$ the routing-optimal plan is daily everywhere ($0\%$ in both lenses)
-   while the polish still returns \provisional{$0.7$--$1.4\%$} of operator saving.
+   additional customer wait, $\bar{f}$ the mean weekly delivery frequency. Beyond
+   the rows shown the decay continues monotonically: the operator plan returns
+   \provisional{$11.8\%$} at $P = 1$, \provisional{$6.0\%$} at $P = 2$, and
+   \provisional{$0.7$--$1.4\%$} for $P \geq 5$, where the routing-optimal plan is
+   daily everywhere and yields $0\%$ in both lenses.
    \textbf{\provisional{Provisional}} --- all values from the v5 grid, to be
    refreshed from the final head-priced grid.}
   \label{tab:two_lens}
@@ -31,8 +33,6 @@
     $0.25$ & $19.22$ & $17.07$ & $8.25$  & $22.82$ & $+6.1$  & $-17.1$ & $0.44$ & $0.39$ & $3.06$ & $3.27$ \\
     $0.5$  & $14.12$ & $13.19$ & $10.88$ & $18.48$ & $-2.7$  & $-14.4$ & $0.21$ & $0.23$ & $3.95$ & $4.01$ \\
     $0.75$ & $10.66$ & $9.68$  & $9.91$  & $14.79$ & $-4.5$  & $-12.3$ & $0.13$ & $0.14$ & $4.52$ & $4.60$ \\
-    $1$    & $7.91$  & $7.24$  & $6.81$  & $11.82$ & $-2.5$  & $-10.3$ & $0.08$ & $0.09$ & $4.93$ & $4.96$ \\
-    $2$    & $1.38$  & $1.92$  & $1.06$  & $6.04$  & $-0.1$  & $-6.9$  & $0.01$ & $0.03$ & $5.84$ & $5.71$ \\
     \bottomrule
   \end{tabular}
 \end{table}

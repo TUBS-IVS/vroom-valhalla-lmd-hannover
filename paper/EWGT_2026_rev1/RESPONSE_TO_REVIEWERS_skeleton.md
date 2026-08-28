@@ -40,7 +40,7 @@ The response therefore has two parts:
 | 7 | Not reproducible | Repository footnote extended (parameters, hyperparameters, seeds, 39 patterns) | No |
 | 8 | A single global alpha | Data given: per-LSP 3.2 % vs. global 2.9 % OOF MAPE | No |
 | 9 | 39 patterns: total or per cell? | "39 distinct admissible patterns; the same candidate set for every cell" | No |
-| 10 | Eq. (3) looks like a Nash equilibrium | Coordinate descent on a common depot objective; restart spread < 1e-12 relative; no global-optimality claim | Yes — the equation's coupling term is removed and replaced by an explicit statement of the residual coupling inside pooling groups |
+| 10 | Eq. (3) looks like a Nash equilibrium (Eq. (3) as submitted is Eq. (5) of the revision) | Coordinate descent on a common depot objective; restart spread < 1e-12 relative; no global-optimality claim | Yes — the equation's coupling term is removed and replaced by an explicit statement of the residual coupling inside pooling groups |
 | 11 | Clusters in Fig. 3 | Explained as tour bands from `ceil(p/Q)` plus same-postcode augmentation families; folds are group-safe | No |
 
 **Draft text for point 3 (still open).** *We thank the reviewer. All remaining
@@ -53,8 +53,8 @@ depot tour that created the coupling has been removed entirely. Every tour is
 now formed by one universal rule that applies to the daily baseline and to every
 consolidation scenario alike, so the depot objective is separable wherever a
 cell is large enough to be served on its own. A residual coupling remains only
-inside pooling groups of sub-threshold cells, and Eq. (3) retains the depot
-objective precisely in order to keep that residual coupling priced. We do not
+inside pooling groups of sub-threshold cells, and Eq. (5) of the revision
+(Eq. (3) as submitted) retains the depot objective precisely in order to keep that residual coupling priced. We do not
 claim separability.*
 
 ---
@@ -80,8 +80,10 @@ corrected model the figures are 2.9 %[P] of areas and 0.03 %[P] of routing cost.
 The full-adoption headline is not affected — at theta = 1 no shared tour exists
 at all, which we verified directly — and a symmetric re-computation of the
 submitted grid bounds the whole effect at that point to 0.57 percentage points
-(22.79 % to 22.22 %).*
-Entries: B2, B3, B6, A3.
+(22.79 % to 22.22 %). We have also withdrawn the per-area saving figures of the
+submitted version rather than reprinting them: they rest on the same grid, and
+the spatial breakdown is re-derived from the revised per-cell costs.*
+Entries: B2, B3, B6, A3, B12.
 
 ### Theme B — A validity domain for the surrogate
 
@@ -123,10 +125,13 @@ this revision. Under the routing lens the cost-optimal plan saves 23.1 %[P];
 under the operator lens the very same plan is 7.8 %[P] worse than daily
 delivery, because its two-day patterns raise the summed depot peak by
 34.5 %[P]. Re-optimizing the second stage in the operator's currency turns this
-into 24.7 %[P] of operator saving at a 16.9 %[P] lower peak fleet. Both lenses
-point to P = 0.25 EUR per parcel-day as the operating point, and the carrier
-taxonomy the reviewer asked us to justify turns out to be lens-dependent: three
-of the seven carriers move up one class under the operator lens.*
+into 24.7 %[P] of operator saving at a 16.9 %[P] lower peak fleet. On cost alone
+both lenses still prefer the cost-optimal extreme, by 3.9 pp[P] and 1.9 pp[P];
+we recommend P = 0.25 EUR per parcel-day because that is where the service side
+is priced in, and because a flat 0.50 EUR discount per delayed parcel makes it
+the best point on the grid outright. The carrier taxonomy the reviewer asked us
+to justify turns out to be lens-dependent: three of the seven carriers move up
+one class under the operator lens.*
 Entries: A6, A7, B1, B4, B5, B7, B8.
 
 ### Theme E — The second stage, honestly described

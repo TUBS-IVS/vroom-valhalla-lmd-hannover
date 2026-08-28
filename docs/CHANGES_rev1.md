@@ -65,7 +65,7 @@ table files are relative to `results/revision_2026_08_v5/tables/`.
 - **Evidence:** §40.7 (per-cell express instead of bounded pooling; five-point
   justification), §40.8 (why a minimum tour size is nonetheless required).
 
-### A4 — Equation (3): coupling term removed, residual coupling stated
+### A4 — Schedule objective, Eq. (5) of the revision (Eq. (3) as submitted): coupling term removed, residual coupling stated
 
 - **Old:** "These shared tours couple the cells --- their load depends on the
   hub's joint schedule."
@@ -90,13 +90,19 @@ table files are relative to `results/revision_2026_08_v5/tables/`.
 - **Evidence:** §40.16, `task-10b-brief.md` (Gate U ruling on the deployed
   population).
 
-### A6 — Two cost lenses (new Section 2.3, Equations 4 and 5)
+### A6 — Two cost lenses (new Section 2.3, Eqs. (3) and (4) of the revision)
 
 - **Old:** a single cost accounting (every vehicle-day charged in full).
 - **New:** routing lens `C_route = sum_i C_i` (the submitted accounting) and
   operator lens `C_op = sum_i (C_i − c_f v_i) + 6 c_f sum_h max_d v_hd`, i.e.
   1,134.90 EUR per peak vehicle per depot per week. Both lenses are evaluated
-  against the same baseline; neither contains the service penalty.
+  against the same baseline; neither contains the service penalty. The paragraph
+  after Eq. (4) discloses that the operator lens counts driver labour twice (the
+  36 EUR/h route-time charge stays in the variable bucket while 6 c_f already
+  contains the wage), so its absolute LEVELS are high by roughly a fifth, the
+  time share of label cost, while savings are unaffected because the inflated
+  term sits in baseline and scenario alike. Re-labelling with per_hour = 0 is
+  named as future work (Task 15).
 - **Evidence:** §40.11 (why routing euro is the wrong currency for balancing),
   §40.12 (baseline in both lenses: routing 1,909,432 EUR/wk; operator
   2,109,742 EUR/wk; sum of depot peaks 1,239), `task-6e-brief.md`.
@@ -132,8 +138,9 @@ table files are relative to `results/revision_2026_08_v5/tables/`.
 - **New:** the operator plan's mean delivery frequency and average waiting time
   differ from the routing plan's, in **either** direction depending on the
   operating point; the paper reports both plans side by side and never combines
-  a cost from one with a service figure from the other. The term
-  "service-neutral" is not used anywhere.
+  a cost from one with a service figure from the other. The phrase
+  "service-neutral" appears exactly once, in the negated form the spec requires:
+  the manuscript states that the operator plan is *not* service-neutral.
 - **Evidence:** §40.15 (wait moves both ways: 0.97 -> 0.77 d at (0, 1);
   0.21 -> 0.23 d at (0.5, 1)), `tab_headline_theta1_v2.csv`.
 
@@ -233,11 +240,16 @@ table files are relative to `results/revision_2026_08_v5/tables/`.
 
 ### B8 — Recommended operating point
 
-- **New:** P = 0.25 EUR/parcel-day under both lenses. At (0.25, 1) the operator
-  plan saves 22.82 % operator and 17.07 % routing cost, cuts the summed depot
-  peak by 17.1 %, and halves the additional wait against P = 0 (0.39 vs 0.77 d).
-  The operator lens alone would prefer P = 0 by 1.9 pp; the flat-discount
-  scenario (B9) makes P = 0.25 strictly better.
+- **New:** Read as a pure cost objective, NEITHER lens points to P = 0.25: at
+  full adoption the saving decreases with P in both, so on cost alone the
+  routing lens prefers P = 0 by 3.9 pp and the operator lens by 1.9 pp. P = 0.25
+  is the recommendation because it is where the service side is priced in: at
+  (0.25, 1) the operator plan saves 22.82 % operator and 17.07 % routing cost,
+  cuts the summed depot peak by 17.1 % (as deeply as P = 0 does), and halves the
+  additional wait (0.39 vs 0.77 d) for 1.9 pp of operator saving. Under a flat
+  0.50 EUR discount (B9) it stops being a trade and is the best point on the
+  grid outright. The earlier phrasing "both lenses point to P = 0.25" is
+  withdrawn: it was contradicted by Table 2.
 - **Evidence:** §40.15, §40.17, `tab_headline_theta1_v2.csv`.
 
 ### B9 — Discount scenario (new subsection)
@@ -299,8 +311,17 @@ table files are relative to `results/revision_2026_08_v5/tables/`.
 Rewritten to state the tour rule, both lenses, both plans, the recommended
 operating point, and the lens-dependence of the carrier classes. The
 "0.9–2.7 pp across four validated operating points" claim is replaced by the
-per-cell bias evidence (+1.8 % daily vs +3.5 % consolidated over 1,247 cells).
-Evidence: §39.5, §40.15, §40.18.
+per-cell bias evidence. After the review it also carries: the unit as "312
+provider-postal-code cells formed by seven LSPs over 48 postal-code areas";
+the truthful recommendation structure (both lenses prefer P = 0 on cost, by
+3.9 and 1.9 pp; P = 0.25 recommended once waiting is priced and under a real
+50 ct discount); the CV band as 52-83 % across P in [0.25, 0.75] under the
+OPERATOR-POLISHED plan (66-83 % covers only P = 0.25-0.5; at P = 0.75 it is
+52 %); the consolidated bias as "+2.5 to +3.5 %" rather than the 3-per-week
+bucket alone; and the rural/structural claim replaced by the rotation
+mechanism, since the per-area block it rested on is withdrawn (B12).
+Evidence: §39.5, §40.15, §40.18, `tab_fleet_diagnostics_v2.csv`,
+`_tab_chosen_v2.csv`.
 
 ### C2 — Contributions
 
@@ -351,6 +372,89 @@ the stale entry points: `scripts/pipeline/02_optimize_grid.py`,
 pool term and must never be used for v2-semantics numbers. Nothing is deleted.
 Evidence: `.superpowers/sdd/2026-08-25-realistic-tours-implementation/progress.md`
 lines 68 and 100.
+
+---
+
+## F. Fix round after review (2026-08-27)
+
+Review: `.superpowers/sdd/2026-08-25-realistic-tours-implementation/task-14a-review.md`
+(2 Critical, 6 Important, 11 Minor; spec compliance PASS, no wrong number found).
+Entries A1-E above stand; the following are the additional claim changes.
+
+### B12 — The carried-over per-area block is withdrawn, not merely marked provisional
+
+- **Old** (submitted text, still present after the first part-A pass): "the
+  per-area saving correlates strongly with parcels per drop-site (rho = -0.72),
+  hub distance (+0.53) and area size (+0.31) ... rural areas save a median of
+  25 % against 9 % for urban areas ... At low adoption (theta <= 0.3) the same
+  mechanism pushes 35-44 % of service-bound cells into negative saving."
+- **New:** the block is cut. In its place, one sentence stating that the
+  per-area figures rest on the grid whose partial-adoption basis is retracted
+  and are therefore not carried over, plus a pointer that the spatial breakdown
+  is re-derived from the revised grid's per-cell costs (pending). What remains
+  is the frequency-side evidence the revised grid does support, Fig. 6 (d)-(f).
+- **Why:** "provisional" means same pipeline, newer numbers; this block's
+  *source* is retracted. The theta <= 0.3 figure in particular comes from
+  exactly the adoption range whose basis the paper withdraws 25 lines earlier.
+- **Evidence:** §39.3 (roughly a quarter of demand at theta < 1 rode tours the
+  baseline could not form); review C2/I6. Part B re-derives the breakdown from
+  Task 11's per-cell plan costs.
+
+### B13 — Fig. 6 (f) is a within-DHL statement
+
+- **Old:** "the buckets below 13 cells consist almost entirely of DHL depots";
+  the body read panel (f) as a general mechanism, and limitation (i) claimed
+  "the finding that consolidation needs rotation is general".
+- **New:** "exclusively" in the caption, followed by "panel (f) is therefore a
+  within-DHL statement, not a general law"; the body names DHL as the only
+  multi-depot network in the case study; limitation (i) now says the mechanism
+  is evidenced within a single carrier's network and that neither its magnitude
+  nor its generality can be established from these data.
+- **Evidence:** `results/revision_2026_08_v5/figures/fig6_bucket_composition.csv`
+  (buckets 1, 2-4 and 5-12 are all `single_carrier = True, DHL`),
+  `task-13-report.md`.
+
+### C5 — The unit is 312 cells over 48 postal-code areas
+
+- **Old:** "the 312 postal-code areas", and "% of areas" throughout §3.2.
+- **New:** "312 provider-postal-code cells formed by seven LSPs over 48
+  postal-code areas" at first use in the abstract, in the data section and in
+  the conclusion; "% of cells" in every distributional statement; Fig. 4 caption
+  likewise. The methods already defined the cell correctly.
+- **Evidence:** `_tab_chosen_v2.csv` at any grid point: 312 rows over 48 distinct
+  PLZ and 7 providers (DHL 48, Amazon 47, DPD 47, Hermes 47, GLS 46, UPS 40,
+  FedEx 37).
+
+### C6 — Abstract corrections beyond the recommendation
+
+- CV band: "66-83 % in that range" -> "52-83 % across that range under the
+  operator-polished plan". At (0.75, 1) the reduction is 52 %, outside the old
+  band, and the band had named no plan. Evidence: `tab_fleet_diagnostics_v2.csv`.
+- Consolidated bias: "+3.5 %" -> "+2.5 to +3.5 %", so the modal 2-per-week
+  bucket (+2.51 %, n = 458) is not dropped in favour of the 3-per-week bucket
+  (+3.51 %, n = 363); the body now lists both. Evidence: §39.5.
+- The rural/structural sentence is replaced by the rotation mechanism, since the
+  per-area block it rested on is withdrawn (B12).
+
+### C7 — Trim executed against the page budget
+
+Cut in the reviewer's order: the per-area block (B12); the rule-(a) five-number
+series reduced to two ranges; the instance-size accuracy series reduced to its
+claim; the duplicated flat-bound sentence (stated once, kilo-euro figures
+dropped); the P = 0.5 and P = 1 daily-share clauses of the mix paragraph;
+Table 2's P = 1 and P = 2 rows moved into its caption. The feature-skew
+limitation was KEPT, on the reviewer's advice. Remaining candidates are listed
+in the header comment of `tbc_preprint_main.tex`.
+
+### C8 — Minor corrections
+
+Section 2.4 retitled "Schedule optimization and operator-cost polish" (it no
+longer describes fleet balancing); the 159 km2 cap now reads "the bias drifts
+negative, reaching -4.3 % at the training maximum of 358 km2" (the -4.33 % is
+measured at 358, not immediately past 159); "Six limitations" -> "Seven
+limitations and one methodological caveat"; the equation numbers in A4 and A6
+and in the response skeleton corrected to the revision's numbering; the
+"service-neutral is not used anywhere" sentence in A8 corrected.
 
 ---
 
