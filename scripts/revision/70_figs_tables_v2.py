@@ -565,6 +565,30 @@ def _quartile_lines(ax, df, feat, label, unit, cmap,
     return pd.DataFrame(comp)
 
 
+#: The three-class carrier taxonomy is keyed on P* in {0.25, 0.5, 0.75}.
+#: A knee OUTSIDE that set (the v6 grid puts one LSP's operator-lens knee
+#: at P* = 1.0) is genuinely unclassified -- it is not a defect and it must
+#: not be silently dropped from a panel or crash the palette lookup, so it
+#: gets a declared neutral of its own and appears in the legend.
+UNCLASSIFIED_COLOUR = "0.55"
+
+
+def carrier_palette(classes) -> tuple[list, dict]:
+    """``(order, colours)`` covering every carrier class actually present.
+
+    Colours come from ``_style.CARRIER`` for the three taxonomy classes;
+    anything else -- an LSP whose knee falls outside {0.25, 0.5, 0.75} --
+    keeps a declared neutral grey and is ordered last, so the panel shows
+    it instead of dropping it and the reader can see that the taxonomy did
+    not cover it."""
+    present = list(dict.fromkeys(classes))
+    order = [c for c in S.CARRIER_ORDER if c in present]
+    order += sorted(c for c in present if c not in S.CARRIER_ORDER)
+    colours = {c: S.CARRIER.get(c, UNCLASSIFIED_COLOUR) for c in order}
+    return order, colours
+
+
+
 def _bucketise(df: pd.DataFrame, feat: str, edges=None, labs=None
                ) -> tuple[pd.DataFrame, list]:
     """Add a categorical ``bucket`` column; quartiles unless edges are given.
@@ -727,10 +751,12 @@ def fig6(full: pd.DataFrame, cells_r: pd.DataFrame, out: Path
 
     # (b) carrier type -- an explicit class order, coloured by S.CARRIER
     d = cells_r.copy()
-    d["bucket"] = pd.Categorical(d.carrier_class,
-                                 categories=S.CARRIER_ORDER, ordered=True)
+    c_order, c_pal = carrier_palette(d.carrier_class)
+    d["bucket"] = pd.Categorical(d.carrier_class, categories=c_order,
+                                 ordered=True)
+    assert d.bucket.notna().all(), "a carrier class was dropped"
     comps.append(_saving_panel(
-        ax[0, 1], d, S.CARRIER_ORDER, dict(S.CARRIER), "saving_eur", ylab,
+        ax[0, 1], d, c_order, c_pal, "saving_eur", ylab,
         "b", "Saving by carrier type", H.LENS_ROUTING, "Carrier type")
         .assign(feature="carrier_class"))
 
@@ -800,12 +826,14 @@ def fig6b(full: pd.DataFrame, knees_r: pd.DataFrame, knees_o: pd.DataFrame,
 
     # (b) per-LSP knee P*, both lenses (marker = lens/plan, fill = class)
     a = ax[0, 1]
+    k_order, k_pal = carrier_palette(
+        list(knees_r.carrier_class) + list(knees_o.carrier_class))
     marker_handles = []
     for kn, mk, cost_col in [(knees_r, "o", "routing_saving_plan1_pct"),
                              (knees_o, "s", "operator_saving_plan2_pct")]:
         for _, r in kn.iterrows():
             a.scatter(r.wait_d, r.saving_pct, s=70, marker=mk,
-                      facecolor=S.CARRIER[r.carrier_class],
+                      facecolor=k_pal[r.carrier_class],
                       edgecolor="black", linewidth=0.6, zorder=3)
             a.annotate(r.provider, (r.wait_d, r.saving_pct),
                        textcoords="offset points", xytext=(6, 4), fontsize=8)
@@ -820,8 +848,8 @@ def fig6b(full: pd.DataFrame, knees_r: pd.DataFrame, knees_o: pd.DataFrame,
     leg1 = a.legend(handles=marker_handles, loc="lower right", fontsize=8,
                     title="Lens / plan", title_fontsize=8.5)
     a.add_artist(leg1)
-    a.legend(handles=[Patch(facecolor=S.CARRIER[c], edgecolor="black",
-                            label=c) for c in S.CARRIER_ORDER],
+    a.legend(handles=[Patch(facecolor=k_pal[c], edgecolor="black",
+                            label=c) for c in k_order],
              loc="upper left", fontsize=9, title="Carrier type",
              title_fontsize=9)
 
@@ -831,10 +859,12 @@ def fig6b(full: pd.DataFrame, knees_r: pd.DataFrame, knees_o: pd.DataFrame,
 
     # (c) per-hub operator saving by carrier type
     d = hubs_o.copy()
-    d["bucket"] = pd.Categorical(d.carrier_class,
-                                 categories=S.CARRIER_ORDER, ordered=True)
+    h_order, h_pal = carrier_palette(d.carrier_class)
+    d["bucket"] = pd.Categorical(d.carrier_class, categories=h_order,
+                                 ordered=True)
+    assert d.bucket.notna().all(), "a carrier class was dropped"
     comps.append(_saving_panel(
-        ax[0, 2], d, S.CARRIER_ORDER, dict(S.CARRIER), "operator_saving_eur",
+        ax[0, 2], d, h_order, h_pal, "operator_saving_eur",
         ylab, "c", "Hub saving by carrier type", H.LENS_OPERATOR,
         "Carrier type", band_plan="balanced").assign(feature="carrier_class"))
 
@@ -1256,6 +1286,14 @@ def _ablation_row(variant: str, rev_dir: Path, base: dict, *,
     Every table this row needs is existence-checked up front, so a missing
     or half-written ablation directory reports ``DIR_MISSING`` next to the
     other variants instead of aborting the whole table with a traceback.
+
+    **Each variant is measured against ITS OWN grid's theta = 0 baseline**,
+    and that denominator is written into the row. The variants live in
+    different directories, and from Task 11 on they are not even priced
+    the same way -- the bundle head prices the baseline's pooled tours
+    too, so a head-enabled grid's baseline is ~11 kEUR below a head-free
+    one's. Dividing every variant by the rendered grid's baseline would
+    silently shift every other variant's saving by that difference.
     """
     needed = ["tab_costs_v2.csv", "tab_fleet_per_hub_v2.csv",
               "tab_wait_v2.csv"]
@@ -1269,6 +1307,22 @@ def _ablation_row(variant: str, rev_dir: Path, base: dict, *,
     fleet = pd.read_csv(rev_dir / "tab_fleet_per_hub_v2.csv")
     wait = pd.read_csv(rev_dir / "tab_wait_v2.csv")
     cover = costs.groupby(["penalty", "share_willing"]).provider.nunique()
+
+    # this variant's OWN baseline, never the rendered grid's
+    b0 = costs[np.isclose(costs.share_willing, 0.0)]
+    assert len(b0), f"{rev_dir}: no theta=0 rows -- no baseline"
+    b0 = b0[np.isclose(b0.penalty, sorted(b0.penalty.unique())[0])]
+    own_rout = float(b0[routing_col].sum())
+    if reconstruct:
+        f0 = fleet[np.isclose(fleet.share_willing, 0.0)]
+        f0 = f0[np.isclose(f0.penalty,
+                           sorted(f0.penalty.unique())[0])]
+        own_op = (own_rout - H.FIXED_COST_EUR * float(f0.fleet.sum())
+                  + H.WEEK_FIXED_COST_EUR
+                  * float(f0.groupby(["provider", "hub"]).fleet.max()
+                          .sum()))
+    else:
+        own_op = float(b0.operator_cost_eur.sum())
 
     rows = []
     for P, th in ABLATION_POINTS:
@@ -1303,11 +1357,11 @@ def _ablation_row(variant: str, rev_dir: Path, base: dict, *,
         rows.append(dict(
             variant=variant, penalty=P, share_willing=th, status="ok",
             operator_cost_eur=op,
-            operator_saving_pct=100 * (base["operator_eur"] - op)
-            / base["operator_eur"],
+            operator_saving_pct=100 * (own_op - op) / own_op,
+            baseline_operator_eur=own_op,
             sum_hub_peak=hp, vehicle_days=vd, routing_cost_eur=rout,
-            routing_saving_pct=100 * (base["routing_eur"] - rout)
-            / base["routing_eur"],
+            routing_saving_pct=100 * (own_rout - rout) / own_rout,
+            baseline_routing_eur=own_rout,
             wait_d=float(w.wait_num_willing.sum() / w.total_parcels.sum())))
     return pd.DataFrame(rows)
 
@@ -1337,8 +1391,9 @@ def write_ablation(rev: Path, base: dict, v5_costs: pd.DataFrame,
         _ablation_row("v4 operator-freqpres (partial)",
                       res / "revision_2026_08_v4" / "_partial_5664cca", base,
                       routing_col="cost_stage2_eur", reconstruct=False),
-        _ablation_row("v5 frequency-free best-of-3", rev, base,
-                      routing_col="cost_stage2_eur", reconstruct=False),
+        _ablation_row(
+            f"{rev.name} frequency-free best-of-3", rev, base,
+            routing_col="cost_stage2_eur", reconstruct=False),
     ]
     abl = pd.concat(parts, ignore_index=True)
 
@@ -1363,7 +1418,11 @@ def write_ablation(rev: Path, base: dict, v5_costs: pd.DataFrame,
 
     p = tables / "tab_stage2_ablation_v2.csv"
     abl.to_csv(p, index=False)
-    tex = (abl[abl.status == "ok"].drop(columns=["status"])
+    # the two per-variant baselines stay in the CSV -- they are what the
+    # caption points at -- but the LaTeX table is already wide enough
+    tex = (abl[abl.status == "ok"]
+           .drop(columns=["status", "baseline_operator_eur",
+                          "baseline_routing_eur"])
            .rename(columns={
                "variant": "stage-2 variant", "penalty": "$P$",
                "share_willing": r"$\theta$",
@@ -1380,7 +1439,13 @@ def write_ablation(rev: Path, base: dict, v5_costs: pd.DataFrame,
                         r"Run~2's operator cost is reconstructed from its "
                         r"fleet table (the pre-6e schema has no operator "
                         r"columns); stage~1 is bit-identical across all four "
-                        r"variants by construction. "
+                        r"variants by construction. Each variant is "
+                        r"measured against \emph{its own} grid's "
+                        r"$	heta = 0$ baseline (carried as a column in "
+                        r"the CSV): the grids are priced differently -- "
+                        r"a bundle head prices the baseline's pooled "
+                        r"tours too -- so one common denominator would "
+                        r"shift every other variant. "
                         + H.COST_MODEL_CAPTION),
                label="tab:stage2_ablation")
     print(abl.to_string(index=False))
