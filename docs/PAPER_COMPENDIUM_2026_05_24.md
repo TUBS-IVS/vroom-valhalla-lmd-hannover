@@ -3867,7 +3867,17 @@ kein Budget, Stufe 3 entfaellt), und das Paper berichtet beide Linsen.
 `per_hour = 3600` (1 ct/s) ist in ALLEN Labels aktiv, weil requests.py
 `per_hour` bei 0 nicht setzt. Trainingspool: Residuum/Dauer = 36,09 EUR/h,
 Verhaeltnis zu 36,00 = 1,002 (p5-p95 1,002-1,003). Effektives Modell:
-189,15/Fahrzeug + 0,3864/km + 36 EUR/Routenstunde (72 / 6 / 22 %). Pipeline
+189,15/Fahrzeug + 0,3864/km + 36 EUR/Routenstunde. **Anteile praezise
+(Nachtrag 29.08., Review-Befund I3):** auf dem **Trainingspool**
+(`results/supplementary/sweep_v3_mergefix/training_matrix.csv`, 2 733 Zeilen,
+alle OK) **72,2 / 6,0 / 21,7 %** — genau die Zahl, die das Paper (§2.2,
+Supplement S2) druckt; auf den **Validierungslabels**
+(`revision_2026_08_v6/validation/tab_vroom_v2.csv`, 8 609 saubere Zeilen)
+**70,7 / 6,1 / 23,2 %**. Anteil = `189,15*Σ n_routes` / `0,3864*Σ km` /
+`36*Σ duration_h`, geteilt durch die Σ Solver-Kosten. Die frueher hier
+notierten `(72 / 6 / 22 %)` waren dieselbe Trainingspool-Messung, nur
+gerundet; die Population steht jetzt in beiden Dokumenten dabei, weil die
+beiden Instanzmischungen um 1,5 pp auseinanderliegen. Pipeline
 intern konsistent (Labels = Surrogat = Validierung = Buendel-Pool, gleicher
 Builder); die Dokumentation ("Arbeit in Fixkosten, per_hour 0") ist falsch;
 alpha = 1,343 absorbiert im Daganzo-Rueckgrat einen Teil des fehlenden
@@ -3973,7 +3983,7 @@ retrainen — Routen bleiben dann leicht zeitoptimiert (konservativ).
 
 - 616 Triples in 168.5 min, keine Fehler; Head `bundle_head@40ea27e7c602+b1522eab0e90` (21 zertifizierte Bins). Baseline: 1 898 091 € Routing / 2 098 401 € Operator (v5: 1 909 432 / 2 109 742 — der Head bepreist die schon im Baseline gepoolten Kleinzellen-Touren um 11.3 k€ günstiger; G4-Korridor eingehalten). Σ Hub-Peaks 1 239 unverändert.
 - θ=1, Routing-Plan in der Paper-Währung: **22.6 / 18.7 / 13.5 / 10.1 / 7.6 %** (P = 0 / 0.25 / 0.5 / 0.75 / 1); Einreichung (nach Balancing) 22.8 / 18.5 / 13.5 / 10.2; v5 Stufe 1 23.1 / 19.2 / 14.1 / 10.7. Wartezeit 0.97 / 0.44 / 0.20 / 0.12 d.
-- θ=1, Operator-Plan in der Operator-Währung: **24.3 / 22.6 / 17.8 / 14.1 / 11.6 %**; Σ Hub-Peaks −16.9 / −17.2 / −14.3 / −12.0 / −10.5 %; Wartezeit 0.77 / 0.39 / 0.22 / 0.13 d; Ø Liefertage 2.38 / 3.24 / 4.17 / 4.71 / 5.04. Lücke zur flachen Untergrenze 50 / 32 / 46 / 60 / 70 Peak-Fahrzeuge.
+- θ=1, Operator-Plan in der Operator-Währung: **24.3 / 22.6 / 17.8 / 14.1 / 11.6 %**; Σ Hub-Peaks −16.9 / −17.2 / −14.3 / −12.0 / −10.5 %; Wartezeit 0.77 / 0.39 / 0.22 / 0.13 d; Ø Liefertage — **Zell-Mittel** (`mean_days_plan2`, die Definition, die das Paper für f̄ benutzt: „the unweighted average number of weekly delivery days across cells", `tbc_preprint_main.tex:432`) **2.39 / 3.27 / 4.19 / 4.73 / 5.05**; **Provider-Mittel** (`mean_days_plan2_provmean`) 2.38 / 3.24 / 4.17 / 4.71 / 5.04 — das ist die Reihe, die hier bis 29.08. ohne Kennzeichnung stand (Review-Befund M4). Beide Maße sind vertretbar, aber nur das Zell-Mittel deckt sich mit dem Paper; wer aus dieser Zeile zitiert, nimmt das Zell-Mittel. Lücke zur flachen Untergrenze 50 / 32 / 46 / 60 / 70 Peak-Fahrzeuge.
 - Head-Anteil an den gepoolten Kosten: 53 % bei θ=1 (gepoolt = 8.4 % der Gesamtkosten), 24–35 % bei θ<1. v6−v5 im Gitter: Routing-Plan +0.20 pp im Mittel (−0.66 bei (0.5,1) … +0.62), Operator-Plan +0.17 pp, Wartezeit ±0.01 d → der Head ist eine Feinkorrektur, keine Aussagenänderung.
 - Teiladoption gegen die Einreichung: Beule (10, 0.1) 0.40 % (Einreichung 3.6 % / 42 % nicht-tägliche Zellen); „Wochenflotte −6.3…−6.8 % bei θ=0.1" → Routing-Plan −1.5…−1.9 % Fahrzeugtage (das alte Maß war überwiegend räumliches Pooling), Operator-Plan Σ Hub-Peaks −4.8…−5.4 %.
 
@@ -3982,7 +3992,7 @@ retrainen — Routen bleiben dann leicht zeitoptimiert (konservativ).
 - Datenpfad: Baseline und Operator-Plan aus `tab_fleet_per_hub_v2.csv`; Routing-Plan aus `schedule_idx_stage1` mit dem partition-aware Fleet-Counter nachgerechnet (Matrizen hängen nur von θ ab → einmal je Provider). Fünf Gates: Baseline P-invariant, Stufe-2-Nachrechnung == Fleet-Tabelle (Profil und Σ Peaks), Systemprofil == `sys_Mon..Sat` im Grid, Baseline == (0,0)-Zeile, jede LSP genau eine Klasse. Alle grün.
 - **Kernbefund (Flexibilitätsthese):** TBC schafft den Freiheitsgrad „Liefertag“, homogenisiert aber nicht von selbst. Routing-Plan, System, P = 0: Σ Peaks 117 → **157** (Index; absolut 1 239 → 1 666, +34 %), CV 0.139 → 0.097; P = 0.25: 117 → 124, CV 0.130 — nicht besser als Baseline. Operator-Plan: Σ Peaks 97 / 97 / 100 / 103, CV 0.029 / 0.023 / 0.044 / 0.069 (P = 0 / 0.25 / 0.5 / 0.75). Peak fällt ~2× so stark wie die Fahrzeugtage (−17/−18 % vs. −7/−9 %) — der Überschuss ist reines Levelling (Mi/Do → Fr/Sa/Mo; Samstag wird von 781 auf 944 hochgeladen).
 - Je Klasse (Operator-Plan, P = 0.25): Service-bound Σ Peaks 117 → 104, CV .14 → .04 (Samstag bleibt bei P ≥ 0.5 die Delle: Amazon/DHL halten Sa niedrig); Hybrid 115 → 89, CV .13 → .01; Cost-aggressive 119 → 86, CV .15 → .01. Der Routing-Plan der Hybrid-Klasse bei P = 0 hat CV 0.31 (Do-Zacke, UPS/Hermes) — das ist die Figur zum Satz „ein pro Tag kostengünstiger Plan kann pro Woche verlustbringend sein“.
-- Auffällig: DHL Routing-Plan bei P ≥ 0.5 == Baseline (kein Cell bündelt), erst der Operator-Polish bewegt DHL (Σ Peaks 468 → 448). Paper-Text (`tbc_preprint_main.tex:162`, „CV up to 60 %“) ist auf v6 noch nicht gezogen (51–84 %).
+- Auffällig: DHL Routing-Plan bei P ≥ 0.5 == Baseline (kein Cell bündelt), erst der Operator-Polish bewegt DHL (Σ Peaks 468 → 448). ~~Paper-Text (`tbc_preprint_main.tex:162`, „CV up to 60 %“) ist auf v6 noch nicht gezogen (51–84 %).~~ **Erledigt (29.08., Review-Befund M5):** das Manuskript trägt die 51–84 % (Abstract, `tbc_preprint_main.tex:207`), und „60 %“ kommt im tex nirgends mehr vor. Der offene Punkt ist zurückgezogen, damit er nicht ein zweites Mal abgearbeitet wird.
 
 ## 40.22 P*-Knicke auf v6 (Korrektur zu §40.18) und die (10, 0.1)-Ecke (28.08., 15:10)
 
@@ -4015,6 +4025,7 @@ retrainen — Routen bleiben dann leicht zeitoptimiert (konservativ).
 - **Routing-Plan (Item 2):** P = 0: 1 468 411 / 1 455 962 (+0.85 %), Σ Peaks 1 666 / 1 667; P = 0.25: 1 543 060 / 1 519 676 (+1.54 %), Peaks 1 314 / 1 314.
 - **MAPE je Instanzart** 1.9–3.7 % (Einzeltouren 2.3–3.7 %, Pool-Gruppen 1.9–3.2 %), Bias durchgehend positiv (+0.02 … +3.4 %): das Surrogat (Daganzo-LGB-Hybrid + Head) preist **konservativ**, VROOM findet etwas billigere Touren; der Bias wächst mit P (mehr Liefertage → mehr, dünnere Einzeltouren). Flottenzählung nahezu exakt (Peaks ±0–5 Fahrzeuge auf ~1 000).
 - Realisierte Ersparnis in % folgt erst mit Item 0 (θ = 0-Baseline, gestartet 16:45, ~3 h) — der Report weist das explizit aus; Item 3 ((0.25, 0.5) Operator-Plan, G6-Fallback, ~4 h) danach.
+- **Saubere Basis, die das Paper druckt (Nachtrag 29.08., Review-Befund I1).** Die Zahlen oben sind die „all“-Basis (PARTIAL enthalten). Auf der **sauberen** Basis (`n_unassigned == 0 ∧ jobs_removed == 0 ∧ status ∈ {OK, CACHED}`) über **alle sechs** konsolidierten Punkte: **Routing-Linse 0.821 / 1.246 / 1.539 / 1.695 / 2.404 / 2.862 %**, **Operator-Linse 0.491 / 1.081 / 1.233 / 1.648 / 2.203 / 2.539 %** (Reihenfolge nach Routing-Gap: Item 2 P=0, Item 1 P=0, Item 2 P=0.25, Item 1 P=0.25/0.5/0.75). Der Unterschied zur „all“-Basis betrifft nur Item 2 P=0 (0.82 statt 0.85 %, die eine PARTIAL-Zeile). §3.4 des Papers schreibt daher **„0.8 bis 2.9 % und 0.5 bis 2.5 %“** — beide Spannen über **dieselbe** Population; bis 29.08. stand dort routingseitig „1.2 bis 2.9 %“, was nur die vier Item-1-Punkte abdeckte, während die Operator-Spanne alle sechs abdeckte. Baseline (Item 0, n = 1 683) sauber: +4.385 / +4.047 % → die gedruckten 4.4 / 4.0 %.
 
 ## 40.25 VROOM-Validierung auf v6 — Item 0 (θ = 0-Baseline) und realisierte Ersparnis, 28.08., 18:50
 
@@ -4061,7 +4072,7 @@ Inventar, keine neuen Zahlen: jede Zahl der Revision steht in §40.14–§40.28,
 - **`analyses/`** — `results_overview_v6.csv`, `discount_scenarios_v6.csv` und die beiden Dashboard-Entwurfsfiguren; die Entwürfe sind durch 77_/78_ abgelöst und liegen nur noch zur Rückverfolgung der Dashboard-Zahlen bei.
 - **`dashboard/`** — die veröffentlichten Seiten (Ergebnis-Dashboard, Figurengalerie) samt ihrer Bau-Skripte.
 - **`paper/`** — Transkript des echten 71_-Syncs (jede Kopie md5-verifiziert, keine identisch zur eingefrorenen Einreichung), Snapshot von `docs/CHANGES_rev1.md`, wörtlicher Auszug §40.14–§40.28.
-- **`decks/DECKS.md`** — nur Zeiger: Pfad, md5, Größe und Änderungsdatum der drei `_rev2026-08.pptx` (zusammen ~40 MB, deshalb nicht kopiert), mit Vermerk, welches Deck zum Pack-Zeitpunkt noch in PowerPoint offen war (Rebuild ausstehend, Task 17).
+- **`decks/DECKS.md`** — nur Zeiger: Pfad, md5, Größe und Änderungsdatum der drei `_rev2026-08.pptx` (zusammen **47,9 MB** — 14,8 + 16,5 + 16,5, gemessen 29.08.; die früher hier und in `79_build_final_pack.py` notierten „~40 MB“ waren zu niedrig, Task-18-Befund 5 —, deshalb nicht kopiert), mit Vermerk, welches Deck zum Pack-Zeitpunkt noch in PowerPoint offen war (Rebuild ausstehend, Task 17).
 - **`gallery_manifest.json`** — Stem, deutscher Titel, ein Satz Bildunterschrift (aus §40.21/§40.22b/§40.23b) und Quellskript für alle 16 `supp_`-Stems; Unit-Test pinnt, dass die Stem-Menge exakt der `COMPANION_MAP` von 71_ entspricht.
 - **Neue Skripte dieser Runde:** `77_mechanism_v2.py` (Mechanismus-Figur + `tab_mechanism_theta_P_v2.csv`, `tab_saving_per_parcel_hist_v2.csv`), `78_fleet_week_v2.py` (Wochenflotte je Anbieter + `tab_fleet_week_by_provider_v2.csv`, nutzt `recompute_profiles` aus 75_), `79_build_final_pack.py`, `scripts/paper/guard_tex.py` (Struktur-Guard fürs Manuskript, als Pytest verdrahtet).
 - **Reihenfolge ist erzwungen, nicht dokumentiert:** 70_ verweigert das Manifest, solange 75_/76_/77_/78_ auf demselben Rev-Dir nicht gelaufen sind; 71_ verweigert den Sync, solange ein Manifest-Stem unabgebildet ist (13E).
