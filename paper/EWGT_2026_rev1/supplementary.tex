@@ -3,19 +3,19 @@
 %    Consolidation in Last Mile Parcel Delivery"
 % Revision 1, 2026-08-28. Companion to tbc_preprint_main.tex.
 %
-% FIGURE SOURCES. Every figure below is produced by the revision scripts into
+% FIGURE SOURCES. Every figure below is rendered by the revision scripts into
 %   results/revision_2026_08_v6/figures/
-% and is reached either from paper/EWGT_2026_rev1/figures/ (first \graphicspath
-% entry) or, for the five that 71_sync_paper_figs.py does not carry, through the
-% relative path ../../results/revision_2026_08_v6/figures/ (second entry).
-% 71_ RENAMES on sync: supp_fig4b_mean_days -> supp_fig4b_mean_delivery_days,
-% supp_fig5_grid_heatmap_v2 -> supp_fig5_two_lens_heatmaps,
-% supp_fig5b_offdiagonal_v2 -> supp_fig5b_offdiagonal_lens_plan,
-% supp_fig6_structural_v2 -> supp_fig6_per_cell_euro,
-% supp_fig6b_operator_lens_v2 -> supp_fig6b_operator_lens_hub. The six synced
-% files below use the DESTINATION names (md5-verified identical to the renders);
-% supp_fig7_* and the four supp_map_*/supp_penalty_* use the source names and
-% resolve through the relative path until 71_ carries them too.
+% and copied into paper/EWGT_2026_rev1/figures/ by
+% scripts/revision/71_sync_paper_figs.py, which md5-verifies each copy. All
+% eleven are tracked there, so \graphicspath needs only {figures/} and this
+% document builds standalone from the paper folder alone.
+% 71_ RENAMES on sync -- the names below are its DESTINATION names:
+%   supp_fig4b_mean_days        -> supp_fig4b_mean_delivery_days
+%   supp_fig5_grid_heatmap_v2   -> supp_fig5_two_lens_heatmaps
+%   supp_fig5b_offdiagonal_v2   -> supp_fig5b_offdiagonal_lens_plan
+%   supp_fig6_structural_v2     -> supp_fig6_per_cell_euro
+%   supp_fig6b_operator_lens_v2 -> supp_fig6b_operator_lens_hub
+%   supp_map_*_v2 / supp_penalty_raumtyp_v2 -> the same stems without _v2
 %
 % NUMBERS. All values come from grid v6 (results/revision_2026_08_v6/):
 %   Section S1  -> _peek/discount_scenarios_v6.csv
@@ -36,7 +36,7 @@
 \usepackage{caption}
 \usepackage[colorlinks,linkcolor=blue,urlcolor=blue]{hyperref}
 
-\graphicspath{{figures/}{../../results/revision_2026_08_v6/figures/}}
+\graphicspath{{figures/}}
 
 % S-numbering for everything
 \renewcommand{\thesection}{S\arabic{section}}
@@ -229,7 +229,7 @@ would lower the levels without materially changing the comparisons made here.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=\linewidth]{supp_map_saving_P_v2.pdf}
+  \includegraphics[width=\linewidth]{supp_map_saving_P.pdf}
   \caption{Cost saving per postal-code area at full adoption for the
   operator-polished plan, in the routing lens, over the service penalty $P$.
   System saving $20.0$, $16.7$, $12.3$, $9.0$, $6.9$ and $2.2\%$ at
@@ -240,7 +240,7 @@ would lower the levels without materially changing the comparisons made here.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=\linewidth]{supp_penalty_raumtyp_v2.pdf}
+  \includegraphics[width=\linewidth]{supp_penalty_raumtyp.pdf}
   \caption{Saving against the service penalty by region type at full adoption,
   euro-weighted, for the operator-polished plan in the routing lens: rural
   $23.2$, suburban $18.9$ and urban $15.6\%$ at $P = 0$, converging to at most
@@ -250,7 +250,7 @@ would lower the levels without materially changing the comparisons made here.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=\linewidth]{supp_map_freq_theta_v2.pdf}
+  \includegraphics[width=\linewidth]{supp_map_freq_theta.pdf}
   \caption{Parcel-weighted median weekly delivery frequency per postal-code
   area at $P = 0.25$, over the willingness-to-wait share $\theta$, for the
   operator-polished plan. Three delivery days per week dominate at full
@@ -260,7 +260,7 @@ would lower the levels without materially changing the comparisons made here.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=\linewidth]{supp_map_wait_theta_v2.pdf}
+  \includegraphics[width=\linewidth]{supp_map_wait_theta.pdf}
   \caption{Parcel-weighted mean additional wait of a held parcel per
   postal-code area at $P = 0.25$, over $\theta$, for the operator-polished
   plan. The maximum area value is $0.6$ days, at full adoption.}

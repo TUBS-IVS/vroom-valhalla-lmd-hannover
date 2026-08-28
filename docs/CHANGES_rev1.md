@@ -6,7 +6,7 @@ Scope: the changes the 2026-08 model revision forces on
 reviewer-response round (11 reviewer points, mirrored into the preprint on
 2026-08-18). Nothing there is retracted; everything here is on top of it.
 
-**Status: PART C done, fix round 2 applied.** Sections A-D record part A (v5 grid), section F
+**Status: PART C complete, fix round 3 applied. No open markers.** Sections A-D record part A (v5 grid), section F
 part B (grid v6), section G part C (the v6 VROOM validation and the part-B
 review fixes). **Later sections win**: where A-D, F and G disagree, G is
 authoritative, then F. No `\provisional{}` marker remains; the macro is
@@ -988,3 +988,70 @@ repaired:
 of the paper folder hard-fails. They are registered in the 70_ manifest but have
 **not** appeared in `paper/EWGT_2026_rev1/figures/`; the six that 71_ does carry
 are already referenced by their destination names.
+
+---
+
+## G8 — Fix round 3
+
+### Validation item 3: partial adoption is now validated
+
+The last `% PART C3` marker is gone; `grep -c "PART C"` returns **0**.
+Item 3 of the v6 validation re-routed $(P, \theta) = (0.25, 0.5)$ on the
+operator-polished plan over a **stratified subset of 1,000 of that point's 1,594
+instances** (every instance of the three smallest providers plus at least half of
+each remaining provider's demand, drawn round-robin over instance-kind and
+n_jobs-tercile strata; `validation/G6_sampling_note.md`). 0 PARTIAL. Every value
+below was recomputed from `validation/tab_vroom_v2.csv` (`item == 3`) and matches
+`validation_report.md` exactly.
+
+| instance kind | n | MAPE % | bias % | Σ pred € | Σ actual € | Σ gap % |
+|---|---:|---:|---:|---:|---:|---:|
+| delivery_single | 626 | 4.33 | +3.96 | 826,520 | 802,847 | +2.95 |
+| delivery_group | 65 | 7.43 | +6.52 | 69,704 | 66,016 | +5.59 |
+| express_single | 230 | 12.90 | +12.03 | 189,966 | 170,528 | +11.40 |
+| express_group | 79 | 22.64 | +21.46 | 77,018 | 65,051 | +18.40 |
+
+Totals: routing 1,163,209 vs 1,104,442 € (**+5.32 %**); OpCost 1,354,818 vs
+1,299,077 € (**+4.29 %**); Σ hub peaks 811 predicted vs 819 actual (**−0.98 %**).
+
+**What it means, and what is deliberately not said.** The error is strongly
+kind-dependent: express tours — the part of a partial-adoption plan that only
+consolidation creates — are the least accurately priced, at $+12$ to $+21\%$.
+That bias runs **opposite** to the one at full adoption: it inflates the
+consolidated schedule's cost and makes consolidation look *less* attractive than
+it is, where the over-priced baseline at $\theta = 1$ makes it look *more*
+attractive. The two roughly offset here ($+5.3\%$ for the point against
+$+4.4\%$ for the baseline).
+
+**No realized saving is quoted for this point.** The report's item-3 saving row
+(+38.7 %) divides a 1,000-instance subset by the full baseline and is
+meaningless; `67_` is being corrected to print n/a. The manuscript says so
+explicitly.
+
+Limitation (iv) rewritten to match: the partial-adoption regime is validated at
+one point and only on a subset, its savings remain predictions, and the express
+tours it creates are named as the least accurately priced part of the model.
+
+### Supplementary figures now build standalone
+
+`71_sync_paper_figs.py` (PASS, 32 copies) has landed the remaining seven stems in
+`paper/EWGT_2026_rev1/figures/`. The five `\includegraphics` that still reached
+into `../../results/` now use the tracked destination names
+(`supp_map_saving_P`, `supp_penalty_raumtyp`, `supp_map_freq_theta`,
+`supp_map_wait_theta`; `supp_fig7_fleet_week_classes` already matched), the
+results path is out of `\graphicspath`, and the header note is rewritten around
+the one remaining source. **Verified by copying the paper folder alone into a
+scratch tree and building there: 7 pages, no "Unable to load" error.** This
+closes M4 and the standing concern from fix round 2.
+
+### Patch: the cross-document `\ref`
+
+`page_budget_cuts.patch` moved a sentence into Supplementary S4 that referred to
+`Section~\ref{sec:schedule_opt}`. That label lives in the main tex and the two
+documents are built separately, so the patched supplementary printed
+"Section ??". It now reads **"Section~2.4"** as literal text, the convention the
+file already uses. The patch was regenerated on the fix-round-3 base.
+
+Patched page counts move with the manuscript: **17 → 16** (not 15, as in round 2)
+because item 3 added roughly 1,200 characters to §3.3. Both patched documents
+build clean at 23 bibitems.

@@ -1,42 +1,32 @@
-From 47a587ee4fe9e3e72eb7e71bc5ed93ad9454a93a Mon Sep 17 00:00:00 2001
+From 38b7b16a96c9c7ff8f84a1a19cbcc23e932ce2f1 Mon Sep 17 00:00:00 2001
 From: Lasse Bienzeisler <LasseBienzeisler@users.noreply.github.com>
-Date: Fri, 28 Aug 2026 20:42:56 +0200
-Subject: [PATCH 1/2] page budget: cuts 1-13 (16 -> 15 pages, supplementary 7
+Date: Fri, 28 Aug 2026 21:49:13 +0200
+Subject: [PATCH 1/2] page budget: cuts 1-13 (17 -> 15 pages, supplementary 7
  -> 9)
 
-Blocks 1-13 of task-14b-review.md section 6.3, in order, regenerated on top of
-the fix-round-2 manuscript. Ten of the thirteen MOVE material into the
-supplementary; three are pure duplication.
+Blocks 1-13 of task-14b-review.md section 6.3, in order. Ten of the thirteen
+MOVE material into the supplementary; two are pure duplication.
 
   1  labour double count            -> Supplementary S2 (already there)
   2  bundle-head certification      -> new Supplementary S3
   3  tour-rule percentile evidence  -> new Supplementary S3
   4  restart stability + the shadow-price clause + provider independence
                                     -> new Supplementary S4
-     (the G1a TOLERANCE sentence STAYS in section 2.4: it is a part-C brief
-      requirement and answers a reviewer point, so it is not moved)
+     (the G1a TOLERANCE sentence STAYS in section 2.4)
   5  the two-consequences elaboration and the dropped stage 3
                                     -> Supplementary S4
   6  three-stage progression + banding -> new Supplementary S5
   7  partial-adoption mechanism     -> new Supplementary S6
-  8  DROPPED. Its premise was false: Table 1's caption carries the 0.6 % clause
-     about the routing-optimal plan, not the polish's 4.8 % / f-bar = 5.95 at
-     (5,1), which is a distinctive two-plan finding.
+  8  DROPPED (its premise was false; f-bar = 5.95 at (5,1) stays)
   9  baseline-denominator sentence  -> deleted (Table 1's caption has it)
  10  CV series, flat-bound gap, break-even -> Supplementary S6
- 11  rotation-mechanism paragraph   -> deleted (stated in limitation (i), in the
-                                       structural paragraph, in the Conclusion
-                                       and now in S6)
+ 11  rotation-mechanism paragraph   -> deleted (stated three more times)
  12  the five quartile series as prose -> new Supplementary Table S2
  13  the five-number bias series    -> new Supplementary Table S3
 
-Nothing on the review's protected list is touched, and the three passages that
-fix round 2 restored stay live: the equity sentence, the code-availability
-footnote, both section-2 figure references, the shadow-price definition and the
-(P, theta) grid definition.
-
-5,472 characters out of the body. Both documents compile clean, 23 bibitems,
-no undefined references, and no comment line hides a control sequence.
+Supplementary S4 points at "Section 2.4" literally, not with a \ref: the label
+lives in the main tex and the two documents build separately, so a \ref would
+print "??".
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
@@ -45,7 +35,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  2 files changed, 135 insertions(+), 13 deletions(-)
 
 diff --git a/paper/EWGT_2026_rev1/supplementary.tex b/paper/EWGT_2026_rev1/supplementary.tex
-index 9f52055..348b5f0 100644
+index de8db18..ab575c7 100644
 --- a/paper/EWGT_2026_rev1/supplementary.tex
 +++ b/paper/EWGT_2026_rev1/supplementary.tex
 @@ -147,6 +147,129 @@ lens, is this double-counted term. Re-labelling the training pool with the
@@ -78,7 +68,7 @@ index 9f52055..348b5f0 100644
 +relative $10^{-12}$, so the optimum is stable at the reported operating points,
 +although global optimality is not guaranteed. The identity audit of the
 +decoupled cells, and the tolerance under which five of its $1{,}656$ pairs are
-+accepted, are stated in Section~\ref{sec:schedule_opt} of the main text. No parcels,
++accepted, are stated in Section~2.4 of the main text. No parcels,
 +routes, or vehicles are shared across providers, and system-wide figures are
 +obtained solely by aggregating the independently optimized provider solutions. The
 +provider-level smoothing stage of the submitted version is dropped from the
@@ -179,7 +169,7 @@ index 9f52055..348b5f0 100644
  \label{sec:supp_figures}
  
 diff --git a/paper/EWGT_2026_rev1/tbc_preprint_main.tex b/paper/EWGT_2026_rev1/tbc_preprint_main.tex
-index ed3f104..4ce1c6b 100644
+index e1b85f1..cc52155 100644
 --- a/paper/EWGT_2026_rev1/tbc_preprint_main.tex
 +++ b/paper/EWGT_2026_rev1/tbc_preprint_main.tex
 @@ -317,18 +317,18 @@ Such approximations reproduce the first-order scaling but are point-inaccurate,
@@ -280,28 +270,23 @@ index ed3f104..4ce1c6b 100644
 2.51.2.windows.1
 
 
-From 14bdc633194d24901e81f941e55ad596a56d632c Mon Sep 17 00:00:00 2001
+From 98bc860fe74bded5c4366fa0b1f40c04c0150791 Mon Sep 17 00:00:00 2001
 From: Lasse Bienzeisler <LasseBienzeisler@users.noreply.github.com>
-Date: Fri, 28 Aug 2026 20:43:10 +0200
+Date: Fri, 28 Aug 2026 21:49:24 +0200
 Subject: [PATCH 2/2] page budget: cuts 14-18 (duplication and density)
 
 Blocks 14-18 of task-14b-review.md section 6.3. Nothing moves to the
 supplementary and no claim is lost.
 
- 14  limitation (vi): the cross-version warning compressed. Its LABOUR clause
-     and the 0.139 vs 0.135 numbers are KEPT (the review's casualty 4).
- 15  Conclusion: one number per claim instead of a third recitation of the
-     section 3.2 series; the upper-bound caveat added by fix round 2 is kept
+ 14  limitation (vi): the cross-version warning compressed; its labour clause
+     and the 0.139 vs 0.135 numbers are KEPT
+ 15  Conclusion: one number per claim; the upper-bound caveat is kept
  16  abstract: the two-lens result in three sentences instead of six
  17  Introduction: the four-contribution list, which restates the abstract
- 18  density pass on section 2 / 2.1 text unchanged since submission, plus
-     three Introduction sentences
+ 18  density pass on section 2 / 2.1 and three Introduction sentences
 
-2,011 further characters, 7,483 over blocks 1-18. Compiles clean, 23 bibitems,
-no undefined references, guard passes.
-
-Measured page count: 17 as committed (fix round 2), 15 after blocks 1-13,
-15 after all 18. Figure scaling was re-tested and still buys nothing.
+Measured: 17 pages as committed, 15 after blocks 1-13, 15 after all 18;
+23 bibitems throughout.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
@@ -309,7 +294,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  1 file changed, 12 insertions(+), 12 deletions(-)
 
 diff --git a/paper/EWGT_2026_rev1/tbc_preprint_main.tex b/paper/EWGT_2026_rev1/tbc_preprint_main.tex
-index 4ce1c6b..bc9ef7c 100644
+index cc52155..964a2af 100644
 --- a/paper/EWGT_2026_rev1/tbc_preprint_main.tex
 +++ b/paper/EWGT_2026_rev1/tbc_preprint_main.tex
 @@ -204,7 +204,7 @@
@@ -375,16 +360,16 @@ index 4ce1c6b..bc9ef7c 100644
  
  \subsection{Tour geometry and the validity domain of the surrogate}
  \label{sec:tour_rule}
-@@ -521,7 +521,7 @@ One regime remains outside this evidence: at partial adoption the express residu
+@@ -524,7 +524,7 @@ Partial adoption was validated separately, at $(P, \theta) = (0.25, 0.5)$ on the
  \subsection{Limitations}
  \label{sec:limitations}
  
--Six limitations and one methodological caveat bound these results. (i) The operator-lens outcome is shaped by depot structure, and one carrier dominates it: eight of DHL's sixteen depots serve a single cell, and DHL operates the only multi-depot network in the case study. The rotation mechanism is therefore evidenced within a single carrier's network, and neither its magnitude nor its generality can be established from these data. (ii) Pooling is strictly within a depot, since every tour starts and ends at the depot of its cells, so the model cannot exploit cooperation between neighbouring depots or between providers; lifting that restriction is the most promising direction for future work and would raise the achievable savings. (iii) Stage~2 is a local search, and we report its gap to the flat-profile bound rather than claiming optimality. (iv) All optimization is surrogate-based. The full-adoption plans are now solver-validated and their savings are reported both as predicted and as realized, but the partial-adoption regime --- where pooled tours are most frequent --- is not yet, so its figures remain predictions (Section~\ref{sec:results_validation}). (v) The bundle head prices $53.9\%$ of the pooled tours that occur and $27.2\%$ of the pooled cost; elsewhere a pooled tour is charged as the sum of its members' single-cell prices, which is conservative but coarse, and the certification is specific to this region's cell geometry. (vi) Fleet accounting changed with the tour rule: the baseline Monday--Saturday coefficient of variation is $0.139$ here against $0.135$ in the submitted version, so fleet-smoothness figures are comparable within a grid version but not across versions. All levels, in both lenses, additionally inherit the labour double count of the label cost model, which leaves savings unaffected; Supplementary Section~S2 states its size. The methodological caveat concerns feature construction: for six of the seven providers the per-stop demand array falls back to one parcel per demand point, so two of the $25$ features are populated differently at run time than during training. The deployed model was validated end-to-end in exactly this state ($3.51\%$ MAPE at $+3.05\%$ bias over $7{,}609$ solver-routed instances, Section~\ref{sec:results_validation}), so the reported numbers stand, but the skew costs accuracy that a re-trained model would recover.
-+Six limitations and one methodological caveat bound these results. (i) The operator-lens outcome is shaped by depot structure, and one carrier dominates it: eight of DHL's sixteen depots serve a single cell, and DHL operates the only multi-depot network in the case study. The rotation mechanism is therefore evidenced within a single carrier's network, and neither its magnitude nor its generality can be established from these data. (ii) Pooling is strictly within a depot, since every tour starts and ends at the depot of its cells, so the model cannot exploit cooperation between neighbouring depots or between providers; lifting that restriction is the most promising direction for future work and would raise the achievable savings. (iii) Stage~2 is a local search, and we report its gap to the flat-profile bound rather than claiming optimality. (iv) All optimization is surrogate-based. The full-adoption plans are now solver-validated and their savings are reported both as predicted and as realized, but the partial-adoption regime --- where pooled tours are most frequent --- is not yet, so its figures remain predictions (Section~\ref{sec:results_validation}). (v) The bundle head prices $53.9\%$ of the pooled tours that occur and $27.2\%$ of the pooled cost; elsewhere a pooled tour is charged as the sum of its members' single-cell prices, which is conservative but coarse, and the certification is specific to this region's cell geometry. (vi) Fleet accounting changed with the tour rule: the baseline Monday--Saturday coefficient of variation is $0.139$ here against $0.135$ in the submitted version, so fleet-smoothness figures are not comparable across grid versions. All levels, in both lenses, also inherit the label cost model's labour double count, which leaves savings unaffected (Supplementary Section~S2). The methodological caveat concerns feature construction: for six of the seven providers the per-stop demand array falls back to one parcel per demand point, so two of the $25$ features are populated differently at run time than during training. The deployed model was validated end-to-end in exactly this state ($3.51\%$ MAPE at $+3.05\%$ bias over $7{,}609$ solver-routed instances, Section~\ref{sec:results_validation}), so the reported numbers stand, but the skew costs accuracy that a re-trained model would recover.
+-Six limitations and one methodological caveat bound these results. (i) The operator-lens outcome is shaped by depot structure, and one carrier dominates it: eight of DHL's sixteen depots serve a single cell, and DHL operates the only multi-depot network in the case study. The rotation mechanism is therefore evidenced within a single carrier's network, and neither its magnitude nor its generality can be established from these data. (ii) Pooling is strictly within a depot, since every tour starts and ends at the depot of its cells, so the model cannot exploit cooperation between neighbouring depots or between providers; lifting that restriction is the most promising direction for future work and would raise the achievable savings. (iii) Stage~2 is a local search, and we report its gap to the flat-profile bound rather than claiming optimality. (iv) All optimization is surrogate-based. The full-adoption plans are solver-validated and their savings are reported both as predicted and as realized; the partial-adoption regime is validated only at one point and only on a subset of its instances, so its savings remain predictions, and the express tours that regime creates are the least accurately priced part of the model (Section~\ref{sec:results_validation}). (v) The bundle head prices $53.9\%$ of the pooled tours that occur and $27.2\%$ of the pooled cost; elsewhere a pooled tour is charged as the sum of its members' single-cell prices, which is conservative but coarse, and the certification is specific to this region's cell geometry. (vi) Fleet accounting changed with the tour rule: the baseline Monday--Saturday coefficient of variation is $0.139$ here against $0.135$ in the submitted version, so fleet-smoothness figures are comparable within a grid version but not across versions. All levels, in both lenses, additionally inherit the labour double count of the label cost model, which leaves savings unaffected; Supplementary Section~S2 states its size. The methodological caveat concerns feature construction: for six of the seven providers the per-stop demand array falls back to one parcel per demand point, so two of the $25$ features are populated differently at run time than during training. The deployed model was validated end-to-end in exactly this state ($3.51\%$ MAPE at $+3.05\%$ bias over $7{,}609$ solver-routed instances, Section~\ref{sec:results_validation}), so the reported numbers stand, but the skew costs accuracy that a re-trained model would recover.
++Six limitations and one methodological caveat bound these results. (i) The operator-lens outcome is shaped by depot structure, and one carrier dominates it: eight of DHL's sixteen depots serve a single cell, and DHL operates the only multi-depot network in the case study. The rotation mechanism is therefore evidenced within a single carrier's network, and neither its magnitude nor its generality can be established from these data. (ii) Pooling is strictly within a depot, since every tour starts and ends at the depot of its cells, so the model cannot exploit cooperation between neighbouring depots or between providers; lifting that restriction is the most promising direction for future work and would raise the achievable savings. (iii) Stage~2 is a local search, and we report its gap to the flat-profile bound rather than claiming optimality. (iv) All optimization is surrogate-based. The full-adoption plans are solver-validated and their savings are reported both as predicted and as realized; the partial-adoption regime is validated only at one point and only on a subset of its instances, so its savings remain predictions, and the express tours that regime creates are the least accurately priced part of the model (Section~\ref{sec:results_validation}). (v) The bundle head prices $53.9\%$ of the pooled tours that occur and $27.2\%$ of the pooled cost; elsewhere a pooled tour is charged as the sum of its members' single-cell prices, which is conservative but coarse, and the certification is specific to this region's cell geometry. (vi) Fleet accounting changed with the tour rule: the baseline Monday--Saturday coefficient of variation is $0.139$ here against $0.135$ in the submitted version, so fleet-smoothness figures are not comparable across grid versions. All levels, in both lenses, also inherit the label cost model's labour double count, which leaves savings unaffected (Supplementary Section~S2). The methodological caveat concerns feature construction: for six of the seven providers the per-stop demand array falls back to one parcel per demand point, so two of the $25$ features are populated differently at run time than during training. The deployed model was validated end-to-end in exactly this state ($3.51\%$ MAPE at $+3.05\%$ bias over $7{,}609$ solver-routed instances, Section~\ref{sec:results_validation}), so the reported numbers stand, but the skew costs accuracy that a re-trained model would recover.
  
  
  
-@@ -532,11 +532,11 @@ Six limitations and one methodological caveat bound these results. (i) The opera
+@@ -535,11 +535,11 @@ Six limitations and one methodological caveat bound these results. (i) The opera
  \section{Conclusion}
  \label{concl}
  
