@@ -114,13 +114,89 @@ def test_operator_cost_actual_empty(V):
     assert got["opcost_eur"] == 0.0 and got["n"] == 0
 
 
+def _predicted_frame() -> pd.DataFrame:
+    """``_actual_frame`` with the predicted-side column names."""
+    return _actual_frame().rename(
+        columns={"vroom_cost_eur": "predicted_cost_eur",
+                 "vroom_n_routes": "predicted_n_routes"})
+
+
 def test_operator_cost_predicted_uses_the_same_algebra(V):
-    df = _actual_frame().rename(columns={"vroom_cost_eur": "predicted_cost_eur",
-                                         "vroom_n_routes": "predicted_n_routes"})
+    df = _predicted_frame()
     p = V.operator_cost_predicted(df)
     a = V.operator_cost_actual(_actual_frame())
     assert p["opcost_eur"] == pytest.approx(a["opcost_eur"])
     assert p["sum_hub_peak"] == pytest.approx(a["sum_hub_peak"])
+    # The happy path must stay silent: a fully priced frame never raises and
+    # reports no missing-cost counter, because there is nothing to count.
+    assert "n_missing_cost" not in p
+    assert p["n"] == 7
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The predicted side has NO NaN policy (final-review finding M2)
+#
+# Zero-filling a missing prediction understates predicted OpCost, which shrinks
+# the pred-vs-actual gap this script exists to measure, and section 3.4 of the
+# paper reads its columns straight off this function. The G1 startup identity
+# gate would catch a SYSTEMATIC NaN; a per-row one it would not.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_missing_predicted_cost_raises_instead_of_being_zero_filled(V):
+    df = _predicted_frame()
+    df.loc[len(df)] = dict(hub_name="B", day=0, predicted_cost_eur=np.nan,
+                           predicted_n_routes=4)
+    with pytest.raises(ValueError,
+                       match=r"1 of 8 rows have a non-numeric/missing "
+                             r"'predicted_cost_eur'"):
+        V.operator_cost_predicted(df)
+
+
+def test_missing_predicted_route_count_also_raises(V):
+    df = _predicted_frame()
+    df.loc[len(df)] = dict(hub_name="A", day=2, predicted_cost_eur=500.0,
+                           predicted_n_routes=np.nan)
+    with pytest.raises(ValueError,
+                       match=r"non-numeric/missing 'predicted_n_routes'"):
+        V.operator_cost_predicted(df)
+
+
+def test_a_non_numeric_prediction_raises_rather_than_coercing_to_zero(V):
+    """``errors="coerce"`` turns junk into NaN; the guard must catch that too."""
+    df = _predicted_frame()
+    df.loc[len(df)] = dict(hub_name="A", day=0, predicted_cost_eur="n/a",
+                           predicted_n_routes=2)
+    with pytest.raises(ValueError, match=r"'predicted_cost_eur'"):
+        V.operator_cost_predicted(df)
+
+
+def test_the_raise_names_the_offending_instance_ids(V):
+    """A defect report that does not say WHICH row costs an hour of grepping."""
+    df = _predicted_frame()
+    df["instance_id"] = [f"i{k}" for k in range(len(df))]
+    df.loc[len(df)] = dict(hub_name="B", day=1, predicted_cost_eur=np.nan,
+                           predicted_n_routes=1, instance_id="i-broken")
+    with pytest.raises(ValueError, match=r"i-broken"):
+        V.operator_cost_predicted(df)
+
+
+def test_actual_side_tolerates_the_nan_that_the_predicted_side_refuses(V):
+    """The asymmetry is the point of M2, so it is pinned in one place.
+
+    A failed or partial solve is a legitimate, recorded status on the ACTUAL
+    side, counted as ``n_missing_cost``; on the PREDICTED side there is no such
+    thing, because the grid prices every instance it emits.
+    """
+    actual = _actual_frame()
+    actual.loc[len(actual)] = dict(hub_name="B", day=0, vroom_cost_eur=np.nan,
+                                   vroom_n_routes=4)
+    assert V.operator_cost_actual(actual)["n_missing_cost"] == 1
+
+    predicted = actual.rename(
+        columns={"vroom_cost_eur": "predicted_cost_eur",
+                 "vroom_n_routes": "predicted_n_routes"})
+    with pytest.raises(ValueError, match=r"A missing PREDICTION is a defect"):
+        V.operator_cost_predicted(predicted)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
