@@ -598,7 +598,10 @@ def _grid(results: Path, name: str, payload: bytes = b"%PDF-1.4 v5\n",
                  "supp_map_freq_theta_v2", "supp_map_freq_theta_P0_v2",
                  "supp_map_freq_theta_P0_routing_v2",
                  "supp_map_saving_P_v2", "supp_map_wait_theta_v2",
-                 "supp_penalty_raumtyp_v2") + extra_stems:
+                 "supp_penalty_raumtyp_v2",
+                 # task 18 additions (77_/78_)
+                 "supp_fig_mechanism_v2", "supp_fig_fleet_week_v2_P0",
+                 "supp_fig_fleet_week_v2_P025") + extra_stems:
         f = figs / f"{stem}.pdf"
         f.write_bytes(payload + stem.encode() + name.encode())
         produced.append(f)
@@ -800,6 +803,36 @@ def test_71_maps_and_syncs_the_13c_13d_supplementary_stems(sync):
     rev, figs = _grid(results, "gridA")     # default fixture covers them
     assert mod.main(["--include-companions"]) == 0
     for stem, (pre, els) in NEW_13C_13D_STEMS.items():
+        src = figs / f"{stem}.pdf"
+        assert H.md5_of(paper / "figures" / pre) == H.md5_of(src)
+        assert H.md5_of(paper / "elsevier_source" / els) == H.md5_of(src)
+
+
+#: Task 18 -- 77_mechanism_v2.py and 78_fleet_week_v2.py add three more
+#: stems to the manifest. Same contract as the 13C/13D block above: an
+#: unmapped stem is a hard refusal, so registering them in 70_ without
+#: mapping them here would break every sync.
+NEW_TASK18_STEMS = {
+    "supp_fig_mechanism_v2": ("supp_fig_mechanism.pdf", "fig_SM_mechanism.pdf"),
+    "supp_fig_fleet_week_v2_P0": ("supp_fig_fleet_week_P0.pdf",
+                                  "fig_SM_fleet_week_P0.pdf"),
+    "supp_fig_fleet_week_v2_P025": ("supp_fig_fleet_week_P025.pdf",
+                                    "fig_SM_fleet_week_P025.pdf"),
+}
+
+
+def test_71_maps_and_syncs_the_task18_supplementary_stems(sync):
+    """77_/78_ are registered in 70_'s EXTRA_SUPP_STEMS, so their stems reach
+    the manifest; unmapped_manifest_stems() then refuses every sync until
+    COMPANION_MAP knows them. Each must resolve to the preprint name with the
+    `_v2` render suffix dropped and to a `fig_SM_*` Elsevier name, and
+    --include-companions must actually copy and verify them."""
+    mod, results, paper, _ = sync
+    for stem, dest in NEW_TASK18_STEMS.items():
+        assert mod.COMPANION_MAP[stem] == dest
+    rev, figs = _grid(results, "gridA")     # default fixture covers them
+    assert mod.main(["--include-companions"]) == 0
+    for stem, (pre, els) in NEW_TASK18_STEMS.items():
         src = figs / f"{stem}.pdf"
         assert H.md5_of(paper / "figures" / pre) == H.md5_of(src)
         assert H.md5_of(paper / "elsevier_source" / els) == H.md5_of(src)

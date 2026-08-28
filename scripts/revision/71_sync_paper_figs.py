@@ -121,6 +121,13 @@ COMPANION_MAP = {
                                "fig_SM_map_wait_theta.pdf"),
     "supp_penalty_raumtyp_v2": ("supp_penalty_raumtyp.pdf",
                                 "fig_SM_penalty_raumtyp.pdf"),
+    # task 18 -- 77_mechanism_v2.py / 78_fleet_week_v2.py
+    "supp_fig_mechanism_v2": ("supp_fig_mechanism.pdf",
+                              "fig_SM_mechanism.pdf"),
+    "supp_fig_fleet_week_v2_P0": ("supp_fig_fleet_week_P0.pdf",
+                                  "fig_SM_fleet_week_P0.pdf"),
+    "supp_fig_fleet_week_v2_P025": ("supp_fig_fleet_week_P025.pdf",
+                                    "fig_SM_fleet_week_P025.pdf"),
 }
 
 
