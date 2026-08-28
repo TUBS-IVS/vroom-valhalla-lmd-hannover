@@ -28,7 +28,14 @@ Gates (brief: task-7-brief.md):
 
   G1a  theta=1 rows, cells whose EVERY instance is >= MIN_TOUR_PARCELS
        (230): ``schedule_idx_stage1`` must equal the per-cell argmin of
-       ``dd_cost_mx + penalty*wait``. HARD-FAIL on any mismatch.
+       ``dd_cost_mx + penalty*wait``. HARD-FAIL on any mismatch, EXCEPT a
+       narrow, structurally-checked TOLERANCE for near-tie path dependence
+       introduced by ``_pair_polish_round`` (part (3) below; see
+       ``.superpowers/sdd/2026-08-25-realistic-tours-implementation/
+       g1a-v6-investigation.md``) -- a tolerated mismatch is reported by
+       name, counted separately, and never silently absorbed; anything that
+       does not match the tolerance's exact structural+numeric signature
+       still hard-fails.
 
        The canonical run (``_stage3_common.RUN_DIR /
        _tab_chosen_with_system_smoothing.csv``) has no stage-1 column, so
@@ -79,12 +86,15 @@ Gates (brief: task-7-brief.md):
        2026-08-26 after the first full 616-triple grid run surfaced it;
        see task-7-report.md.)
 
-       (2) THE CD FIXED POINT. For a cell whose every instance is >=230
-       parcels, ``small_delivery_mask`` never fires (by the >=230
-       criterion), so it is never pool-coupled to a hub either -- combined
-       with (1), such a cell has ZERO express/pool coupling to any other
-       cell's schedule choice at theta=1. Reading
-       ``coordinate_descent.py``'s inner loop (``optimize_cd_ml``) shows
+       (2) THE CD FIXED POINT -- SINGLE-CELL ROUND ONLY. For a cell whose
+       every instance is >=230 parcels, ``small_delivery_mask`` never fires
+       (by the >=230 criterion), so it is never pool-coupled to a hub either
+       -- combined with (1), such a cell has ZERO express/pool coupling to
+       any other cell's schedule choice at theta=1, AS FAR AS THE SINGLE-
+       CELL ROUND IS CONCERNED (see part (3) for why this does not extend to
+       the pair-polish round that runs after it). Reading
+       ``coordinate_descent.py``'s inner loop (``optimize_cd_ml``'s
+       ``for pi in plz_order: for new_si in range(n_sched): ...``) shows
        what this means for the STORED ``schedule_idx_stage1`` (which is
        CD's output, not the raw warm start, whenever theta > 0): for such a
        cell, every candidate move's ``delta`` reduces exactly to
@@ -107,17 +117,73 @@ Gates (brief: task-7-brief.md):
        non-theta=1) cells' starting points. The ``theta == 0.0 -> force
        daily`` override in ``run_triple`` is separately unreachable here by
        construction: G1a only ever examines theta=1 rows, so that branch's
-       condition is never true in this code path. Net effect: CD's stored
-       result on a G1a-eligible theta=1 cell IS ``np.argmin(dd_cost_mx[pi,
-       :] + penalty_mx[pi, :])``, not merely close to it -- which is why a
-       mismatch is a hard fail rather than a tolerance check. The one
-       remaining theoretical edge case is an EXACT bit-for-bit tie between
-       the warm start's ``old_si`` and a DIFFERENT index sharing the same
-       minimal value -- CD's strict ``<`` would then leave ``old_si`` in
-       place even if it is not ``np.argmin``'s first-occurrence choice; this
-       requires two schedules' ML-predicted costs to be bit-identical, not
-       merely close, which a continuous surrogate does not produce in
-       practice.
+       condition is never true in this code path. Net effect: AT THE END OF
+       THE SINGLE-CELL ROUND, a G1a-eligible theta=1 cell's chosen schedule
+       IS ``np.argmin(dd_cost_mx[pi, :] + penalty_mx[pi, :])``, not merely
+       close to it. The one remaining theoretical edge case internal to
+       this round is an EXACT bit-for-bit tie between the warm start's
+       ``old_si`` and a DIFFERENT index sharing the same minimal value --
+       CD's strict ``<`` would then leave ``old_si`` in place even if it is
+       not ``np.argmin``'s first-occurrence choice; this requires two
+       schedules' ML-predicted costs to be bit-identical, not merely close,
+       which a continuous surrogate does not produce in practice. This
+       proof is complete and still holds -- but, per part (3), it is a
+       proof about the single-cell round's OWN fixed point, not about what
+       production stores at the end of the whole optimiser.
+
+       (3) THE PAIR-POLISH GAP AND THE TOLERANCE RULE (added after the v6
+       investigation,
+       ``.superpowers/sdd/2026-08-25-realistic-tours-implementation/
+       g1a-v6-investigation.md``, which found and root-caused 5 of 1656
+       G1a-eligible (cell, P) mismatches on the head-enabled v6 grid). Part
+       (2) proves the SINGLE-CELL round's fixed point equals the argmin --
+       it says nothing about ``_pair_polish_round``
+       (``coordinate_descent.py``), which every theta>0 production call runs
+       AFTER the single-cell rounds converge (``pair_polish=True`` in
+       ``61_grid_run_v2.run_triple``) and which is never re-checked by a
+       further single-cell pass. ``_pair_polish_round`` samples same-hub
+       pairs ``(pi, pj)`` and searches ``_day_toggle_neighbors`` of BOTH --
+       a restricted neighbourhood containing only schedules whose symmetric
+       difference with the current one has cardinality 1, and explicitly
+       EXCLUDING the current schedule itself, so both cells of the pair are
+       forced onto a different (one-day-toggle) schedule for the move to be
+       evaluated at all; there is no "move only one of the pair" candidate.
+       The move is accepted iff the JOINT delta is negative, even when a
+       G1a-eligible cell's own share of that delta is a small INCREASE, as
+       long as its same-hub partner's share (typically routed through
+       ``_hub_smallday_pool_ml`` pool pricing -- exactly the price a
+       certified-support head reprices) is negative enough to cover it. The
+       cell's own ``dd_cost_mx`` row is untouched by any of this (proven
+       bit-identical head vs no-head in the investigation, all 5 cases) --
+       what moves is only WHICH of two near-tied schedules the joint local
+       search settles the eligible cell on, and only ever by exactly one
+       day-toggle step, because ``_day_toggle_neighbors`` is the only
+       neighbourhood restriction anywhere in this optimiser. The
+       investigation's 5 confirmed instances moved the cell's OWN objective
+       by 0.39-16.41 EUR (0.01-0.48 % of that cell's own weekly objective;
+       see the investigation's section 1). Because the mechanism has this
+       exact, narrow, checkable signature, G1a TOLERATES (reports, does not
+       hard-fail) a mismatch iff BOTH:
+
+           day_diff = len(schedules[new_s1].symmetric_difference(
+                            schedules[canonical_s1]))
+           tolerated = (day_diff == 1) and (
+               abs(obj[new_s1] - obj[canonical_s1])
+               <= max(20.0, 0.005 * obj[canonical_s1]))
+
+       where ``obj`` is the SAME per-cell objective CD minimises at theta=1
+       (``dd_cost_mx + penalty``, part (1)/(2) above) -- see
+       :func:`_g1a_tolerance`. The two bounds (20 EUR flat, 0.5% relative)
+       carry roughly 1.3-2x headroom over the investigation's observed
+       maxima, tight enough that a materially larger deviation (e.g. an
+       actual head leak into the cell's own price, which would not be
+       bounded by a single day-toggle step) still fails loud. Any mismatch
+       failing either check -- including every mismatch spanning more than
+       one day-toggle step, regardless of how cheap it is -- still hard-
+       fails exactly as before this rule existed; every tolerated mismatch
+       is still listed by name in the report (a separate table from hard
+       mismatches), never silently absorbed, so a future change producing
+       *more* or *larger* ones remains visible.
 
   G1b  same cells: diff ``schedule_idx_system_smoothed`` (v2, post
        balancing+smoothing) against the canonical run's OWN
@@ -565,6 +631,62 @@ def _penalty_mx(m: dict, od: dict, sched_waits: np.ndarray,
     return P * local_willing[:, None] * weekly_pkts[:, None] * sched_waits[None, :]
 
 
+# G1a tolerance for near-tie pair-polish path dependence -- module docstring
+# part (3), root-caused in
+# .superpowers/sdd/2026-08-25-realistic-tours-implementation/
+# g1a-v6-investigation.md section 6. Both bounds carry ~1.3-2x headroom over
+# the investigation's observed maxima (16.41 EUR, 0.475 %).
+G1A_TOLERANCE_FLAT_EUR = 20.0
+G1A_TOLERANCE_REL = 0.005  # 0.5% of the cell's own (canonical) objective
+
+
+def _g1a_tolerance(new_s1: int, canon_s1: int, obj_row: np.ndarray,
+                   schedules: list) -> dict:
+    """Classify one G1a stage-1 mismatch: tolerated (near-tie pair-polish
+    path dependence) or a hard fail.
+
+    ``_pair_polish_round`` (``coordinate_descent.py``, module docstring part
+    (3)) is the only place in the optimiser that ever restricts a candidate
+    move to a single-day toggle, and it is the only known mechanism that can
+    move a G1a-eligible cell off its single-cell-round argmin. A mismatch
+    that provably has that mechanism's exact shape is tolerated; anything
+    else -- a bigger schedule change, or a one-day change that is not a
+    genuine near-tie -- still hard-fails, exactly as before this rule
+    existed.
+
+    Parameters
+    ----------
+    new_s1, canon_s1 : int
+        The grid's stored ``schedule_idx_stage1`` and the head-free
+        recomputed argmin, as schedule indices into *schedules*.
+    obj_row : np.ndarray
+        The cell's full per-schedule objective row, ``dd_cost_mx[pi, :] +
+        penalty_mx[pi, :]`` -- the SAME quantity the CD round minimises at
+        theta=1 (module docstring parts (1)/(2)). ``obj_row[canon_s1]`` is
+        its minimum by construction (``canon_s1 = obj_row.argmin()``).
+    schedules : list[frozenset[int]]
+        The 39-pattern schedule table, index-aligned with *obj_row*.
+
+    Returns
+    -------
+    dict with ``day_diff``, ``obj_new``, ``obj_canon``, ``delta_eur``
+    (new - canon, >= 0 since canon is the row's argmin), ``delta_pct`` (of
+    ``obj_canon``), ``threshold_eur`` and the boolean ``tolerated``.
+    """
+    day_diff = len(schedules[new_s1].symmetric_difference(schedules[canon_s1]))
+    obj_new = float(obj_row[new_s1])
+    obj_canon = float(obj_row[canon_s1])
+    delta_eur = obj_new - obj_canon
+    threshold_eur = max(G1A_TOLERANCE_FLAT_EUR, G1A_TOLERANCE_REL * obj_canon)
+    delta_pct = (delta_eur / obj_canon * 100.0) if obj_canon else float("nan")
+    tolerated = (day_diff == 1) and (abs(delta_eur) <= threshold_eur)
+    return dict(
+        day_diff=day_diff, obj_new=obj_new, obj_canon=obj_canon,
+        delta_eur=delta_eur, delta_pct=delta_pct,
+        threshold_eur=threshold_eur, tolerated=tolerated,
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # G1a / G1b
 # ─────────────────────────────────────────────────────────────────────────────
@@ -575,6 +697,7 @@ def run_g1a_g1b(chosen_df: pd.DataFrame, canonical_df: pd.DataFrame,
     out = dict(
         available=False, providers_available=[], P_values=[],
         g1a_status="SKIPPED", g1a_cells_checked=0, g1a_mismatches=[],
+        g1a_tolerated=[],
         g1b_cells_checked=0, g1b_diffs=[],
     )
     theta1 = chosen_df[np.isclose(chosen_df["share_willing"], 1.0)]
@@ -591,6 +714,7 @@ def run_g1a_g1b(chosen_df: pd.DataFrame, canonical_df: pd.DataFrame,
     has_weekdays_col = "weekdays_system_smoothed" in canonical_df.columns
 
     mismatches: list[dict] = []
+    tolerated: list[dict] = []
     diffs: list[dict] = []
     n_g1a_checked = 0
     n_g1b_checked = 0
@@ -633,9 +757,17 @@ def run_g1a_g1b(chosen_df: pd.DataFrame, canonical_df: pd.DataFrame,
                 new_s1 = int(r.schedule_idx_stage1)
                 exp_s1 = int(canon_stage1[zi])
                 if new_s1 != exp_s1:
-                    mismatches.append(dict(
+                    tol = _g1a_tolerance(new_s1, exp_s1, obj[zi], schedules)
+                    row = dict(
                         provider=prov, plz=pc, P=P,
-                        new_stage1=new_s1, canonical_stage1=exp_s1))
+                        new_stage1=new_s1, canonical_stage1=exp_s1,
+                        new_weekdays=",".join(
+                            C.WEEKDAYS[d] for d in sorted(schedules[new_s1])),
+                        canonical_weekdays=",".join(
+                            C.WEEKDAYS[d] for d in sorted(schedules[exp_s1])),
+                        **tol,
+                    )
+                    (tolerated if tol["tolerated"] else mismatches).append(row)
 
                 canon_info = canon_final.get(pc)
                 if canon_info is not None:
@@ -654,6 +786,7 @@ def run_g1a_g1b(chosen_df: pd.DataFrame, canonical_df: pd.DataFrame,
     out["g1a_status"] = "FAIL" if mismatches else ("PASS" if n_g1a_checked else "SKIPPED")
     out["g1a_cells_checked"] = n_g1a_checked
     out["g1a_mismatches"] = mismatches
+    out["g1a_tolerated"] = tolerated
     out["g1b_cells_checked"] = n_g1b_checked
     out["g1b_diffs"] = diffs
     return out
@@ -925,7 +1058,8 @@ def render_report(*, n_done_triples: int, has_stage1_col: bool,
     A("|---|---|---|")
     A(f"| G1a (hard) | **{g1['g1a_status']}** | "
       f"{g1['g1a_cells_checked']} cell-P pair(s) checked, "
-      f"{len(g1['g1a_mismatches'])} mismatch(es) |")
+      f"{len(g1['g1a_mismatches'])} hard mismatch(es), "
+      f"{len(g1['g1a_tolerated'])} tolerated (near-tie) |")
     g1b_note = ("PASS (0 diffs)" if not g1["g1b_diffs"]
                 else f"{len(g1['g1b_diffs'])} diff(s)")
     A(f"| G1b (report-only) | {g1b_note} | "
@@ -960,10 +1094,35 @@ def render_report(*, n_done_triples: int, has_stage1_col: bool,
       "identity proved in the module docstring -- `cost_3d_raw.sum(axis=2) "
       "== dd_cost_mx` (checked at runtime via `assert np.allclose(...)` on "
       "every theta=1 matrix build, part (1)) plus zero express/pool "
-      "coupling forcing CD's fixed point to equal the plain argmin (part "
-      "(2)) -- not on an independent cross-check against a differently-"
-      "computed value. G1a is therefore a self-consistency check of the "
-      "current pipeline against a mathematically-forced value.")
+      "coupling forcing the SINGLE-CELL CD round's fixed point to equal the "
+      "plain argmin (part (2)) -- not on an independent cross-check against "
+      "a differently-computed value. G1a is therefore a self-consistency "
+      "check of the current pipeline against a mathematically-forced value.")
+    A("")
+    A("**Decoupling caveat, added after the v6 investigation "
+      "(`.superpowers/sdd/2026-08-25-realistic-tours-implementation/"
+      "g1a-v6-investigation.md`):** part (2)'s decoupling proof covers only "
+      "the SINGLE-CELL CD round. Production also runs `_pair_polish_round` "
+      "after it (theta>0, `pair_polish=True`), which forces same-hub pairs "
+      "onto a JOINT one-day-toggle move and accepts it on the combined "
+      "delta -- so a G1a-eligible cell, individually at its own argmin, can "
+      "still be dragged one day-toggle step off it when its partner's "
+      "(typically pool-priced) share of the joint delta is negative enough "
+      "to cover the cell's own small increase. The eligible cell's own "
+      "price (`dd_cost_mx`) is never touched by this -- only which of two "
+      "near-tied schedules the joint search settles on. G1a therefore "
+      "TOLERATES (reports, does not hard-fail) a mismatch iff it is "
+      "provably this exact shape: a single-day-toggle neighbour of the "
+      "argmin (`len(schedules[new_s1] ^ schedules[canonical]) == 1`) whose "
+      "own per-cell objective (`dd_cost_mx + penalty`, the same quantity CD "
+      "minimises) differs from the canonical value by at most "
+      f"`max({G1A_TOLERANCE_FLAT_EUR:g} EUR, {G1A_TOLERANCE_REL:.1%} of the "
+      "canonical objective)` -- see `_g1a_tolerance` and module docstring "
+      "part (3). Anything else, including every mismatch spanning more "
+      "than one day-toggle step regardless of price, still hard-fails "
+      "exactly as before this rule existed; every tolerated mismatch is "
+      "listed by name below, in a table separate from hard mismatches, "
+      "never silently absorbed.")
     A("")
     if not g1["available"]:
         A("**G1a: 0 triples available yet.** No `share_willing == 1.0` rows "
@@ -984,7 +1143,10 @@ def render_report(*, n_done_triples: int, has_stage1_col: bool,
           "can only grow it further. See the G1a scope inventory above for "
           "how many cells this selects network-wide.")
         A(f"Cell-P pairs checked: **{g1['g1a_cells_checked']}**. "
-          f"Mismatches: **{len(g1['g1a_mismatches'])}**.")
+          f"Hard mismatches: **{len(g1['g1a_mismatches'])}**. "
+          f"Tolerated (near-tie): **{len(g1['g1a_tolerated'])}**.")
+        A("")
+        A("### Hard mismatches (HARD-FAIL)")
         A("")
         if g1["g1a_mismatches"]:
             A("| Provider | PLZ | P | new schedule_idx_stage1 | canonical (recomputed) |")
@@ -993,8 +1155,28 @@ def render_report(*, n_done_triples: int, has_stage1_col: bool,
                 A(f"| {r['provider']} | {r['plz']} | {r['P']:g} | "
                   f"{r['new_stage1']} | {r['canonical_stage1']} |")
         else:
-            A("No mismatches -- the decoupled-cell invariant holds on every "
-              "checked cell and P value.")
+            A("No hard mismatches -- every checked cell/P either matches the "
+              "canonical argmin exactly or is a tolerated near-tie (below).")
+        A("")
+        A("### Tolerated mismatches (near-tie, pair-polish path dependence)")
+        A("")
+        A("Reported, not hard-failed -- see the decoupling caveat above and "
+          "`.superpowers/sdd/2026-08-25-realistic-tours-implementation/"
+          "g1a-v6-investigation.md`. Every row here is a single-day-toggle "
+          "neighbour of the canonical argmin, within the EUR/percent "
+          "tolerance on the cell's own objective.")
+        A("")
+        if g1["g1a_tolerated"]:
+            A("| Provider | PLZ | P | new (idx, weekdays) | "
+              "canonical (idx, weekdays) | delta EUR | delta % |")
+            A("|---|---|---:|---|---|---:|---:|")
+            for r in g1["g1a_tolerated"]:
+                A(f"| {r['provider']} | {r['plz']} | {r['P']:g} | "
+                  f"{r['new_stage1']} ({r['new_weekdays']}) | "
+                  f"{r['canonical_stage1']} ({r['canonical_weekdays']}) | "
+                  f"{r['delta_eur']:.2f} | {r['delta_pct']:.3f} |")
+        else:
+            A("No tolerated (near-tie) mismatches.")
     A("")
 
     # ── G1b ──────────────────────────────────────────────────────────────
@@ -1318,7 +1500,8 @@ def main() -> None:
                      ml_prep, model, schedules, sched_waits, mtx_cache)
     print(f"    G1a: {g1['g1a_status']} "
           f"({g1['g1a_cells_checked']} checked, "
-          f"{len(g1['g1a_mismatches'])} mismatch(es))", flush=True)
+          f"{len(g1['g1a_mismatches'])} hard mismatch(es), "
+          f"{len(g1['g1a_tolerated'])} tolerated (near-tie))", flush=True)
     print(f"    G1b: {len(g1['g1b_diffs'])} diff(s) "
           f"of {g1['g1b_cells_checked']} checked (report-only)", flush=True)
 
