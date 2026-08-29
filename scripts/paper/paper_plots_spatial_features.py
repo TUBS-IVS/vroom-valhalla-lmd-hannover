@@ -20,9 +20,19 @@ Inputs:
   results/checkpoints/01_demand.pkl, 04_optim_prep.pkl
   data/geodata/cluster_raumtyp.csv
   data/geodata/regionclusters.gpkg  (PLZ polygons)
+
+Status B (Task 19): 74_-legacy's tab_chosen_schedules.csv has no unsuffixed
+schedule_size/dd_cost_eur columns (v5/v6 always carries two plans);
+schedule_size_balanced/dd_cost_balanced (the operator-polished/final plan)
+are aliased back to schedule_size/dd_cost_eur once at load, so every
+downstream function is untouched. tab_per_plz_costs_theta1.csv is theta=1
+only, so this port stays on tab_chosen_schedules.csv (all theta) instead,
+per the inventory's own note that either source works for this script.
 """
 from __future__ import annotations
+import argparse
 import pickle
+import sys
 import warnings
 from pathlib import Path
 
@@ -36,7 +46,10 @@ from matplotlib import rcParams
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from scipy.stats import spearmanr
 
-ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _paper_v6_common as V6  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[2]
 OVERNIGHT = ROOT / "results" / "overnight_2026_05_27"
 
 rcParams.update({
@@ -55,6 +68,7 @@ FREQ_COLOR = {
 RAUMTYP_3_COLOR = {"urban": "#1d3557", "suburban": "#2a9d8f", "rural": "#f4a261"}
 OPERATING_P = 0.5
 OPERATING_SHARE = 1.0
+SRC_NOTE = "tab_chosen_schedules.csv (historical path)"
 
 
 def load_plz_features():
@@ -193,8 +207,10 @@ def fig07a_raumtyp_summary(chosen, rt_df):
     fig.suptitle("Spatial heterogeneity: cost and schedule choice by Raumtyp",
                   fontsize=13, y=1.04)
     fig.tight_layout()
-    fig.savefig(OVERNIGHT / "fig07a_raumtyp_summary.png")
-    fig.savefig(OVERNIGHT / "fig07a_raumtyp_summary.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script="paper_plots_spatial_features.py",
+                             source=SRC_NOTE)
+    V6.savefig_pair(fig, OVERNIGHT / "fig07a_raumtyp_summary.png", OVERNIGHT / "fig07a_raumtyp_summary.pdf")
     plt.close(fig)
     print("  fig07a_raumtyp_summary")
 
@@ -251,8 +267,10 @@ def fig07b_plz_choropleth(chosen, rt_df):
                   f"share={int(OPERATING_SHARE*100)}%",
                   fontsize=12, pad=15)
     fig.tight_layout()
-    fig.savefig(OVERNIGHT / "fig07b_plz_choropleth.png")
-    fig.savefig(OVERNIGHT / "fig07b_plz_choropleth.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script="paper_plots_spatial_features.py",
+                             source=SRC_NOTE)
+    V6.savefig_pair(fig, OVERNIGHT / "fig07b_plz_choropleth.png", OVERNIGHT / "fig07b_plz_choropleth.pdf")
     plt.close(fig)
     print("  fig07b_plz_choropleth")
 
@@ -296,8 +314,10 @@ def fig08_feature_scatter(chosen, plz_feats):
     fig.suptitle(f"How input features map to the chosen delivery frequency "
                   f"(operating point $P={OPERATING_P}$, share={int(OPERATING_SHARE*100)}%)",
                   fontsize=13, y=1.02)
-    fig.savefig(OVERNIGHT / "fig08_feature_scatter.png")
-    fig.savefig(OVERNIGHT / "fig08_feature_scatter.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script="paper_plots_spatial_features.py",
+                             source=SRC_NOTE)
+    V6.savefig_pair(fig, OVERNIGHT / "fig08_feature_scatter.png", OVERNIGHT / "fig08_feature_scatter.pdf")
     plt.close(fig)
     print("  fig08_feature_scatter")
 
@@ -351,15 +371,40 @@ def fig09_feature_importance_per_cell(chosen, plz_feats):
     fig.suptitle("Feature importance per operating point — "
                   "ρ between input feature and chosen delivery frequency",
                   fontsize=13, y=1.02)
-    fig.savefig(OVERNIGHT / "fig09_feature_importance_per_cell.png")
-    fig.savefig(OVERNIGHT / "fig09_feature_importance_per_cell.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script="paper_plots_spatial_features.py",
+                             source=SRC_NOTE)
+    V6.savefig_pair(fig, OVERNIGHT / "fig09_feature_importance_per_cell.png", OVERNIGHT / "fig09_feature_importance_per_cell.pdf")
     plt.close(fig)
     print("  fig09_feature_importance_per_cell")
 
 
 def main():
+    global OVERNIGHT
+    ap = argparse.ArgumentParser(description=__doc__)
+    V6.add_v6_cli_args(ap, needs_legacy=True)
+    args = ap.parse_args()
+    v6_mode = args.legacy_dir is not None or args.rev_dir is not None
+    if args.legacy_dir is not None:
+        in_dir = Path(args.legacy_dir)
+    elif args.rev_dir is not None:
+        in_dir, _ = V6.run_legacy_adapter(
+            args.rev_dir, Path(args.out_dir or OVERNIGHT) / "_legacy")
+    else:
+        in_dir = OVERNIGHT
+    out_dir = Path(args.out_dir) if args.out_dir is not None else OVERNIGHT
+    out_dir.mkdir(parents=True, exist_ok=True)
+    OVERNIGHT = out_dir
+    global SRC_NOTE
+    SRC_NOTE = ("B: 74_-legacy tab_chosen_schedules.csv "
+               "(schedule_size_balanced/dd_cost_balanced)" if v6_mode
+               else "tab_chosen_schedules.csv (historical path)")
+
     print("Loading data ...")
-    chosen = pd.read_csv(OVERNIGHT / "tab_chosen_schedules.csv")
+    chosen = pd.read_csv(in_dir / "tab_chosen_schedules.csv")
+    if "schedule_size" not in chosen.columns:
+        chosen = chosen.rename(columns={"schedule_size_balanced": "schedule_size",
+                                        "dd_cost_balanced": "dd_cost_eur"})
     rt_df = load_raumtyp()
     plz_feats = load_plz_features()
     print(f"  chosen rows: {len(chosen)}, raumtyp rows: {len(rt_df)}, "

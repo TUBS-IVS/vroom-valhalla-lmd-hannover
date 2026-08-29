@@ -5,9 +5,17 @@ Matching the multi-panel layout of fig06_schedule_mix_vs_share_per_P.
 
 Output:
   results/overnight_2026_05_27/fig10_plz_choropleth_per_P.{png,pdf}
+
+Status B (Task 19): 74_-legacy's tab_chosen_schedules.csv has no unsuffixed
+schedule_size column (v5/v6 always carries two plans); this uses
+schedule_size_balanced (the operator-polished/final plan, per the task's
+default plan convention) aliased back to schedule_size so the rest of the
+function is untouched.
 """
 from pathlib import Path
+import argparse
 import pickle
+import sys
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -19,7 +27,10 @@ import pandas as pd
 from matplotlib import rcParams
 from matplotlib.colors import BoundaryNorm, ListedColormap
 
-ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _paper_v6_common as V6  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[2]
 OVERNIGHT = ROOT / "results" / "overnight_2026_05_27"
 
 rcParams.update({
@@ -38,9 +49,37 @@ OPERATING_SHARE = 1.0
 
 
 def main():
+    global OVERNIGHT
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--legacy-dir", default=None,
+                    help="74_'s <out>/run dir (default: historical "
+                         "results/overnight_2026_05_27)")
+    ap.add_argument("--rev-dir", default=None,
+                    help="v6 grid dir; builds the legacy adapter if "
+                         "--legacy-dir is not also given")
+    ap.add_argument("--out-dir", default=None,
+                    help="output directory (default: historical "
+                         "results/overnight_2026_05_27)")
+    args = ap.parse_args()
+    v6_mode = args.legacy_dir is not None or args.rev_dir is not None
+    if args.legacy_dir is not None:
+        OVERNIGHT_IN = Path(args.legacy_dir)
+    elif args.rev_dir is not None:
+        OVERNIGHT_IN, _ = V6.run_legacy_adapter(
+            args.rev_dir, Path(args.out_dir or OVERNIGHT) / "_legacy")
+    else:
+        OVERNIGHT_IN = OVERNIGHT
+    out_dir = Path(args.out_dir) if args.out_dir is not None else OVERNIGHT
+    out_dir.mkdir(parents=True, exist_ok=True)
+    OVERNIGHT = out_dir  # savefig target below reads the module global
+    src_note = ("B: 74_-legacy tab_chosen_schedules.csv (schedule_size_balanced)"
+               if v6_mode else "tab_chosen_schedules.csv (historical path)")
+
     import geopandas as gpd
 
-    chosen = pd.read_csv(OVERNIGHT / "tab_chosen_schedules.csv")
+    chosen = pd.read_csv(OVERNIGHT_IN / "tab_chosen_schedules.csv")
+    if "schedule_size" not in chosen.columns:
+        chosen = chosen.rename(columns={"schedule_size_balanced": "schedule_size"})
     pen_values = sorted(chosen.penalty.unique())
 
     # PLZ polygons + cluster mapping
@@ -98,8 +137,10 @@ def main():
                   "delivery frequency (share_willing = 100%)",
                   fontsize=13, y=1.0)
     fig.tight_layout(rect=[0, 0, 0.94, 1.0])
-    fig.savefig(OVERNIGHT / "fig10_plz_choropleth_per_P.png")
-    fig.savefig(OVERNIGHT / "fig10_plz_choropleth_per_P.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script="paper_plot_maps_per_P.py", source=src_note)
+    V6.savefig_pair(fig, OVERNIGHT / "fig10_plz_choropleth_per_P.png",
+                    OVERNIGHT / "fig10_plz_choropleth_per_P.pdf")
     plt.close(fig)
     print(f"Saved fig10_plz_choropleth_per_P.png ({len(pen_values)} panels)")
 
