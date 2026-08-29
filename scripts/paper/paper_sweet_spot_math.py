@@ -10,8 +10,16 @@ point from the cost-vs-wait curve:
   3. Composite-score grid: maximize α · saving_norm − (1-α) · wait_norm
 
 Output figure: fig_sweet_spot_math.{png,pdf}
+
+Status B (Task 19): all three knee methods run on the SYSTEM Pareto frontier
+(total cost + parcels-weighted wait vs P/share), which 74_-legacy's
+tab_balancing_summary.csv/tab_chosen_schedules.csv carry directly -- no
+NaN-only columns are touched here (weekly_parcels, avg_wait_d_balanced,
+balanced_cost_eur all have real v6 values), so this is a straight repoint.
 """
 from __future__ import annotations
+import argparse
+import sys
 import warnings
 from pathlib import Path
 
@@ -23,7 +31,10 @@ import numpy as np
 import pandas as pd
 from matplotlib import rcParams
 
-ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _paper_v6_common as V6  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "results" / "overnight_2026_05_27_balanced"
 OUT = BASE
 
@@ -36,6 +47,19 @@ rcParams.update({
 
 
 def main():
+    global BASE, OUT
+    ap = argparse.ArgumentParser(description=__doc__)
+    V6.add_v6_cli_args(ap, needs_legacy=True)
+    args = ap.parse_args()
+    if args.legacy_dir is not None:
+        BASE = Path(args.legacy_dir)
+    elif args.rev_dir is not None:
+        BASE, _ = V6.run_legacy_adapter(args.rev_dir,
+                                        Path(args.out_dir or OUT) / "_legacy")
+    if args.out_dir is not None:
+        OUT = Path(args.out_dir)
+    OUT.mkdir(parents=True, exist_ok=True)
+
     s = pd.read_csv(BASE / "tab_balancing_summary.csv")
     sched = pd.read_csv(BASE / "tab_chosen_schedules.csv")
 
@@ -169,8 +193,11 @@ def main():
     ax.grid(alpha=0.3)
 
     fig.tight_layout()
-    fig.savefig(OUT / "fig_sweet_spot_math.png")
-    fig.savefig(OUT / "fig_sweet_spot_math.pdf")
+    V6.add_provenance_footer(
+        fig, plan="operator-polished (balanced)",
+        script="paper_sweet_spot_math.py",
+        source="B: 74_-legacy tab_balancing_summary.csv/tab_chosen_schedules.csv")
+    V6.savefig_pair(fig, OUT / "fig_sweet_spot_math.png", OUT / "fig_sweet_spot_math.pdf")
     plt.close(fig)
     print(f"\nSaved {OUT/'fig_sweet_spot_math.png'}")
 

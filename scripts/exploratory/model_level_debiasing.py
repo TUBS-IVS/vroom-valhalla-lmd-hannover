@@ -19,14 +19,23 @@ Setup:
   - Per Fold: Cost-MAPE + naturlich-gepaarte Saving-Bias (304 Pairs in training_matrix)
 
 Output:
-  results/model_level_debiasing/
+  results/model_level_debiasing/ (default; override with --out-dir)
     tab_variant_comparison.csv       Cost-MAPE + Saving-Bias pro Variante
     tab_per_fold.csv                 Per-Fold-Details
     fig_DB1_variant_comparison.{pdf,png}
     REPORT.md
+
+CLI (Task 19 W1c): --train-csv/--out-dir let a re-run point at the current
+canonical pool and at a non-source output directory without editing the
+script. The historical default input (results/oracle_loop_extended_2026_05_22/
+training_matrix.csv, 11'523 rows) now lives only under gitignored
+results/_archive/; the new default below points at the current canonical
+pool instead (results/supplementary/sweep_v3_mergefix/training_matrix.csv,
+2'733 rows) per the Task 19 inventory's recommendation.
 """
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 import warnings
@@ -50,10 +59,18 @@ try:
 except ImportError:
     LGB_AVAILABLE = False
 
-ROOT = Path(__file__).resolve().parents[1]
-TRAIN_CSV = ROOT / "results" / "oracle_loop_extended_2026_05_22" / "training_matrix.csv"
-OUT = ROOT / "results" / "model_level_debiasing"
-OUT.mkdir(parents=True, exist_ok=True)
+ROOT = Path(__file__).resolve().parents[2]  # scripts/exploratory/<file> -> repo root (was parents[1] -> scripts/, off by one; Task 19 W1c fix)
+DEFAULT_TRAIN_CSV = ROOT / "results" / "supplementary" / "sweep_v3_mergefix" / "training_matrix.csv"
+DEFAULT_OUT = ROOT / "results" / "model_level_debiasing"
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--train-csv", type=Path, default=DEFAULT_TRAIN_CSV,
+                    help=f"training matrix CSV (default: {DEFAULT_TRAIN_CSV})")
+    p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT,
+                    help=f"output directory (default: {DEFAULT_OUT})")
+    return p.parse_args()
 
 BASE_FEATURES = [
     "n_parcels", "n_stops", "area_km2", "hub_dist_km", "parcels_per_stop",
@@ -329,15 +346,25 @@ def write_report(results: list[dict], n_train: int, n_pairs: int, out_path: Path
 
 
 def main():
-    print("Loading training_matrix...")
-    tm = pd.read_csv(TRAIN_CSV, dtype={"plz": str})
+    args = parse_args()
+    train_csv = args.train_csv
+    out = args.out_dir
+    out.mkdir(parents=True, exist_ok=True)
+
+    assert train_csv.exists(), (
+        f"training matrix not found: {train_csv}. Pass --train-csv explicitly "
+        f"(default is {DEFAULT_TRAIN_CSV})."
+    )
+
+    print(f"Loading training_matrix from {train_csv} ...")
+    tm = pd.read_csv(train_csv, dtype={"plz": str})
     tm = tm.dropna(subset=BASE_FEATURES + ["actual_cost_eur"]).reset_index(drop=True)
     print(f"  {len(tm)} rows after dropna")
 
     print("Building natural batching-pairs index...")
     pair_df = build_pair_index(tm)
     print(f"  {len(pair_df)} pairs covering {pair_df['plz'].nunique()} PLZ")
-    pair_df.to_csv(OUT / "tab_pair_index.csv", index=False)
+    pair_df.to_csv(out / "tab_pair_index.csv", index=False)
 
     X = tm[BASE_FEATURES].to_numpy()
     y = tm["actual_cost_eur"].to_numpy()
@@ -375,14 +402,14 @@ def main():
     results.append(r); folds_all.extend(r["folds_detail"])
     print(f"  cost-MAPE {r['cost_mape_mean']:.2f}%, sav-bias {r['sav_bias_pp_mean']:+.2f} pp, sav-MAE {r['sav_mae_pp_mean']:.2f} pp")
 
-    pd.DataFrame(results).drop(columns=["folds_detail"]).to_csv(OUT / "tab_variant_comparison.csv", index=False)
-    pd.DataFrame(folds_all).to_csv(OUT / "tab_per_fold.csv", index=False)
+    pd.DataFrame(results).drop(columns=["folds_detail"]).to_csv(out / "tab_variant_comparison.csv", index=False)
+    pd.DataFrame(folds_all).to_csv(out / "tab_per_fold.csv", index=False)
 
     print("\nRendering figure...")
-    fig_DB1_comparison(results, OUT / "fig_DB1_variant_comparison.png")
+    fig_DB1_comparison(results, out / "fig_DB1_variant_comparison.png")
 
-    write_report(results, n_train=len(tm), n_pairs=len(pair_df), out_path=OUT / "REPORT.md")
-    print(f"\nAll outputs in {OUT}")
+    write_report(results, n_train=len(tm), n_pairs=len(pair_df), out_path=out / "REPORT.md")
+    print(f"\nAll outputs in {out}")
 
 
 if __name__ == "__main__":

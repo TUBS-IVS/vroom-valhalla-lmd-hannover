@@ -5,11 +5,26 @@ Same palette/style as paper_plot_mix_vs_share_per_P.py. Purpose: test whether a
 single-row-per-variant layout (init row + balanced row) keeps the 8 panels
 legible or gets too small.
 
-Saves results/paper_final_2026_05_28/05_optimization/
+Default output: results/paper_final_2026_05_28/05_optimization/
     fig_SM_mix_pct_init_vs_balanced.{png,pdf}
+
+Task 19 W1b (v6 regeneration)
+-----------------------------
+v6 status B: ``schedule_size_init``/``schedule_size_balanced`` are exactly
+``scripts/revision/74_v2_to_legacy_tables.py``'s ``tab_chosen_schedules.csv``
+columns. ``init`` = routing-optimal (stage 1); ``balanced`` =
+operator-polished (stage 2) -- v5/v6 stage 2 is FREQUENCY-FREE at theta>0
+(Kompendium §40.14), so the two rows are two genuinely independent
+distributions, not a before/after of the same one; this script never
+claimed otherwise (it always plots them as two separate stacks) so no
+caption text needs correcting. ``--rev-dir`` (default: the script's
+original hardcoded path, unchanged) points at the legacy-adapted
+``<74_ out>/run`` directory for v6.
 """
-from pathlib import Path
+import argparse
+import sys
 import warnings
+from pathlib import Path
 
 warnings.filterwarnings("ignore")
 import matplotlib
@@ -20,10 +35,13 @@ import pandas as pd
 from matplotlib import rcParams
 from matplotlib.patches import Patch
 
-ROOT = Path(__file__).resolve().parents[1]
-BAL = ROOT / "results" / "overnight_2026_05_29_path2"
-OUT = ROOT / "results" / "paper_final_2026_05_30" / "05_optimization"
-OUT.mkdir(parents=True, exist_ok=True)
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "figures"))
+import _v6_provenance as V  # noqa: E402
+
+SCRIPT = "_fig_mix_pct_init_vs_balanced.py"
+DEFAULT_REV = ROOT / "results" / "overnight_2026_05_29_path2"
+DEFAULT_OUT = ROOT / "results" / "paper_final_2026_05_30" / "05_optimization"
 
 rcParams.update({
     "font.family": "serif", "font.size": 11,
@@ -55,8 +73,31 @@ def _stack(ax, sub, col, P):
     ax.grid(alpha=0.2)
 
 
-def main():
-    sched = pd.read_csv(BAL / "tab_chosen_schedules.csv")
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    V.add_v6_args(ap, default_rev=DEFAULT_REV, default_out=DEFAULT_OUT,
+                 rev_help="directory holding tab_chosen_schedules.csv -- "
+                          "the legacy-adapted 74_ <out>/run/ dir for v6")
+    args = ap.parse_args(argv)
+    rev = Path(args.rev_dir)
+    out_root = Path(args.out_dir)
+    # This script's stem, fig_SM_mix_pct_init_vs_balanced, is ALSO
+    # fig_SM_mix.py's (a different, C-status script in this same
+    # directory) -- historically never a collision (this script's own
+    # default lived under a separate, now-gone path2 folder). An explicit
+    # --out-dir (the v6 regeneration run, one shared paper_ewgt_2026/ root)
+    # would silently overwrite whichever one ran last; route this script's
+    # own experimental 2-row layout into a `variant/` subfolder instead
+    # (Task 19 W1b; see _STATUS.md).
+    OUT = (out_root if args.out_dir == str(DEFAULT_OUT)
+          else out_root / "variant")
+    OUT.mkdir(parents=True, exist_ok=True)
+
+    sched_path = rev / "tab_chosen_schedules.csv"
+    sched = pd.read_csv(sched_path)
+    V.require_columns(sched, ["penalty", "share_willing",
+                              "schedule_size_init", "schedule_size_balanced"],
+                      source=str(sched_path))
     avail = sorted(sched.penalty.unique())
     P_VALUES = [p for p in KEEP_P
                 if any(np.isclose(p, a) for a in avail)]
@@ -100,11 +141,14 @@ def main():
                ncol=5, frameon=True, framealpha=0.9, edgecolor="0.8",
                fontsize=9, title_fontsize=9, bbox_to_anchor=(cx, xlab_y - 0.055),
                handlelength=1.4, columnspacing=1.3, borderpad=0.4)
-    fig.savefig(OUT / "fig_SM_mix_pct_init_vs_balanced.png", bbox_inches="tight")
-    fig.savefig(OUT / "fig_SM_mix_pct_init_vs_balanced.pdf", bbox_inches="tight")
+    V.footer(fig, plan=V.PLAN_BOTH, script=SCRIPT,
+             source="tab_chosen_schedules.csv", y=xlab_y - 0.12)
+    written = V.savefig_pinned(fig, OUT, "fig_SM_mix_pct_init_vs_balanced")
     plt.close(fig)
-    print(f"saved fig_SM_mix_pct_init_vs_balanced ({n} panels/row, P={[f'{p:g}' for p in P_VALUES]})")
+    print(f"saved {written[0]} ({n} panels/row, "
+          f"P={[f'{p:g}' for p in P_VALUES]})")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -9,12 +9,42 @@ Adds:
                        fig_R2 provider x raumtyp heatmap
                        fig_R3 PLZ choropleth-style scatter (hub_dist x area -> saving)
                        fig_R4 saving vs hub_dist + area
+
+DEPRECATED (2026-08 revision). Stale entry point: it recomputes totals
+WITHOUT the pool term and predates the universal tour rule, the two cost
+lenses and the operator polish, so its numbers are not comparable with the
+current results. Use scripts/revision/61_grid_run_v2.py for the grid and
+scripts/revision/70_figs_tables_v2.py for figures and tables.
+
+Status B (Task 19): 74_-legacy's tab_chosen_schedules.csv carries
+dd_cost_init/dd_cost_balanced/schedule_size_balanced/avg_wait_d_balanced
+directly, a straight repoint. v6 has no P=0.4 (only the standard
+{0, .25, .5, .75, 1, 2, 5, 10} grid); the operating point moves to P=0.5,
+matching the other re-pointed scripts in this wave. The daily-baseline
+reference (P=10, share=0) is unaffected -- share=0 is daily at every P by
+construction, so P=10 is still a valid (if arbitrary) choice on v6.
 """
 from __future__ import annotations
+import argparse
 import pickle
 import sys
 import warnings
 from pathlib import Path
+
+# --- DEPRECATED ENTRY POINT (2026-08 revision) -----------------------------
+import warnings as _deprecation_warnings
+
+_deprecation_warnings.warn(
+    "paper_final_region_schedule.py is a STALE entry point: it recomputes totals WITHOUT the pool "
+    "term and predates the universal tour rule, the two cost lenses and the "
+    "operator polish. Its numbers are NOT comparable with the 2026-08 "
+    "revision. Use scripts/revision/61_grid_run_v2.py for the grid and "
+    "scripts/revision/70_figs_tables_v2.py for figures and tables.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+# ---------------------------------------------------------------------------
+
 
 warnings.filterwarnings("ignore")
 try:
@@ -31,8 +61,13 @@ from matplotlib import rcParams
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _paper_v6_common as V6  # noqa: E402
+
 BAL = ROOT / "results" / "overnight_2026_05_29_path2"
 OUT = ROOT / "results" / "paper_final_2026_05_30"
+OPERATING_P = 0.4          # historical; overridden to 0.5 in v6 mode
+SRC_NOTE = "tab_chosen_schedules.csv (historical path2 run)"
 
 rcParams.update({
     "font.family": "serif", "font.size": 11,
@@ -57,16 +92,20 @@ def load_raumtyp():
 
 
 def build_per_cell_saving():
-    """Per (provider, plz) saving at the operating point P=0.4, share=1.0."""
+    """Per (provider, plz) saving at the operating point P=OPERATING_P, share=1.0."""
     c = pd.read_csv(BAL / "tab_chosen_schedules.csv")
     c["plz"] = c.plz.astype(str).str.zfill(5)
-    # Daily baseline per cell = dd_cost_init at P=10, share=0 (all daily)
+    # Daily baseline per cell = dd_cost_init at P=10, share=0 (all daily --
+    # true at every P by construction, so P=10 is an arbitrary but valid
+    # anchor on both the historical and the v6 grid).
     daily = c[(c.penalty == 10.0) & (c.share_willing == 0.0)][
         ["provider", "plz", "dd_cost_init"]].rename(columns={"dd_cost_init": "daily_cost"})
-    # Operating point P=0.4, share=1.0 balanced
-    op = c[(c.penalty == 0.4) & (c.share_willing == 1.0)][
+    # Operating point (P=0.4 historically; v6 has no 0.4, see OPERATING_P)
+    op = c[(c.penalty == OPERATING_P) & (c.share_willing == 1.0)][
         ["provider", "plz", "weekly_parcels", "dd_cost_balanced",
          "schedule_size_balanced", "avg_wait_d_balanced"]]
+    assert len(op), (f"no rows at penalty={OPERATING_P}, share_willing=1.0 -- "
+                     "this grid was not run at that operating point")
     df = op.merge(daily, on=["provider", "plz"], how="left")
     df["saving_pct"] = 100 * (df.daily_cost - df.dd_cost_balanced) / df.daily_cost.clip(lower=1)
 
@@ -105,11 +144,13 @@ def fig_region(df):
         vals = df[df.raumtyp_3 == r].saving_pct.dropna()
         ax.text(i + 1, vals.mean() + 1, f"μ={vals.mean():.1f}%\nn={len(vals)}",
                 ha="center", fontsize=9)
-    ax.set_ylabel("Cost saving vs daily [%]  (P=0.4, share=100%)")
+    ax.set_ylabel(f"Cost saving vs daily [%]  (P={OPERATING_P:g}, share=100%)")
     ax.set_title("Batching saving by region type — Region Hannover")
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(d / "fig_R1_saving_by_raumtyp.png"); fig.savefig(d / "fig_R1_saving_by_raumtyp.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script="paper_final_region_schedule.py", source=SRC_NOTE)
+    V6.savefig_pair(fig, d / "fig_R1_saving_by_raumtyp.png", d / "fig_R1_saving_by_raumtyp.pdf")
     plt.close(fig)
     print("  [OK] R1: saving_by_raumtyp")
 
@@ -129,9 +170,11 @@ def fig_region(df):
                         color="white" if v < piv.values[~np.isnan(piv.values)].mean() else "black",
                         fontsize=9)
     plt.colorbar(im, ax=ax, label="Mean saving %")
-    ax.set_title("Saving % per LSP x region type (P=0.4, share=100%)")
+    ax.set_title(f"Saving % per LSP x region type (P={OPERATING_P:g}, share=100%)")
     fig.tight_layout()
-    fig.savefig(d / "fig_R2_provider_x_raumtyp.png"); fig.savefig(d / "fig_R2_provider_x_raumtyp.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script="paper_final_region_schedule.py", source=SRC_NOTE)
+    V6.savefig_pair(fig, d / "fig_R2_provider_x_raumtyp.png", d / "fig_R2_provider_x_raumtyp.pdf")
     plt.close(fig)
     print("  [OK] R2: provider_x_raumtyp")
 
@@ -142,11 +185,13 @@ def fig_region(df):
                      vmin=0, vmax=df.saving_pct.quantile(0.95))
     ax.set_xlabel("Hub distance [km]"); ax.set_ylabel("PLZ area [km²]")
     ax.set_title("Where batching pays off: hub-distance x area -> saving%\n"
-                  "(marker size ∝ weekly parcels, P=0.4, share=100%)")
+                  f"(marker size ∝ weekly parcels, P={OPERATING_P:g}, share=100%)")
     plt.colorbar(sc, ax=ax, label="Saving %")
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(d / "fig_R3_hubdist_area_saving.png"); fig.savefig(d / "fig_R3_hubdist_area_saving.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script="paper_final_region_schedule.py", source=SRC_NOTE)
+    V6.savefig_pair(fig, d / "fig_R3_hubdist_area_saving.png", d / "fig_R3_hubdist_area_saving.pdf")
     plt.close(fig)
     print("  [OK] R3: hubdist_area_saving")
 
@@ -169,7 +214,9 @@ def fig_region(df):
     ax.set_xlabel("Region type"); ax.set_ylabel("Hub distance bucket")
     ax.set_title("Theory test: further hub + more rural -> more batching saving")
     fig.tight_layout()
-    fig.savefig(d / "fig_R4_hubdist_x_raumtyp.png"); fig.savefig(d / "fig_R4_hubdist_x_raumtyp.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script="paper_final_region_schedule.py", source=SRC_NOTE)
+    V6.savefig_pair(fig, d / "fig_R4_hubdist_x_raumtyp.png", d / "fig_R4_hubdist_x_raumtyp.pdf")
     plt.close(fig)
     print("  [OK] R4: hubdist_x_raumtyp")
 
@@ -183,7 +230,7 @@ def fig_region(df):
         mean_area=("area_km2", "mean"),
     ).reset_index()
     summ.to_csv(d / "tab_raumtyp_summary.csv", index=False)
-    print("\nRaumtyp summary (P=0.4, share=100%):")
+    print(f"\nRaumtyp summary (P={OPERATING_P:g}, share=100%):")
     print(summ.round(2).to_string(index=False))
     return summ
 
@@ -200,11 +247,13 @@ def fig_schedule_landscape(df):
     ax.set_xlabel("Weekly parcels per cell"); ax.set_ylabel("PLZ area [km²]")
     ax.set_xscale("log")
     ax.set_title("Schedule landscape — chosen frequency in (demand x area) space\n"
-                  "(P=0.4, share=100%, balanced)")
+                  f"(P={OPERATING_P:g}, share=100%, balanced)")
     ax.legend(title="Chosen schedule", fontsize=9)
     ax.grid(alpha=0.3, which="both")
     fig.tight_layout()
-    fig.savefig(d / "fig_O3_schedule_landscape.png"); fig.savefig(d / "fig_O3_schedule_landscape.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script="paper_final_region_schedule.py", source=SRC_NOTE)
+    V6.savefig_pair(fig, d / "fig_O3_schedule_landscape.png", d / "fig_O3_schedule_landscape.pdf")
     plt.close(fig)
     print("  [OK] O3: schedule_landscape")
 
@@ -217,15 +266,35 @@ def fig_schedule_landscape(df):
     for patch, s in zip(bp["boxes"], sizes):
         patch.set_facecolor(SCHED_COLOR.get(int(s), "gray")); patch.set_alpha(0.7)
     ax.set_xlabel("Chosen schedule size"); ax.set_ylabel("Cost per parcel [EUR]")
-    ax.set_title("Unit cost by schedule size (P=0.4, share=100%)")
+    ax.set_title(f"Unit cost by schedule size (P={OPERATING_P:g}, share=100%)")
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(d / "fig_O4_cost_per_parcel.png"); fig.savefig(d / "fig_O4_cost_per_parcel.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script="paper_final_region_schedule.py", source=SRC_NOTE)
+    V6.savefig_pair(fig, d / "fig_O4_cost_per_parcel.png", d / "fig_O4_cost_per_parcel.pdf")
     plt.close(fig)
     print("  [OK] O4: cost_per_parcel")
 
 
 def main():
+    global BAL, OUT, OPERATING_P, SRC_NOTE
+    ap = argparse.ArgumentParser(description=__doc__)
+    V6.add_v6_cli_args(ap, needs_legacy=True)
+    args = ap.parse_args()
+    if args.legacy_dir is not None:
+        BAL = Path(args.legacy_dir)
+    elif args.rev_dir is not None:
+        BAL, _ = V6.run_legacy_adapter(args.rev_dir,
+                                       Path(args.out_dir or OUT) / "_legacy")
+    v6_mode = args.legacy_dir is not None or args.rev_dir is not None
+    if v6_mode:
+        OPERATING_P = 0.5  # v6 has no P=0.4; nearest grid point
+        SRC_NOTE = "B: 74_-legacy tab_chosen_schedules.csv"
+    if args.out_dir is not None:
+        OUT = Path(args.out_dir)
+    for sub in ("09_region_analysis", "05_optimization"):
+        (OUT / sub).mkdir(parents=True, exist_ok=True)
+
     print("Regenerating region + schedule analyses on NEW data...")
     df = build_per_cell_saving()
     print(f"  per-cell data: {len(df)} cells, raumtyp coverage: "

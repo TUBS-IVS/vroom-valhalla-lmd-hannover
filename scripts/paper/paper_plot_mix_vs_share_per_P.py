@@ -2,8 +2,15 @@
 
 Multi-panel version of fig04 — one panel per service-penalty level so the
 reader sees how the mix evolves with both share AND penalty.
+
+Status B (Task 19): 74_-legacy's tab_chosen_schedules.csv has no unsuffixed
+schedule_size column; schedule_size_balanced (the operator-polished/final
+plan) is aliased to schedule_size, same convention as
+paper_plot_maps_per_P.py.
 """
 from pathlib import Path
+import argparse
+import sys
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -14,7 +21,10 @@ import numpy as np
 import pandas as pd
 from matplotlib import rcParams
 
-ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _paper_v6_common as V6  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[2]
 OVERNIGHT = ROOT / "results" / "overnight_2026_05_27"
 
 rcParams.update({
@@ -33,7 +43,27 @@ FREQ_COLOR = {
 
 
 def main():
-    chosen = pd.read_csv(OVERNIGHT / "tab_chosen_schedules.csv")
+    global OVERNIGHT
+    ap = argparse.ArgumentParser(description=__doc__)
+    V6.add_v6_cli_args(ap, needs_legacy=True)
+    args = ap.parse_args()
+    v6_mode = args.legacy_dir is not None or args.rev_dir is not None
+    if args.legacy_dir is not None:
+        in_dir = Path(args.legacy_dir)
+    elif args.rev_dir is not None:
+        in_dir, _ = V6.run_legacy_adapter(
+            args.rev_dir, Path(args.out_dir or OVERNIGHT) / "_legacy")
+    else:
+        in_dir = OVERNIGHT
+    out_dir = Path(args.out_dir) if args.out_dir is not None else OVERNIGHT
+    out_dir.mkdir(parents=True, exist_ok=True)
+    OVERNIGHT = out_dir
+    src_note = ("B: 74_-legacy tab_chosen_schedules.csv (schedule_size_balanced)"
+               if v6_mode else "tab_chosen_schedules.csv (historical path)")
+
+    chosen = pd.read_csv(in_dir / "tab_chosen_schedules.csv")
+    if "schedule_size" not in chosen.columns:
+        chosen = chosen.rename(columns={"schedule_size_balanced": "schedule_size"})
     pen_values = sorted(chosen.penalty.unique())
     n = len(pen_values)
     fig, axes = plt.subplots(1, n, figsize=(4.0 * n, 4.5),
@@ -69,8 +99,11 @@ def main():
                   "for varying service penalty $P$",
                   fontsize=13, y=1.02)
     fig.tight_layout()
-    fig.savefig(OVERNIGHT / "fig06_schedule_mix_vs_share_per_P.png")
-    fig.savefig(OVERNIGHT / "fig06_schedule_mix_vs_share_per_P.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script="paper_plot_mix_vs_share_per_P.py",
+                             source=src_note)
+    V6.savefig_pair(fig, OVERNIGHT / "fig06_schedule_mix_vs_share_per_P.png",
+                    OVERNIGHT / "fig06_schedule_mix_vs_share_per_P.pdf")
     plt.close(fig)
     print(f"Saved fig06_schedule_mix_vs_share_per_P.png ({n} panels)")
 

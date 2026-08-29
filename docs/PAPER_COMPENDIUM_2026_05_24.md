@@ -3139,3 +3139,942 @@ Saving-pro-Wartetag-eingespart entlang der Pareto-Frontier:
 - `results/sensitivity_2d/tab_pareto_optimal.csv` (34 Pareto-Optimale Cells)
 - `results/sensitivity_2d/fig_pareto_2d.{png,pdf}` (2D Pareto-Frontier mit Labels)
 - `results/sensitivity_2d/fig_heatmap_cost.{png,pdf}` (Cost-Heatmap über Grid)
+
+---
+
+## 38. Stage-3-Revision, Preprint-Mirror und Präsentations-Figurensatz (2026-08-18)
+
+Ergänzung nach der EWGT-Revision. Alles hier bezieht sich auf **Stage 3**
+(per-hub balancing + system-wide fleet smoothing), nicht auf die Stage-2-Zahlen
+der Abschnitte oben. Kanonische Daten: `results/revision_2026_07/`.
+
+### 38.1 Was Stage 3 an den Kernzahlen ändert
+
+| Größe | Submission (Stage 2) | Revision (Stage 3) |
+|---|---|---|
+| Validierte Betriebspunkte | 3 (P ∈ {0, 0.25, 0.5}) | **4** (+ P = 0.75) |
+| Konservativitätsband | 1.3–2.1 pp | **0.9–2.7 pp** |
+| VROOM-Ist bei P = 0 | 24.3 % | **23.7 %** |
+| VROOM-Ist bei P = 0.25 | — | **19.8 %** (Prognose 18.5 %) |
+| VROOM-Ist bei P = 0.75 | — | **13.0 %** (Prognose 10.2 %) |
+| Ø Wartezeit bei P = 0.25 | 0.45 d | **0.46 d** |
+| Mo–Sa Flotten-CV-Reduktion | bis 60 % / 71 % | **54 % bei (0.5, 1), bis 78 % im Gitter** |
+
+Unverändert bestätigt: 22.8 % max Saving bei (0, 1), Peak-Flotte −12.9 % bei
+(0.5, 1), Baseline-Flotten-CV 0.135, α = 1.343, 2.95 % OOF-MAPE.
+
+Flottenprofil bei (P = 0.25, θ = 1): Peak 1239 → 1064 (Stage 2) → **1007**
+(Stage 3), CV 0.135 → 0.056 → **0.029**.
+
+### 38.2 Zwei harte Analyse-Regeln (sonst falsche Zahlen)
+
+**(a) Per-PLZ-Zerlegung nur bei θ = 1.** Die Express-Komponente ist
+**hub-gebündelt** und nicht auf Flächen zerlegbar. Bei `share_willing = 1.0` ist
+sie über alle P und Provider **exakt 0.0** (verifiziert, 56 Zeilen) — nur dort
+gilt `total = dd_cost` und eine per-PLZ-Zerlegung ist exakt. Deshalb ist der
+ganze per-Fläche-Einsparungskomplex auf θ = 1 beschränkt.
+
+**(b) PARTIAL-VROOM-Zellen MITZÄHLEN.** Zwei von 4 230 Routing-Zellen (DHL,
+PLZ 30855, Tag 0 und 3 bei P = 0) liefern `vroom_status = PARTIAL`. Die
+publizierte Validierung (1 457 294.20 € = 23.69 % bei P = 0) enthält sie. Wer
+sie herausfiltert, erhält **24.92 %** und 2 058 km weniger — also Zahlen, die dem
+Paper widersprechen. `scripts/revision/41_op_kpi_tables_smoothed.py` hat dafür
+ein Gate gegen `tab_savings_pred_vs_actual_smoothed.csv`.
+
+### 38.3 Warum `tab_sensitivity_master_plz.csv` nicht mit Stage 3 kombinierbar ist
+
+Diese Tabelle (`results/supplementary/sensitivity_break_even/`) sieht aus wie die
+perfekte Quelle für per-PLZ-Einsparungen: sie hat VROOM-Baseline, SA_ML, Fixed
+plus alle Strukturfeatures. Ihre Baseline sitzt aber auf einer **anderen
+Nachfrageallokation**: Amazon 30159 hat dort 3 562 Pakete, in Stage 3 sind es
+9 019, weil Cluster-Merge-Forwarding Nachfrage umverteilt. Kombination mit
+Stage-3-Routen ⇒ frei erfundene Einsparungen. Stattdessen erzeugt
+`scripts/presentation/00_recompute_per_plz_costs.py` Baseline und optimierte
+Kosten aus **einer** Rechnung (8 Zellen, ~11 min, resumable, zwei Gates).
+
+### 38.4 Wo Konsolidierung sich räumlich lohnt (Stage 3, θ = 1, P = 0.25)
+
+Euro-gewichtet je Raumtyp:
+
+| Raumtyp | Einsparung | absolut | n (Fläche×Provider) |
+|---|---|---|---|
+| rural | **24.7 %** | 196 k€/Woche | 118 |
+| suburban | 16.1 % | 115 k€/Woche | 124 |
+| urban | 10.4 % | 42 k€/Woche | 70 |
+
+Rural führt **auf beiden Achsen** — relativ und absolut. Achtung: der
+*ungewichtete* per-Fläche-Mittelwert (26.7 % bei P = 0) liegt über der
+Systemeinsparung (22.8 %), weil kleine periphere Einheiten proportional mehr
+sparen. Verteilungen immer als per-Fläche kennzeichnen, Summen immer aus
+absoluten Euro rechnen, nie Prozente mitteln.
+
+Strukturtreiber (Spearman gegen per-Fläche-Einsparung): Paketmenge/Woche
+**−0.76**, Pakete/km² **−0.74**, Stops/Tag −0.61, Hub-Distanz **+0.61**,
+Fläche +0.37, B2C-Anteil −0.19. Also: dünn und weit vom Depot.
+
+Einsparung wird bei **P = 5 €/Pkt/Tag** für jeden Raumtyp auf 0 getrieben.
+
+### 38.5 Lieferfrequenz ist nie 1/Woche
+
+Bei `MAX_HOLDING_DAYS = 3` hat eine Einmal-pro-Woche-Zustellung eine Lücke von 6
+> 3 und ist unzulässig. `enumerate_schedules()` liefert Größen
+**{2: 3, 3: 14, 4: 15, 5: 6, 6: 1} = 39**. Eine „1 day/wk"-Klasse in einer
+Legende ist ein Fehler, keine Beobachtung.
+
+Frequenzinvarianz Stage 2 ≡ Stage 3 ist über alle 27 456 Zeilen verifiziert:
+Smoothing verschiebt **welche** Wochentage, nie **wie viele**. Bei (0.25, 1)
+wandern netto 2.9 pp der Flächentage — Montag 60.3 → 59.6 %, Samstag
+51.6 → 53.2 %. Das ist der Mechanismus hinter der CV-Reduktion zu Nullkosten in
+der Lieferfrequenz.
+
+### 38.6 CO₂ und Fahrleistung (4 validierte Punkte, echte Routen)
+
+| P | km/Woche | CO₂ t/Woche | vs. P = 0.75 |
+|---|---|---|---|
+| 0 | 214 101 | 53.5 | **−18.5 %** |
+| 0.25 | 231 053 | 57.8 | −12.1 % |
+| 0.5 | 249 661 | 62.4 | −5.0 % |
+| 0.75 | 262 771 | 65.7 | — |
+
+CO₂-Faktor 0.25 kg/Fahrzeug-km (externe Annahme, kein Modellergebnis). Bezug ist
+die am wenigsten konsolidierte **validierte** Zelle, nicht die Tageszustellung —
+für Letztere existiert kein VROOM-Baseline-Solve auf dieser Allokation.
+
+### 38.7 Präsentations-Figurensatz
+
+`results/presentation_2026_08/` (gitignored), erzeugt von
+`scripts/presentation/`: 37 Figuren, je in Paper- (serif/PDF) und Slide-Stil
+(sans/16:9/PNG) aus **einem** Code-Pfad, sieben Akte. `MANIFEST.md` wird aus
+Provenienz-Sidecars generiert und listet auch das Ausgeschlossene mit Begründung.
+
+Dauerhaft ausgeschlossen: alles auf `penalty_sweep/sched_cost_cache.npz`
+(Stage-2, unbundled Selektionspfad — vgl. Abschnitt zu `dd_cost` +
+`_hub_express_day_ml`), die Cluster-Bias-Karten (30159 zeigt −30.7 % predicted
+vs. +9.6 % actual, ein PLZ-Merge-Artefakt), alles aus `tab_vroom_path2.csv`
+(jede Zeile `ERR:TypeError: solve_single_plz() ... 'seed_key'`), und
+`_fig_maps_per_share_P04.py` (rechnet P = 0.5, beschriftet P = 0.4).
+
+### 38.8 Paper-Ablage auf GitHub
+
+Zwei Ordner nebeneinander, beide im **Preprint-Layout**
+(`elsarticle[preprint,12pt]`): `paper/EWGT_2026/` = eingereichte Fassung,
+unverändert; `paper/EWGT_2026_rev1/` = Revision. Das Elsevier-Camera-Ready
+(`elsevier_source/`) ist die beim Venue liegende Fassung und **gitignored** —
+nie publizieren.
+
+Fallstrick, der dreimal zugeschlagen hat: der Revisionsordner enthielt
+`figures/fig4,5,6`, **alle sechs** `tables/*.csv`, das Preprint-PDF und die
+`MANIFEST.md` als md5-identische Kopien der Submission. Bei jeder neuen Revision
+gegen `../EWGT_2026/` und gegen `results/revision_*/` md5-prüfen, statt
+anzunehmen, dass der Ordner die Revision enthält.
+
+---
+
+## 39. Domänen-Validität, Bündelungs-Asymmetrie und der θ<1-Defekt (2026-08-25)
+
+Die zentrale Erkenntnis dieser Session in einem Satz: **Das Paper hat kein
+Konsolidierungsproblem, sondern ein Bündelungsproblem — und das betrifft
+ausschließlich die θ<1-Spalten, nicht die Headline.**
+
+### 39.1 Zwei Reporting-Bugs — und eine widerlegte Paper-Aussage
+
+Beide betreffen nur die Auswertung, nicht die Optimierung. Bei θ = 1 sind die
+Ergebnisse bit-identisch; keine Neuoptimierung nötig.
+
+**Bug A — Flotte doppelt gezählt.** Die gebündelte Express-Tour eines Hubs
+wurde pro beitragender Zelle als eigene Flotte gezählt statt einmal pro Hub-Tag.
+Folge: Bei mittlerem θ, wo viele Zellen zur selben Tour beitragen, entstanden
+Phantom-Fahrzeuge.
+
+**Bug B — Wartezeit übergewichtet.** Die mittlere Wartezeit wurde über *alle*
+Pakete gemittelt statt über die *wartebereiten*. Bei θ = 10 % ergab das den
+zehnfachen Wert.
+
+**Widerlegt:** Die Paper-Aussage „Flottenbedarf wächst bei mittlerem θ um
++4,6 %" war ein reines Artefakt von Bug A. Nach dem Fix **sinkt** der
+Flottenbedarf über den gesamten θ-Bereich. Die Aussage ist ersatzlos gestrichen,
+nicht umformuliert.
+
+Fix in `scripts/revision/50_recompute_fleet_wait_fixed.py`. Beide Bugs saßen in
+den Revisions-Reportingskripten (`10_`, `30_`), **nicht** im Paket.
+
+**Bug C — die Glättung ist blind für die Express-Flotte** (gemessen 2026-08-25).
+Der spiegelbildliche Fehler zu Bug A, an anderer Stelle:
+`_daily_fleet_per_hub` in `optimization/balancing.py` summiert
+`veh_3d[plz, chosen, day]` je Hub. `veh_3d` ist aber nur auf *aktiven*
+Liefertagen gesetzt (`costs.py:823`) — die gepoolte Express-Tour taucht in der
+Flotten-Zielfunktion damit **gar nicht** auf. Die Kosten enthalten sie
+(`_hub_express_day_ml`), das Flottenprofil nicht.
+
+Gemessen auf dem system-geglätteten Ergebnis, Express-Fahrzeuge als
+`ceil(Σ raw_express / VEHICLE_CAPACITY)` je Hub-Tag — dieselbe Formel wie
+`veh_3d`, also gleicher Maßstab:
+
+| | θ = 1 (Kontrolle) | θ = 0,5 | θ = 0,1 |
+|---|---|---|---|
+| unsichtbare Fahrzeugtage | **0** | 559 (8,8 %) | **1 383 (21,7 %)** |
+| Ungleichgewicht laut Zielfunktion | 765 | 229 | 348 |
+| tatsächliches Ungleichgewicht | **765** | 334 | **601** |
+| Abweichung | **±0** | +45,9 % | **+72,7 %** |
+| Systemspitze | 1 406 = 1 406 | 1 161 → 1 299 | 1 200 → **1 564** |
+
+Die Kontrolle bei θ = 1 trifft exakt (Fast-Share ist dort 0, also existieren
+keine Express-Touren) — der Messaufbau ist damit belastbar und θ = 1 beweisbar
+nicht betroffen.
+
+**Das ist kein Reporting-Fehler, sondern beides:** die berichtete Systemspitze
+bei θ < 1 ist um bis zu 364 Fahrzeuge (30 %) zu niedrig, **und** die Glättung
+optimiert nach einem falschen Signal — sie hält Nicht-Liefertage für leer, die
+bereits Express-Last tragen, und verschiebt Zustellungen womöglich genau dorthin.
+Konsequenz: Bei θ < 1 ist eine **Neuoptimierung** nötig, keine Nachrechnung.
+
+Verschärfend: Bei θ = 0,1 liegt der Express-Anteil bei 99,9 % (B2C) bzw. 54,2 %
+(B2B). Der blinde Fleck betrifft dort nicht einen Rest, sondern den dominanten
+Verkehr.
+
+Ungeprüft bleibt, wie stark sich die *Kosten* dadurch ändern. Die Glättung
+arbeitet innerhalb eines Kostenbudgets, die Verschiebung ist also begrenzt —
+aber andere akzeptierte Tauschzüge bedeuten andere Fahrpläne.
+
+### 39.2 Der θ=10 %-Buckel ist räumliche Bündelung, nicht Konsolidierung
+
+Die Einsparung von 3,6 % bei (P = 10, θ = 10 %) war implausibel: Bei 10 %
+Wartebereitschaft können 90 % der Pakete gar nicht konsolidiert werden.
+
+Rechnung, die es entlarvt: Die Einsparung **pro konsolidiertem Paket** erreicht
+2,08 € (Obergrenze; mit dem tatsächlichen lokalen Willing-Anteil ~14 €) — bei
+Gesamtkosten von **1,51 € pro Paket**. Eine Einsparung, die das Neunfache der
+Vollkosten beträgt, kann nicht aus Konsolidierung stammen. Bei θ = 1 liegt sie
+bei plausiblen 0,34 €.
+
+Der Regler ist **P·θ**, nicht θ allein (vgl. Abschnitt zur θ=10 %-Beule).
+
+### 39.3 Die Asymmetrie: Die Baseline darf nicht bündeln, die Szenarien schon
+
+Ursache des Buckels. Die Baseline gibt jeder PLZ an jedem Tag eine eigene Tour.
+Die Szenarien werfen die Standardpakete aller Zellen ohne eigene Tour auf **eine**
+gepoolte Hub-Tour. Gemessen:
+
+| Zelle | gepoolte Touren | PLZ/Tour | Anteil Wochennachfrage |
+|---|---|---|---|
+| θ = 1 (jedes P) | **0** | – | **0,0 %** |
+| P=0, θ=0,5 | 90 | 11,3 | 24,0 % |
+| P=0,5, θ=0,1 | 54 | 13,8 | 24,7 % |
+
+Bei θ < 1 fährt also rund ein Viertel aller Pakete auf einer Tour, die die
+Baseline nicht hat. Symmetrische Neurechnung (beide Seiten ungepoolt):
+11,30 % → 1,85 % bei (0; 0,5) und 7,41 % → **−0,84 %** bei (0,5; 0,1).
+Bei θ = 1 bit-identisch (22,79 / 18,49 / 13,52 %) — dort gibt es nichts zu poolen.
+
+Gegenprobe „selektives Poolen" (beide Seiten dürfen pro Hub-Tag das Billigere
+wählen): Die Baseline gewinnt in 19 von 132 Hub-Tagen, wird **0,74 %** billiger
+(14 168 €/Woche von 1 895 580 €). Headline 22,79 % → **22,22 %**.
+
+### 39.4 Wo das Surrogat wirklich schwach ist — invertiert zur Intuition
+
+OOF-Fehler (GroupKFold, group = PLZ, gesamt 2,91 % MAPE) nach Instanzgröße:
+
+| Stopps | n | MAPE | Bias |
+|---|---|---|---|
+| 0–100 | 765 | 2,67 | +0,22 |
+| 100–200 | 1108 | 2,88 | −0,17 |
+| 200–300 | 472 | 3,20 | −0,20 |
+| 300–400 | 225 | 3,28 | −0,52 |
+| 400–556 | 135 | 3,01 | −0,65 |
+
+| Fläche km² | n | MAPE | Bias |
+|---|---|---|---|
+| 0–20 | 1429 | 2,04 | −0,12 |
+| 20–50 | 321 | 3,37 | −0,72 |
+| 50–100 | 372 | 3,09 | +0,20 |
+| 100–159 | 436 | 4,14 | +1,65 |
+| **159–358** | 175 | **5,64** | **−4,33** |
+
+| Pakete | n | MAPE | Bias |
+|---|---|---|---|
+| **0–230** | 196 | **7,14** | +1,37 |
+| 230–460 | 543 | 3,41 | −0,27 |
+| 460–920 | 819 | 2,55 | −0,38 |
+| 920–1840 | 609 | 2,40 | −0,16 |
+| > 3 680 | 203 | 2,06 | −0,05 |
+
+Drei Befunde:
+
+1. **Stopps:** Fehler bleibt bis 556 flach bei ~3 %. Die Grenze ist unkritisch.
+2. **Fläche:** Ab 159 km² steigt der Fehler auf 5,64 % und der Bias kippt auf
+   **−4,33 %** — systematische **Unter**schätzung. Genau der Mechanismus, der
+   Bündelung künstlich attraktiv macht.
+3. **Pakete: umgekehrte Richtung.** Am schlechtesten sind die *kleinen*
+   Instanzen (7,14 % unter 230 Paketen, fast das Dreifache). Vorsicht: Die
+   Klassengrenzen liegen auf Vielfachen von Q = 230; dass der Knick *exakt*
+   dort sitzt, ist damit nicht bewiesen.
+
+Datendichte: ≥400 Stopps 6,0 % der Zeilen, ≥556 nur 1,0 %, ≥837 eine einzige.
+Fläche ≥159 km² 6,4 %, ≥250 km² 2,2 %, ≥358 km² keine.
+
+### 39.5 VROOM-Bodenwahrheit: Extrapolation schadet nicht
+
+Der Trainingspool-Befund legt nahe, konsolidierte Zellen lägen gefährlich außerhalb
+der Domäne. Der Verdacht ist **empirisch widerlegt**. ML-Wochenkosten gegen
+tatsächlich geroutete VROOM-Touren, 1 247 vollständig gelöste Zellen
+(gesamt MAPE 3,03 %, Bias **+2,73 %**):
+
+| Spitzenlast (Pakete am stärksten Tag) | n | MAPE | Bias | Median Routen |
+|---|---|---|---|---|
+| < 500 | 79 | **5,67** | **+5,27** | 2 |
+| 500–1 000 | 484 | 3,64 | +3,46 | 4 |
+| 1 000–2 000 | 447 | 2,73 | +2,50 | 6 |
+| 2 000–4 000 | 177 | 1,59 | +1,06 | 12 |
+| 4 000–8 000 | 52 | **1,12** | **−0,01** | 22,5 |
+| > 8 000 | 8 | 1,34 | +0,26 | 41 |
+
+**Je weiter das Modell extrapoliert, desto genauer wird es.** Die Erklärung ist
+die Hybrid-Architektur: Der Daganzo-Term ist eine Kontinuumsapproximation und
+wird mit wachsender Instanz asymptotisch besser; das LightGBM korrigiert nur
+Residuen im datendichten Bereich. Der Hybrid extrapoliert nicht blind, er
+übergibt an das physikalische Modell.
+
+**Die Ergebnisse sind konservativ.** Der Bias ist durchweg positiv, und zwar
+stärker bei konsolidierten Fahrplänen:
+
+| Zustellungen/Woche | n | MAPE | Bias |
+|---|---|---|---|
+| 6 (täglich) | 218 | 1,93 | **+1,75** |
+| 3 | 363 | 3,68 | **+3,51** |
+| 2 | 458 | 3,05 | +2,51 |
+
+Konsolidierte Zellen werden also *stärker* überteuert geschätzt als tägliche —
+die berichteten Einsparungen sind damit eher **unter**- als überschätzt.
+
+### 39.6 Was validiert ist und was nicht
+
+Entscheidende Einschränkung: **Alle vier VROOM-Betriebspunkte liegen bei θ = 1**
+— und dort existieren null gepoolte Touren (39.3). Die Validierung deckt also
+exakt das Regime **ohne** Bündelung ab.
+
+| | Status |
+|---|---|
+| Headline 22,79 % (θ = 1) | **validiert**, Bias konservativ |
+| θ < 1 (Bündelung) | **nie validiert**, Fläche extrapoliert, Bias −4,3 % |
+
+Zur Einordnung, wie weit die gepoolten Touren draußen liegen (144 Touren):
+Median 2 020 Stopps, max **9 644** (11,5× Trainingsmaximum); Fläche Median
+174 km², max **1 906 km²** (5,3×). 86,1 % überschreiten das Stopp-Maximum,
+46,5 % das Flächenmaximum.
+
+Nebenbefund zur Baseline: 24,4 % der 312 Zellen liegen über p99 (556 Stopps),
+9,9 % über dem Trainingsmaximum (837), Extremfall 2 196 Stopps (2,6×). Das ist
+laut 39.5 unkritisch — aber es widerlegt die Vorstellung, die Baseline sei
+„sicher innerhalb" der Domäne.
+
+### 39.7 Die Bündelungsregel und ihre Kalibrierung
+
+Ein Prinzip: **Bündel dürfen nur entstehen, wo das Surrogat belegbar genau ist.**
+
+| Parameter | Wert | Herleitung |
+|---|---|---|
+| `MIN_STANDALONE_PARCELS` | **230** | zwei unabhängige Belege: VROOM realisiert Median 210 Pakete/Tour (95 % 228,6, max 230) → Kapazität bindet; **und** OOF-Fehler 7,14 % darunter vs. ~2,5 % darüber |
+| `MAX_BUNDLE_STOPS` | **556** | p99; Fehler bis dort flach; zugleich Rechenzeit-Grenze (Lösezeit korreliert mit Stopps ρ=0,68, nicht Paketen ρ=0,25; bei ~483 Stopps Median 164 s, Worst Case 984 s) |
+| `MAX_BUNDLE_AREA_KM2` | **159** | p95, **nicht** das Trainingsmaximum 358 — dort Bias −4,33 % |
+| Paketgrenze | **keine** | größtes Bündel 686 Pakete = 5,8 % des Trainingsmaximums |
+
+**Was die Grenzen in PLZ bedeuten.** Median-Zelle: 19,3 km², 347 Stopps/Tag.
+159 km² fasst also ~8 Median-PLZ, 556 Stopps nur ~1,6 — **die Stoppgrenze
+bindet zuerst**, nicht die Fläche. Greedy Nearest-Neighbour-Packing der 56
+unterschwelligen Zellen:
+
+| Einstellung | Bündel | ⌀ PLZ | max | Median Stopps |
+|---|---|---|---|---|
+| 556 / 358 km² | 20 | 2,80 | 4 | 502 |
+| **556 / 159 km²** | 23 | **2,43** | 4 | 424 |
+| 837 / 358 km² | 14 | 4,00 | 7 | 732 |
+
+Die Verschärfung 358 → 159 ist damit **fast gratis** (2,80 → 2,43 PLZ, Maximum
+bleibt 4). Der eigentliche Hebel ist die Stoppgrenze.
+
+Wirkung gegenüber heute — **Faktor fünf**:
+
+| | heute | mit Regel |
+|---|---|---|
+| PLZ pro Bündeltour | 10–34 | **2–4** |
+| Median Stopps | 2 020 | **424** |
+
+Betroffen sind 56 von 312 Zellen (17,9 %) mit 4,9 % der Wochennachfrage.
+Bündel tragen im Median 531 Pakete — dieselbe Größenordnung wie eine gewöhnliche
+Zelle (457). Fahrzeuge pro Bündeltour: 4× eines, 7× zwei, 12× drei.
+
+**Kein Teilen großer Zellen.** Naheliegend wäre, das Prinzip symmetrisch auch
+nach oben anzuwenden. 39.5 sagt: nicht nötig — große Zellen sind der
+*validierte* Bereich.
+
+### 39.8 Was daraus folgt — Änderungsliste
+
+**Code**
+1. Bündelungsregel in `optimization/costs.py` (`_hub_express_day_ml` und die
+   davon gespeisten Matrizen). Separabler Teil = Zellen ≥ 230 Pakete,
+   gepoolter Teil = alle darunter, an *jedem* Tag. Die CD-Struktur bleibt.
+2. Assertion-Gate: keine Surrogat-Auswertung über 556 Stopps / 159 km².
+   Lauf abbrechen statt extrapolieren.
+3. **`_daily_fleet_per_hub` um die Express-Flotte ergänzen** (Bug C, 39.1).
+   Gemessen: 21,7 % unsichtbare Fahrzeugtage bei θ = 0,1, Ungleichgewicht um
+   72,7 % unterschätzt. Muss **vor** 4. sitzen — es ist eine Neuoptimierung,
+   keine Nachrechnung. Die Zielfunktion braucht dieselbe Hub-Tag-Aggregation
+   wie der Kostenpfad, sonst wiederholt sich Bug A mit umgekehrtem Vorzeichen.
+
+**Neuberechnung**
+4. Vollständiger 88-Zellen-Grid-Lauf. Keine Zahl darf übernommen werden.
+5. VROOM-Revalidierung — zwingend **mindestens ein θ<1-Punkt mit Bündeltouren**.
+   Das schließt die Lücke aus 39.6 und wäre der erste direkte Test einer
+   Bündeltour überhaupt.
+6. Alle Figuren und Tabellen neu.
+
+**Papertext**
+7. Methodenteil: Bündelungsregel + Domänen-Validität. Der Absatz ist ein
+   Gewinn, kein Zugeständnis — er zeigt einen vermessenen Gültigkeitsbereich.
+8. Ergebnisteil: neue Zahlen; θ<1-Spalten werden deutlich schlechter.
+9. Flottenaussage gestrichen (39.1), Wartezeit-Werte korrigiert.
+10. Limitations: Validierungslücke bei θ<1, sofern 5. sie nicht schließt.
+11. Der positive Bias (39.5) gehört ins Paper — er stützt die Ergebnisse.
+
+**Offen aus Abschnitt 38:** HAGRID-Vollform, 8-Seiten-Abnahme, `%TODO`-Reste,
+menschliche Durchsicht des Preprints.
+
+---
+
+## 40. Express-Featurisierung, Struktur-Lücke und Hubdistanz-Messung (2026-08-25, Fortsetzung von 39)
+
+Nach Abschluss von Abschnitt 39 kamen drei weitere Befunde dazu. Sie verschieben
+die Rangfolge: Vor jedem Daten- oder Bündelungs-Fix steht ein
+**Featurisierungs-Fix** — der Express-Pfad beschreibt Touren in einer anderen
+Sprache als das Training.
+
+### 40.1 Der Trainingspool aggregiert zeitlich, nie räumlich
+
+`training_matrix.csv` (2 733 Zeilen, 48 PLZ): `agg_k ∈ {1,2,3}` — bis zu drei
+Tage Nachfrage **einer** PLZ. Kein einziges Multi-PLZ-Beispiel. Konsolidierung
+(zeitlich) ist trainiert und VROOM-validiert; Bündelung (räumlich) ist es nicht.
+
+Die Struktur-Kennzahl dazu: **konvexe Hülle / Summenfläche**.
+
+| | Median | > 1,5 | max |
+|---|---|---|---|
+| Trainingspool (n=2733) | 0,63 | **0 %** | **1,22** |
+| heutige Bündeltouren (P=0,5, θ=0,1; n=50) | 1,41 | 24,0 % | 2,22 |
+| Bündel nach Größen-Caps (556/159; n=23) | 1,26 | **42,1 %** | **3,17** |
+
+**Größen-Caps kontrollieren die Größe, nicht die Form.** Die gekappte Regel
+erzeugt strukturell *fremdere* Instanzen als der Ist-Zustand, weil sie kleine
+(= meist ländliche, verstreute) Zellen paart.
+
+**Fix gemessen:** ein Kompaktheits-Cap beim Packen (Merge ablehnen, wenn
+Hülle > Ratio × Summenfläche):
+
+| Cap | Bündel | allein | ratio Median/max | außerhalb Training |
+|---|---|---|---|---|
+| keiner | 19 | 4 | 1,14 / 3,17 | 47,8 % |
+| ≤ 1,5 | 18 | 8 | 0,89 / 1,33 | 11,5 % |
+| **≤ 1,22** | 17 | 9 | 0,85 / **1,21** | **0,0 %** |
+
+Preis: 5 Zellen mehr bleiben allein (≈ 0,4 % der Nachfrage), Bündelgröße
+praktisch unverändert. Der verteidigbare Cap ist fast gratis.
+
+### 40.2 Der Express-Pfad featurisiert inkonsistent zum Training (D3)
+
+Drei belegte Teilbefunde in `_hub_express_day_ml` (`optimization/costs.py`):
+
+**(a) `hub_dist_km = 0.0`** (costs.py ~991, Konvention features/core.py ~651).
+Der Trainingspool hat **min 0,370 km**, p1 = 1,04, Median 12,41 — keine Zeile
+nahe null. Im Daganzo-Kern löscht r=0 den Vorlauf-Term 2r komplett.
+
+**(b) Granularitätsverwechslung.** Training beschreibt Touren in
+**aggregierten Stopps** (eine Adresse, viele Pakete): `max_stop_demand` 6–742,
+`demand_std` 0,88–75,3. Der Express-Pfad rechnet Tier-2/3 über **rohe
+Nachfragepunkte** (1 Paket/Punkt). Gleiche Zelle, zwei Beschreibungen
+(Express / Training): DHL 30159 `max_stop_demand` 17 / 355,5; Amazon 30159
+1 / 134; `demand_std` 0–2,4 / 6,9–63. Zusätzlich mischt derselbe Vektor beide
+Granularitäten: `n_stops` aggregiert, Tier-2/3 roh.
+
+**(c) Provider-Inkonsistenz der Koordinatendaten.** DHL: psd-Array summiert
+exakt auf Tagesnachfrage (3 773 = 3 773). Amazon/DPD: ~55 % Untererfassung
+(814 vs 1 479) und alle psd-Werte = 1. Ursache noch zu verifizieren
+(vermutlich Datenquelle der plz_day_coords).
+
+Dazu: Die Trainings-Konvention (core.py ~650) setzt bei Express **leere
+Koordinaten** (Tier-2 = 0), der Laufzeitpfad übergibt **echte** merged Coords.
+Die Kombination „hub_dist=0 + echte Geometrie" existiert weder im Pool noch in
+der Konvention.
+
+**Konsequenz:** Kein Sampling-Lauf repariert das. Solange Vorhersage- und
+Trainingspfad dieselbe Instanz verschieden beschreiben, bleibt die Vorhersage
+falsch — Featurisierungs-Konsistenz ist Hebel 0, vor allen Datenmaßnahmen.
+
+### 40.3 Hubdistanz-Wirkung gemessen: +4,2 % auf alle Bündeltouren
+
+Isolationsmessung (P=0,5, θ=0,1; 54 gepoolte Touren; identische Features bis
+auf hub_dist 0 vs. real Hub→Zentroid):
+
+| | Wert |
+|---|---|
+| Wochenkosten wie kodiert (hub_dist=0) | 443 211 € |
+| mit realer Hubdistanz | 461 763 € |
+| **unterschätzt um** | **18 552 € (+4,2 %)** |
+| Touren, bei denen reale Distanz Kosten erhöht | **100 %** |
+| Median real gefahrene Hubdistanz | 9,2 km |
+
+Zur Einordnung: ~1 % der Systemkosten — allein dieser eine Input erklärt einen
+erheblichen Teil des θ=0,1-Buckels (39.2). Untergrenze für D3 insgesamt, weil
+(b) und (c) hier noch nicht mitgemessen sind.
+
+### 40.4 Modell-Roadmap (Stand der Diskussion)
+
+Hebel nach Wirkung, Reihenfolge „erst billig, dann teuer":
+
+0. **Featurisierungs-Konsistenz** (40.2) — Stunden; Voraussetzung, sonst misst
+   man alle weiteren Effekte durch eine verzerrte Linse.
+1. **Monotonie-Constraints** in LightGBM (`monotone_constraints` für
+   n_parcels/n_stops/area) — Minuten; adressiert den −4,33-%-Flächen-Bias
+   strukturell.
+2. **Bündel ins Training** — 200–400 VROOM-Solves à 400–550 Stopps, 9–18 h
+   über Nacht; macht θ<1 von Extra- zu Interpolation.
+3. **Dünne Regionen auffüllen** (< 230 Pakete: 7,14 % MAPE; > 159 km²:
+   −4,33 % Bias) — läuft im selben Sampling-Lauf mit.
+4. **Quantilregression** (q10/q50/q90) — Unsicherheit ins Paper,
+   datengetriebenes Domänenkriterium statt harter Caps.
+5. **α je Provider** statt global 1,343 — Minuten; erst OOF-Nutzen messen.
+6. **FW6.A-Polygon-Merge** für die bekannten Cluster-Artefakte (30159: −30,7 %
+   pred vs +9,6 % actual).
+
+Nicht tun: Architekturwechsel (3 % MAPE gegen VROOM ist gut; Hybrid übergibt
+nachweislich sauber an Daganzo — 39.5), spekulative Features, Neutraining auf
+unverändertem Pool.
+
+### 40.5 Offene Design-Entscheidung: statischer PLZ-Merge (Idee Lasse)
+
+Statt Bündelung zur Laufzeit: kleine Zellen (< 230 Pakete/Tag; 56 Zellen,
+4,9 % der Nachfrage) **vorab** in benachbarte Zellen desselben Providers/Hubs
+mergen — analog zum bestehenden Cluster-Head-Merge (30171/30175/30451 →
+30159/30167). Vorteile: Artefakte an der Wurzel entfernt, Symmetrie per
+Konstruktion, normale (train-konsistente) Featurisierung, weniger
+Laufzeit-Maschinerie. Kosten: θ=1 ändert sich (G1 bricht), Headline
+verschiebt sich, θ=1-Revalidierung für gemergte Einheiten nötig,
+FW6.A-Artefaktrisiko beim Merge selbst. Bewertung läuft (Workflow
+verify-specs-and-map); Entscheidung vor dem Implementierungsplan.
+
+### 40.6 Root Cause für (c): der np.ones-Fallback — und warum der Hauptpfad ihn teilt
+
+Code-Analyse (2026-08-25, nach 40.2): `pipeline/stages.py:313-316` baut die
+psd-Arrays als
+
+```python
+psd = pts[col_total].values if col_total in pts.columns else np.ones(len(pts))
+```
+
+mit `col_total = "{prefix}_total"` (`ama`, `dpd`, `fxt`, `gls`, `her`, `ups`,
+`dhl` — constants.py:48). Fehlt die Provider-Spalte im Tages-GDF, wird jeder
+Punkt zu „1 Paket". Messung: DHL summiert exakt (Spalte vorhanden),
+Amazon/DPD laufen im Fallback — mutmaßlich alle sechs Nicht-DHL-Provider.
+
+Der Sweep, der den Trainingspool baute, featurisierte dagegen mit
+**gewichteten** Stopps: `sweep/runner.py:266-275` übergibt
+`pts["dhl_total"]` als per_stop_demand (Provider entstehen dort durch
+Skalierung der DHL-Punktwolke). Folge: `demand_std`/`max_stop_demand`
+(Feature-Spalten 19/20) sind zur Laufzeit für Nicht-DHL-Provider
+systematisch anders befüllt als im Training — **auch im Hauptpfad**, nicht
+nur im Express-Pfad.
+
+**Einordnung statt Alarm:** Das deployte Modell wurde end-to-end MIT diesem
+Skew validiert (3,03 % MAPE, +2,73 % Bias gegen 1 247 VROOM-Zellen, 39.5).
+Der Skew kostet unsichtbar Genauigkeit, macht die publizierten Zahlen aber
+nicht falsch — deployed = validiert. Fix bedeutet neues Modell + neue
+Validierung → Roadmap (ein Re-Anchoring-Event zusammen mit Merge und
+Retrain), nicht Deadline-Scope.
+
+### 40.7 Design-Entscheidung (2026-08-25): Per-Zell-Express statt Bounded Pooling
+
+Nach D3/D4 ist entschieden: Die gepoolte Hub-Express-Tour wird nicht
+begrenzt, sondern **gelöscht**. Standard-Pakete einer nicht liefernden Zelle
+fahren auf deren eigener Tour. Begründungskette:
+
+1. Symmetrie per Konstruktion — es gibt keinen Code-Zweig mehr, der Baseline
+   von Szenario unterscheiden könnte (D1 tot).
+2. `veh_3d` wird auf inaktiven Tagen mit `ceil(raw_express/Q)` befüllt →
+   Balancing-Ziel und Reporting nutzen dieselbe Matrix (D2 + Alt-Bug A tot).
+3. Express-Instanz = skalierte Ein-Tages-Instanz derselben Zelle — exakt die
+   Familie, die der Pool als scale/p_keep-Augmentation enthält; reale
+   Hubdistanz, reale Fläche, echte tier2_mx (D3a/b tot; D3c bewusst im
+   deployten Zustand belassen, s. 40.6).
+4. Kein Multi-PLZ-Objekt mehr → Hüllen-Problem gegenstandslos (D4 tot).
+5. Separabilität: CD konvergiert in einem Sweep; Eq. (3) verliert den
+   Kopplungsterm — Paper wird einfacher, nicht komplizierter.
+
+Chirurgie: Body-Replacement von `_hub_express_day_ml` (costs.py:901) durch
+Summe einer vorberechneten `express_cost[z,d]`-Matrix; Signatur, Cache-Key
+und alle 13 Call-Sites (CD 3, Balancing 4, SA-Legacy 6) bleiben unverändert.
+
+θ=1 ist beweisbar unberührt (fast_share=0 → raw_express=0 → Express-Pfad
+tot, Ceil(0)=0) — die publizierte, VROOM-validierte Headline bleibt Anker
+und Master-Gate.
+
+**Lasses statischer PLZ-Merge:** machbar (Maschinerie in demand.py:137 samt
+FW6.A-Fixes existiert; Per-Provider-Variante ~1–2 Tage), aber verschoben —
+er bricht den θ=1-Anker und erzwingt Revalidierung innerhalb der Deadline,
+während seine Ziel-Artefakte durch Per-Zell-Express ohnehin sterben. Erster
+Punkt der Post-Deadline-Roadmap (40.4), gebündelt mit D3c-Fix und Retrain.
+
+Spec: `docs/superpowers/specs/2026-08-25-percell-express-final-design.md`.
+Erwartung vor Ergebnis (nicht tunen): θ<1-Ersparnisse fallen auf ≤ 1,85 %
+(0; 0,5) bzw. ≤ −0,84 % (0,5; 0,1); Buckel verschwindet; Flotte bei θ<1
+steigt sichtbar; θ=1 bit-identisch.
+
+### 40.8 Mini-Tour-Messung: Lasses Einwand bestaetigt, Min-Regel notwendig
+
+Re-Optimierung unter Per-Zell-Express (P=0 = maximaler Konsolidierungsanreiz,
+neue Featurisierung mit realer Hubdistanz):
+
+| | theta=0.1 | theta=0.5 |
+|---|---|---|
+| konsolidierende Zellen | 181/312 (58 %) | 267/312 (86 %) |
+| Systemersparnis vs. all-daily | **1,42 %** | **4,34 %** |
+| Express-Instanzen in der Loesung | 392 | 708 |
+| davon < 230 Pakete | **46,9 %** | **67,8 %** |
+| davon < 100 Pakete | 5,4 % | 20,2 % (min 10!) |
+
+Zwei Konsequenzen. (1) Der Optimierer weicht NICHT einfach auf taegliche
+Zustellung aus - er konsolidiert weiter und akzeptiert Mini-Express-Touren;
+eine Mindest-Tour-Groesse muss als Regel erzwungen werden (v2-Spec: 230
+Pakete, Pooling darunter). (2) Die Werte sind die ehrlichen FLOORS der
+theta<1-Spalten: 1,42 % / 4,34 % (re-optimiert) gegenueber -0,84 % / 1,85 %
+(eingefrorene Fahrplaene) und 7,41 % / 11,30 % (altes Hub-Pooling, inflationaer).
+Realistisches Bündel-Pricing (Bundle-Head, Gate U) landet dazwischen.
+
+Design-Stand: docs/superpowers/specs/2026-08-25-percell-express-final-design.md
+(v2, Realismus-Direktive: universelle Min/Max-Tour-Regel, szenario-blind,
+Bundle-Head mit Train=Serve-Sampling, Gate U Do 27.08., Headline erwartet
+~22,79 -> ~22,2 %).
+
+### 40.9 Korrektur zu 39.1 Bug C / D2: Ueberzaehlung, nicht Blindheit (2026-08-26)
+
+Die Diagnose in 39.1 ("Glaettung blind fuer Express-Flotte, 21,7 % unsichtbare
+Fahrzeugtage, Ungleichgewicht um 72,7 % unterschaetzt") war ein
+**Messartefakt**. `veh_3d` ist fuer JEDE aktive Instanz gesetzt — auch an
+Nicht-Liefertagen, wo `combined_demand` der Express-Nachfrage entspricht
+(costs.py ~597-602, ~670, ~892). Die Zielfunktion sah die Express-Fahrzeuge
+also durchaus, aber **pro Zelle**: eine gepoolte 14-PLZ-Tour zaehlte als 14
+Fahrzeuge. Mein Messskript summierte genau dieses veh_3d (inkl. der
+Pro-Zell-Express-Fahrzeuge) und addierte die gepoolten ceil-Werte obendrauf
+— die "unsichtbaren" Fahrzeugtage waren eine Doppelzaehlung im Messaufbau.
+
+Korrekter Befund: Der objektseitige Zwilling von Reporting-Bug A — eine
+verzerrte **Ueber**zaehlung (per-Zell statt gepoolt), kein blinder Fleck. Die
+Richtung des Fixes (partition-exakte gepoolte Fahrzeuge in der Zielfunktion)
+bleibt richtig; die Zahlen 21,7 %/72,7 % sind zurueckgezogen. Der erste
+Implementierungsversuch (Task 5) addierte die gepoolten Fahrzeuge auf das
+ungefilterte veh_3d und erzeugte damit eine echte Doppelzaehlung (DPD 0,5/0,1:
+Spitzentag +58 %, Spread 9 statt 47) — vom Review vor dem Grid-Abschluss
+gefangen, Grid gestoppt (159/615). Endgueltige Semantik = 50_-Reporting-Fix
+in der Zielfunktion: veh_3d auf Liefertage maskiert + gepoolte Express-
+Fahrzeuge einmal pro Partitionsgruppe + gepoolte Liefergruppen per Partition
+(Spec v3 §4.3).
+
+### 40.10 Was das Flotten-Balancing wirklich kauft (Teil-Grid v2, 2026-08-26)
+
+Rekonstruierte System-Flottenprofile (alle Provider, v3-Zaehlregel) je Stufe
+fuer vier Zellen, gegen die Stufenkosten gestellt (head=None, konservative
+Pool-Preise):
+
+| (P, theta) | Kosten St.1->3 | Peak | Trog | Fahrzeugtage/Wo | EUR je entferntem Peak-Fahrzeug/Wo |
+|---|---|---|---|---|---|
+| (0, 0.3) | +25.7k (+1.35 %) | 1178 -> 1139 (-39) | 778 -> 890 (+112) | +104 | 660 |
+| (0, 0.6) | +27.8k (+1.46 %) | 1149 -> 1058 (-91) | 775 -> 997 (+222) | +103 | 306 |
+| (0.5, 0.3) | +22.6k (+1.18 %) | 1203 -> 1183 (-20) | 767 -> 862 (+95) | +94 | 1128 |
+| (0.5, 0.6) | +18.8k (+0.99 %) | 1186 -> 1165 (-21) | 759 -> 873 (+114) | +68 | 897 |
+
+Vier Befunde:
+1. **Die Spread-Reduktion ist zu 3/4 Trog-Fuellung, nicht Peak-Senkung.** Das
+   Ziel "Summe der Hub-Spannweiten" ist indifferent zwischen beidem, und
+   Trog-Fuellung ist billiger. Oekonomischen Wert hat aber nur der Peak.
+2. **Die Wochen-Fahrzeugtage STEIGEN** um 1.1-1.7 % — das Balancing verteilt
+   Teilladungen auf mehr Tage. Mehr Fahrzeuge auf der Strasse, mehr km.
+3. **Das 5-%-Budget bindet nicht** (max. 2.7 % je Provider): der Balancer stoppt,
+   weil kein Swap die Spannweite weiter senkt — das Budget ist nicht der Regler.
+4. **Stufe 3 (System-Glaettung) ist fast wirkungslos** (0-6 Swaps, nur DHL mit
+   16 Hubs; alle Single-Hub-Provider 0). Kosten ~0.
+
+Einordnung: Stufe 1 allein senkt den Peak bereits von 1238 (Baseline) auf
+1149-1203. Das Balancing kauft weitere 20-91 Fahrzeuge fuer 306-1128 EUR je
+Fahrzeug und Woche. Gegen den Besitzwert eines Fahrzeugs (~150-200 EUR/Wo
+Leasing) lohnt es sich nur, wenn der Peak die FESTE Personaldecke bestimmt
+(FTE ~900 EUR/Wo) — dann rechnen sich 306 und 660, nicht 897-1128. Die
+Paper-Metrik (Flotten-CV) wird wie designt gesenkt; sie misst Flachheit, nicht
+Flottengroesse. Empfehlung: beide Betriebsmodi (kostenoptimal vs. geglaettet)
+mit explizitem Preis berichten; Balancing ueber Fahrzeugtag-Schranke oder
+Peak-Ziel begrenzen, nicht ueber das (nicht bindende) Budget.
+
+### 40.11 Korrektur zu 40.10: In der Betreiber-Sicht lohnt sich das Balancing deutlich
+
+40.10 verglich Routing-Euro (inkl. 189,15 EUR je zusaetzlichem Fahrzeugtag)
+mit Leasingkosten — falsche Waehrung. `FIXED_COST_EUR = 189.15` je Fahrzeug
+und TAG enthaelt den Fahrer; ein Betreiber besetzt jeden Hub aber fuer seinen
+WOCHEN-Peak: der Fahrer ist ohnehin angestellt, unterhalb des Peaks sind nur
+die variablen km-Kosten real. Betreiber-Kosten = variabel + 6 x 189,15
+(= 1 135 EUR) je Peak-Fahrzeug und Hub.
+
+| (P, theta) | Routing St.1->3 | Fahrzeugtage | variabel | Σ Hub-Peak | Betreiber-Kosten St.1->3 |
+|---|---|---|---|---|---|
+| (0, 0.3) | +25.7k | +104 | +6.1k | 1228 -> 1156 (-72) | **-75.7k EUR/Wo** |
+| (0, 0.6) | +27.8k | +103 | +8.3k | 1295 -> 1148 (-147) | **-158.5k** |
+| (0.5, 0.3) | +22.6k | +94 | +4.8k | 1216 -> 1184 (-32) | **-31.5k** |
+| (0.5, 0.6) | +18.8k | +68 | +6.0k | 1226 -> 1167 (-59) | **-61.0k** |
+| (0, 1.0) | +6.0k | +19 | +2.5k | 1666 -> 1406 (-260) | **-292.6k** |
+| (0.25, 1.0) | +13.6k | +60 | +2.2k | 1315 -> 1155 (-160) | **-179.3k** |
+
+Lesart: Von den +18..28k Routing-Euro des Balancings sind 13..20k blosse
+Fahrzeugtag-Fixkosten unterhalb des Peaks — in der Betreiber-Sicht kein
+Aufwand. Real kostet die Glaettung 2..8k EUR/Wo variabel und spart 32..260
+Peak-Fahrzeuge je 1 135 EUR. Trog-Fuellung (40.10) ist in dieser Sicht
+unschaedlich. Fazit: Balancing behalten; zwei Kostenlinsen berichten
+(Routing = vergleichbar mit Submission; Betreiber = Wochen-Fixkosten je
+Hub-Peak). Sauberere Loesung fuer Stufe 2/3: Zielfunktion Σ Hub-Peak statt
+Spannweite, Akzeptanz oekonomisch (Δvariabel < 1 135 x ΔPeak) statt
+5-%-Budget — Donnerstags-Option, falls Gate U und Validierung im Plan liegen.
+Offen: Betreiber-Baseline (theta=0-Profil) fuer Einsparungen in dieser Linse.
+
+### 40.12 Betreiber-Linse mit Baseline: die Headline verliert, P=0,25 gewinnt (2026-08-26)
+
+Baseline (theta=0, alle taeglich): Routing 1 909 432 | Fahrzeugtage 6 375 |
+variabel 703 601 | Σ Hub-Peak 1 239 | **Betreiber-Kosten 2 109 742 EUR/Wo**
+(variabel + 6 x 189,15 je Peak-Fahrzeug und Hub).
+
+| (P, theta) | Routing-Ersparnis | Betreiber-Ersparnis | Σ Hub-Peak vs. 1 239 |
+|---|---|---|---|
+| (0, 1.0) | 22,78 % | **6,08 %** | **+13,5 %** (1 406) |
+| (0.25, 1.0) | 18,51 % | **16,75 %** | -6,8 % (1 155) |
+| (0, 0.6) | 3,45 % | 6,08 % | -7,3 % |
+| (0, 0.3) | 1,81 % | 4,75 % | -6,7 % |
+| (0.5, 0.6) | 1,71 % | 4,66 % | -5,8 % |
+| (0.5, 0.3) | 1,09 % | 3,20 % | -4,4 % |
+
+Lesart: Die publizierten 22,8 % bei P=0 sind ueberwiegend vermiedene
+Fahrzeugtag-Fixkosten an ausgesetzten Tagen; mit fest angestellten Fahrern
+spart der Betreiber die nicht — und braucht sogar 13,5 % mehr Wochenflotte,
+weil die Konsolidierung die Nachfrage auf wenige Tage buendelt. Bei P=0,25
+glaettet die Strafe das Profil: 16,75 % Betreiber-Ersparnis mit 6,8 % weniger
+Fahrzeugen. Konsequenz: Stufe 2 wird als Betreiber-Kosten-Optimierung neu
+gebaut (Task 6e: Akzeptanz Δvariabel + 1 134,90 x ΔPeak_h + ΔStrafe < 0,
+kein Budget, Stufe 3 entfaellt), und das Paper berichtet beide Linsen.
+
+**Kostenmodell-Befund (wichtig fuer den Methodentext):** VROOMs Default
+`per_hour = 3600` (1 ct/s) ist in ALLEN Labels aktiv, weil requests.py
+`per_hour` bei 0 nicht setzt. Trainingspool: Residuum/Dauer = 36,09 EUR/h,
+Verhaeltnis zu 36,00 = 1,002 (p5-p95 1,002-1,003). Effektives Modell:
+189,15/Fahrzeug + 0,3864/km + 36 EUR/Routenstunde. **Anteile praezise
+(Nachtrag 29.08., Review-Befund I3):** auf dem **Trainingspool**
+(`results/supplementary/sweep_v3_mergefix/training_matrix.csv`, 2 733 Zeilen,
+alle OK) **72,2 / 6,0 / 21,7 %** — genau die Zahl, die das Paper (§2.2,
+Supplement S2) druckt; auf den **Validierungslabels**
+(`revision_2026_08_v6/validation/tab_vroom_v2.csv`, 8 609 saubere Zeilen)
+**70,7 / 6,1 / 23,2 %**. Anteil = `189,15*Σ n_routes` / `0,3864*Σ km` /
+`36*Σ duration_h`, geteilt durch die Σ Solver-Kosten. Die frueher hier
+notierten `(72 / 6 / 22 %)` waren dieselbe Trainingspool-Messung, nur
+gerundet; die Population steht jetzt in beiden Dokumenten dabei, weil die
+beiden Instanzmischungen um 1,5 pp auseinanderliegen. Pipeline
+intern konsistent (Labels = Surrogat = Validierung = Buendel-Pool, gleicher
+Builder); die Dokumentation ("Arbeit in Fixkosten, per_hour 0") ist falsch;
+alpha = 1,343 absorbiert im Daganzo-Rueckgrat einen Teil des fehlenden
+Zeitterms. Request-Builder jetzt NICHT aendern (Label-Konsistenz); Paper-Text
+korrigieren; Roadmap. Fahrzeug-Proxy ceil(n/230) == VROOM n_routes in 99,7 %
+von 4 230 Instanzen.
+
+### 40.13 Buendel-Pool und Gate U: Stand und Regeln (2026-08-26 abends)
+
+- **Pool (Task 8/9):** volles Grid -> 2 589 einzigartige Buendel (Express 2-10
+  Mitglieder, Liefertag 2-5); Auswahl 877 = alle 235 Bins (Art x Mitglieder x
+  Nachfrage-Terzil x Flaechen-Terzil x Provider) mit >= 4 Zeilen; VROOM-
+  Durchsatz 158 Solves/h bei 3 parallelen Requests (Median 34 s seriell);
+  Label-Konsistenz mit dem Sweep numerisch bestaetigt (36,00 EUR/Routenstunde
+  im Pool = per_hour-Default aktiv, s. 40.12).
+- **Label-Rauschen:** Fahrzeug-Startoffsets aus hash(seed_key) (prozessweise
+  gesalzen) — geteilt mit dem Sweep, unverzerrt im Kleinen (±0,4 %), einseitig
+  nach oben bei Fahrzeugzahl-Flips (bis ~20 %). Floor fuer Gate-U-MAPE.
+- **Rundungs-Reihenfolge (Roadmap):** build_cost_matrices_ml rundet den
+  Express-Abzug einmal ueber die Summe der Haltetage (costs.py:596-601); der
+  skalare Produktionspfad (demand.compute_shifted_demand_plz:384-389) und die
+  Validierungsskripte runden pro Tag -> ±1 Paket in 2/274 Buendeln. costs.py
+  ist der Ausreisser.
+- **Gate U vorlaeufig (314 Zeilen, nur Phase A):** OOF-MAPE 4,61 %, Bias
+  +0,40 % (beide bestanden), Lernkurve 5,68/5,10/4,61 % (50/75/100 %).
+  Schwaches Stratum: 2-Mitglieder-Buendel (~7 % MAPE); 5 Bins mit >= 6 Labels
+  systematisch verzerrt (+5..+9 %, einer -7,6 %) -> Phase-B-Prioritaet.
+- **Gate-U-Regel (Ruling):** Kriterium 3 ("kein verdaechtiger Bin") gilt nur
+  fuer Bins mit >= 6 trainierbaren Labels; duenne Bins werden berichtet, nicht
+  gewertet, weil Task 11 deren Buendel per Support-Check (>= 4 Labels UND nicht
+  verdaechtig) ohnehin auf Σ-Einzelpreise zurueckfaellt — gezaehlt und im
+  Report ausgewiesen. Training schliesst Zeilen mit n_unassigned > 0 oder
+  jobs_removed > 0 aus; PARTIAL wird separat ausgewiesen.
+
+**Entscheidung zum per_hour-Term (Lasse, 2026-08-26 abends):** akzeptieren fuer
+diese Revision — kein Relabel, kein Retrain, kein VROOM-Neulauf. Begruendung:
+der Vergleich ist konsistent (Baseline, Szenarien, Prognose, Ist mit demselben
+Term), und die Richtung ist konservativ: die Routenzeit besteht grossteils aus
+Servicezeit an den Stopps (120 s/Paket), die ueber Baseline und Szenario nahezu
+gleich bleibt — ein fast konstanter Term in Zaehler und Nenner drueckt die
+Prozentzahl; ohne ihn laegen die relativen Einsparungen hoeher. Paper: effektives
+Modell benennen; Sensitivitaet an den validierten Punkten (Szenarioseite exakt
+via fixed + km; Baseline als Prognose gekennzeichnet). Betreiber-Linse: der Term
+zaehlt Arbeit doppelt (W enthaelt sie bereits) -> Ersparnisse fair, Absolutwerte
+~22 % zu hoch; 6e bewertet Zeitersparnis implizit mit 36 EUR/h (zweitrangig,
+Fixkosten dominieren). Roadmap: per_hour explizit setzen; VROOM-frei relabeln
+(Pool + Buendel-Pool haben Dauern; Validierung exakt via fixed + km) und
+retrainen — Routen bleiben dann leicht zeitoptimiert (konservativ).
+
+## 40.14 Operator-Linse: die Frequenzsperre der Stufe 2 war das eigentliche Leck (26.08., 20:10)
+
+- Messung v3 (P=0, θ=1): Σ Hub-Peaks 1 286 gegen flache Untergrenze Σ_h ⌈Fahrzeugtage_h/6⌉ = 969 → Lücke 317 Peak-Fahrzeuge = 360 k€/Woche = 17.1 % der Baseline-Operator-Kosten (Run 2: 438 = 497 k€).
+- Ursache: 8 der 16 DHL-Hubs bedienen genau EINE Zelle. Ein Ein-Zellen-Hub mit Zwei-Tage-Muster hat unter jeder Rotation das Profil `0 0 33 0 0 29`; der Peak sinkt nur durch mehr Liefertage. Stufe 2 durfte bisher nur um-timen (`preserve_frequency=True`).
+- Test frequenzfreier Polish (P=0, θ=1, Start Stufe 1): DHL Operator-Kosten 814 314 → 595 067 €/Woche (−27 %), Σ Hub-Peaks 654 → 447, Routing +4.2 %, Ø Liefertage 2.08 → 3.06, paketgewichtete Wartezeit 0.952 → 0.621 d; Ein-Zellen-Hubs → täglich, Güterbahnhof (13 Zellen) bleibt bei rotierten Zwei-Tage-Mustern. Hermes (1 Hub, viele Zellen) nur −1.6 %.
+- Konsequenz (Ruling, Task 6f): Stufe 2 bei θ>0 frequenzfrei, θ=0 gepinnt (Baseline = täglich), Best-of-3-Starts, Tabellen mit zwei Plänen × zwei Linsen. Erwartung: Operator-Ersparnis bei (0,1) deutlich über den 12.6 % von v3, Wartezeit sinkt. Paper-Botschaft: In der Operator-Linse zahlt sich Konsolidierung dort aus, wo ein Depot Liefertage über mehrere Zellen rotieren kann; Ein-Zellen-Depots fallen auf (fast) tägliche Zustellung zurück — temporale Konsolidierung spart dort nur Kilometer, nicht Flotte.
+
+## 40.15 Grid v5 (frequenzfreier Operator-Polish, Best-of-3) — Zwischenstand 27.08., 07:20
+
+- Lauf: 616 Triples in 107.6 min (Code 3fe1d9e), Baseline unverändert (1 909 432 € Routing / 2 109 742 € Operator / Σ Hub-Peaks 1 239). Stufe 1 bitidentisch zu Run 2 (max. Abweichung 0.000000 € über 616 Triples). v5 ≤ v4 auf allen 275 vergleichbaren Zeilen (Ø −0.84 %).
+- θ=1, zwei Pläne je Punkt (Routing-optimal | Operator-poliert): P=0: Routing 23.10 % | 20.43 %; Operator −7.79 % | **24.69 %**; Σ Hub-Peaks 1 666 | 1 030 (−16.9 % vs Baseline); Wartezeit 0.97 | 0.77 d; Ø Liefertage 2.03 | 2.37. P=0.25: 19.22 | 17.07; 8.25 | 22.82; Peaks −17.1 %; Wartezeit 0.44 | 0.39. P=0.5: 14.12 | 13.19; 10.88 | 18.48. P=0.75: 10.66 | 9.68; 9.91 | 14.79. P=1: 7.91 | 7.24; 6.81 | 11.82. P=2: 1.38 | 1.92; 1.06 | 6.04. P≥5: Stufe 1 täglich (0 %), Stufe 2 streicht wenige Tage (0.7–1.4 % Operator).
+- Lesart: Der routing-optimale Plan ist in der Operator-Linse bei P=0 SCHLECHTER als das Baseline (−7.8 %), weil Zwei-Tage-Muster die Hub-Peaks verdreifachen; der Operator-Polish holt daraus 24.7 % — hauptsächlich über die Frequenzfreiheit (Ein-Zellen-Hubs → täglich, Lücke zur flachen Untergrenze von 317 auf 50 Peak-Fahrzeuge) und den Range-Start (bei (0,1) gewinnt er alle 7 Provider). Die Operator-Linse bevorzugt jetzt wieder P=0 (24.7 %) vor P=0.25 (22.8 %), aber mit halber Wartezeit bei P=0.25 (0.39 vs 0.77 d) — der Knick bleibt bei P=0.25.
+- P=0 bei Teiladoption: Operator-Ersparnis 3.9 % (θ=0.1) → 11.0 % (θ=0.8), nirgends negativ (Run 2: −2.1 % bei θ=0.9). Routing-Ersparnis des Operator-Plans nur 0.4–4.6 %.
+- Wartezeit bewegt sich in beide Richtungen: bei P·θ klein streicht der Polish Liefertage (unbepreist bzw. billig), bei hohem θ fügt er hinzu. Immer pro Plan berichten, keine Richtungsaussage.
+- Offen: Head-Grid (Task 11) wird diese Zahlen mit BundleHead-Preisen nochmals leicht verändern; VROOM-Validierung θ<1 (Task 12) steht aus.
+
+## 40.16 Gate U final und die Support-Regel des BundleHead (27.08., 07:20)
+
+- Pool: 877 realisierte Bundles mit VROOM gelöst (alle OK), 235 Bins (kind × Mitglieder × Nachfrage-Terzil × Flächen-Terzil × LSP). Pool-weit OOF (GroupKFold nach Mitgliedermenge): MAPE 5.37 %, Bias +0.57 %; Lernkurve 50/75/100 %: 6.26 / 5.70 / 5.37 %. Drei getragene Bins mit |Bias| > 5 % (UPS 2-Zellen-Delivery +8.5 % bei 560 Vorkommen; DPD 2-Zellen-Delivery −5.7 %; Hermes 2-Zellen-Express +5.4 %).
+- 211 der 235 Bins sind dünn (< 6 Labels) und werden nie head-gepreist. Im zertifizierten Träger (21 Bins mit ≥ 6 Labels und |Bias| ≤ 5 %): OOF-MAPE 2.85 % (occurrence-gewichtet 2.71 %), |Bias| 1.35 %, Abdeckung 44 % der gepoolten Deployment-Instanzen (Delivery 53 %, Express 22 %).
+- Phase B (300 augmentierte Zeilen) entfällt: Sie brächte dem UPS-Blocker genau ein Label und den Kap-Kanten-Bins +2, die unter der 6er-Schwelle blieben — kein Deployment-Effekt, aber ~3 VROOM-Stunden. Kein Overshoot; die VROOM-Zeit geht in die Validierung (Task 12).
+- Ruling (Task 10b): Gate U zertifiziert die deployte Population (MAPE im zertifizierten Träger ≤ 5 %, Gesamt-Bias ≤ 2 %, Abdeckung ≥ 25 %); der Head preist nur zertifizierte Bins, überall sonst Σ-single, jeder Fallback wird gezählt; Verweigerung außerhalb des Trägers zur Serve-Zeit. Pool-weite Diagnostik bleibt im Report. Für das Paper: „Der BundleHead wird dort eingesetzt, wo er zertifiziert ist (21 Bins, 44 % der gepoolten Instanzen, 2.7 % OOF-MAPE); sonst Summe der Einzelzellenpreise."
+
+## 40.17 Rabatt-Szenario: Penalty als echte Auszahlung (27.08., 09:00)
+
+- Frage (Lasse): Was bleibt, wenn der Service-Penalty kein Schattenpreis ist, sondern tatsächlich an wartende Kunden gezahlt wird? Zwei Varianten auf Grid v5, beide Pläne, beide Linsen: (a) P € je Paket und Wartetag (= penalty_eur des Gitters), (b) pauschal 0.50 € je verzögertem wartewilligem Paket. Verzögerte Pakete je Zelle = Nachfrage an Nicht-Liefertagen × Willigkeitsanteil (segmentgenau: b2c/b2b-Mapping der Pipeline, Wochen-b2c-Anteil je Zelle).
+- θ=1, Operator-Plan — verzögerte Pakete/Woche: 680 k (P=0), 404 k (0.25), 248 k (0.5), 165 k (0.75), 111 k (1) von 1.263 Mio. Netto in der Operator-Linse: (a) 24.7 / 17.0 / 11.6 / 8.4 / 6.2 %; (b) 8.6 / 13.2 / 12.6 / 10.9 / 9.2 %. Netto in der Routing-Linse: (a) 20.4 / 10.6 / 5.6 / 2.6 / 1.0 %; (b) 2.6 / 6.5 / 6.7 / 5.4 / 4.3 %.
+- Break-even-Rabatt (so viel könnte der Betreiber je verzögertem Paket zahlen und wäre noch bei ±0): Operator-Linse 0.77 / 1.19 / 1.57 / 1.89 / 2.24 €; Routing-Linse 0.57 / 0.81 / 1.02 / 1.12 / 1.24 €.
+- Lesart: Bei 50 Cent Pauschalrabatt ist P=0 nicht mehr der beste Punkt (zu viele verzögerte Pakete); das Optimum rutscht auf P=0.25–0.5 mit 12.6–13.2 % Netto-Operator-Ersparnis. Bei Teiladoption (P=0.25, θ<1) trägt der Rabatt die Routing-Linse ins Minus (−0.3 … −2.4 %), die Operator-Linse bleibt bei +3 … +6 %. Der Penalty ist also nicht nur Steuerungsgröße: Als Auszahlung interpretiert halbiert er die Ersparnis, hebt sie aber nicht auf.
+
+## 40.18 P* ist linsenabhängig; Figuren-/Tabellen-Stand v5 (27.08., 09:40)
+
+- Knick-Optima (Chord-Distanz auf der (Ersparnis, Wartezeit)-Front bei θ=1), Routing-Linse (Stufe-1-Plan): unverändert zur Einreichung — Amazon 0.25, DHL 0.25, FedEx 0.5, Hermes 0.5, UPS 0.5, DPD 0.75, GLS 0.75. Operator-Linse (Operator-Plan): Amazon 0.25→0.5 (service-bound→hybrid), FedEx 0.5→0.75 und Hermes 0.5→0.75 (hybrid→cost-aggressive); DHL, UPS, DPD, GLS unverändert. Konsequenz: Die Carrier-Klassen im Paper brauchen einen Linsen-Zusatz („in der Routing-Linse … ; in der Operator-Linse rücken drei Anbieter eine Klasse nach oben, weil die Peak-Glättung dort erst bei höherem P greift").
+- Fig. 6 (d)–(f) können aus v5 nur Lieferfrequenz statt Median-€-Ersparnis je PLZ zeigen (keine Zellkosten in den Tabellen). Ruling: Der Task-11-Runner schreibt je Zelle und Plan die Plankosten (Einzeltour oder paketproportionaler Anteil der Pooltour) in `_tab_chosen_v2.csv`; Fig. 6 (b)–(f) werden auf dem Head-Grid daraus neu gebaut. Panel (f) nach Hub-Größe zeigt bereits die §40.14-Aussage: Ein-Zellen-Hubs bleiben bei 6 Liefertagen für alle θ.
+- Baseline-Variationskoeffizient der Systemflotte Mo–Sa: 0.139 in v5 (partitionsbewusste Flottenzählung) gegenüber 0.135 in der Einreichung — Werte nie über Grids hinweg zitieren, jede Figur nennt ihr eigenes Baseline.
+- Farbquelle aller Revisionsfiguren: `scripts/presentation/_style.py` (ein `scripts/figures/_style.py` existiert nicht); Carrier-Klassen-Palette dort ergänzt.
+- CO₂-Tabelle (§38.6) unverändert übernommen, bis Task 12 reale VROOM-Kilometer liefert.
+
+## 40.19 VROOM-Validierung v5 (θ=1, beide Pläne, beide Linsen) — 27.08.
+
+- 5 958 Instanzen (Items 1+2: Operator-Plan P∈{0,0.25,0.5,0.75}, Routing-Plan P∈{0,0.25}), 1 PARTIAL (PLZ 30855, 1 Job unzugeordnet; in Summen enthalten, aus MAPE ausgeschlossen). 78 % Cache-Treffer, 104 min.
+- Einzelzellen-Touren: MAPE 2.3–3.8 %, Bias +1.5 … +3.5 % (Surrogat sagt zu hohe Kosten vorher → Ersparnisse konservativ). Gepoolte Gruppen bei θ=1 (n = 1–29, in v5 per Σ-single bepreist): MAPE 8.6–32.6 % — genau die Lücke, die der BundleHead im Head-Grid schließen soll.
+- Beide Linsen, vorhergesagt vs. VROOM: Operator-Plan (0,1) OpCost 1 588 816 vs 1 570 163 € (+1.19 %), Σ Hub-Peaks 1 030 vs 1 031; (0.25,1) +1.65 %, 1 027/1 028; (0.5,1) +2.29 %, 1 061/1 063; (0.75,1) +2.77 %, 1 087/1 092. Routing-Plan (0,1) +0.51 %, 1 666/1 667; (0.25,1) +1.26 %, 1 315/1 315. Die Flottenzählung ⌈Pakete/230⌉ trifft die tatsächlichen Routenzahlen praktisch exakt; die Kostenniveaus liegen 0.5–3 % über VROOM.
+- Offen: das VROOM-Baseline (θ=0, täglich, Tourregel) fehlt noch in der Validierung — ohne es keine „tatsächliche Ersparnis in %"; wird mit dem Head-Grid nachgeholt (überwiegend Cache-Treffer).
+
+## 40.20 Warum der Frequenzmix bei θ=0.9 wieder dichter wird (Lesehilfe zu Fig. 4, 28.08.)
+
+- Bei P=0.25 wählt der Optimierer bei Teiladoption fast keine Zwei-Tage-Pläne: Jeder gestrichene Liefertag erzwingt eine Express-Sammeltour für die Nicht-Wartewilligen; bei θ=0.5 sind das 50 % der Pakete an vier Tagen — fast so teuer wie die gesparten Touren, plus Penalty P·θ·Pakete·1.0 d. Kompromiss: 4–5 Liefertage. Erst bei θ=1 (kein Express) lohnt der Zwei-Tage-Plan für ~25 % der (ländlichen) Gebiete.
+- Der Rücktrend zu mehr Liefertagen zwischen θ=0.8 und 0.9 hat zwei Ursachen: (a) die Penalty skaliert mit θ (mehr wartende Pakete bei festem P → mehr Strafe je gestrichenem Tag); (b) der Express-Rest wird dünn (10 % der Pakete) und erreicht in kleinen Depots die 230-Paket-Pooling-Schwelle nicht → Ein-Fahrzeug-Minitouren für wenige Pakete → es ist billiger, den regulären Liefertag zu behalten. v5, P=0.25: Ø Liefertage 4.66 (θ=0.8) → 4.83 (θ=0.9), Express-Anteil an den Kosten 8.3 % → 6.1 %.
+- Bei θ=1 fällt der Express-Zwang schlagartig weg → Sprung zu dünnen Plänen (P=0: Zwei-Tage-Anteil ~30 % → 100 %). Kein Artefakt, sondern die Ökonomie des Restvolumens: Die letzten 10 % Nicht-Wartewilligen kosten unverhältnismäßig viel. Satz für Teil B (Results, Teiladoption) und für die Diskussion der Adoptionsschwelle.
+- **Quelle der Express-Kennzahlen (Nachtrag 28.08., 16:30):** Express-Sammeltour-Kosten je Fahrzeugtag = Σ `express_cost_eur` (`tab_costs_v2.csv`) / Σ `express_veh` (`tab_fleet_per_hub_v2.csv`) je (P, θ) über alle Hubs; reguläre Tour ≈ Σ `cost_stage1_eur` / Σ `fleet` bei (0, 0). Auf v6 bei P = 0.25: ≈ 339 €/Fahrzeugtag (θ = 0.1) → ≈ 519 € (θ = 0.9) gegen ≈ 298 € regulär; Express-Kostenanteil 9.6 → 7.4 %. Bisher nur im Scratch-Skript `fig_mechanism.py` (Dashboard-Figur); wird als `scripts/revision/77_mechanism_v2.py` + `tab_mechanism_theta_P_v2.csv` in Task 18 ins Repo portiert — erst danach im Paper zitierbar.
+
+## 40.21 Grid v6 (v5 + BundleHead) — Endzahlen für das Paper (28.08., 14:30)
+
+- 616 Triples in 168.5 min, keine Fehler; Head `bundle_head@40ea27e7c602+b1522eab0e90` (21 zertifizierte Bins). Baseline: 1 898 091 € Routing / 2 098 401 € Operator (v5: 1 909 432 / 2 109 742 — der Head bepreist die schon im Baseline gepoolten Kleinzellen-Touren um 11.3 k€ günstiger; G4-Korridor eingehalten). Σ Hub-Peaks 1 239 unverändert.
+- θ=1, Routing-Plan in der Paper-Währung: **22.6 / 18.7 / 13.5 / 10.1 / 7.6 %** (P = 0 / 0.25 / 0.5 / 0.75 / 1); Einreichung (nach Balancing) 22.8 / 18.5 / 13.5 / 10.2; v5 Stufe 1 23.1 / 19.2 / 14.1 / 10.7. Wartezeit 0.97 / 0.44 / 0.20 / 0.12 d.
+- θ=1, Operator-Plan in der Operator-Währung: **24.3 / 22.6 / 17.8 / 14.1 / 11.6 %**; Σ Hub-Peaks −16.9 / −17.2 / −14.3 / −12.0 / −10.5 %; Wartezeit 0.77 / 0.39 / 0.22 / 0.13 d; Ø Liefertage — **Zell-Mittel** (`mean_days_plan2`, die Definition, die das Paper für f̄ benutzt: „the unweighted average number of weekly delivery days across cells", `tbc_preprint_main.tex:432`) **2.39 / 3.27 / 4.19 / 4.73 / 5.05**; **Provider-Mittel** (`mean_days_plan2_provmean`) 2.38 / 3.24 / 4.17 / 4.71 / 5.04 — das ist die Reihe, die hier bis 29.08. ohne Kennzeichnung stand (Review-Befund M4). Beide Maße sind vertretbar, aber nur das Zell-Mittel deckt sich mit dem Paper; wer aus dieser Zeile zitiert, nimmt das Zell-Mittel. Lücke zur flachen Untergrenze 50 / 32 / 46 / 60 / 70 Peak-Fahrzeuge.
+- Head-Anteil an den gepoolten Kosten: 53 % bei θ=1 (gepoolt = 8.4 % der Gesamtkosten), 24–35 % bei θ<1. v6−v5 im Gitter: Routing-Plan +0.20 pp im Mittel (−0.66 bei (0.5,1) … +0.62), Operator-Plan +0.17 pp, Wartezeit ±0.01 d → der Head ist eine Feinkorrektur, keine Aussagenänderung.
+- Teiladoption gegen die Einreichung: Beule (10, 0.1) 0.40 % (Einreichung 3.6 % / 42 % nicht-tägliche Zellen); „Wochenflotte −6.3…−6.8 % bei θ=0.1" → Routing-Plan −1.5…−1.9 % Fahrzeugtage (das alte Maß war überwiegend räumliches Pooling), Operator-Plan Σ Hub-Peaks −4.8…−5.4 %.
+
+## 40.22b Supp-Fig. 7: Wochen-Flottenprofil je Carrier-Klasse und Plan (28.08., 15:10)
+- Skript `scripts/revision/75_fig_fleet_week_classes.py` → `results/revision_2026_08_v6/figures/supp_fig7_fleet_week_classes.{pdf,png}` + `tables/tab_fleet_week_classes_v2.csv`. 4×4 Small Multiples: Zeilen = Service-bound (Amazon, DHL) / Hybrid (FedEx, Hermes, UPS) / Cost-aggressive (DPD, GLS) — Routing-Linsen-Taxonomie aus `tab_pstar_knees_v2.csv` — plus Gesamtsystem; Spalten P = 0 / 0.25 / 0.5 / 0.75, θ = 1. y indexiert auf den Baseline-Wochenmittelwert der Klasse (= 100), damit einzelne Anbieter nicht rückrechenbar sind. Gepunktet: Σ Depot-Peaks (die Größe der Operator-Linse).
+- Datenpfad: Baseline und Operator-Plan aus `tab_fleet_per_hub_v2.csv`; Routing-Plan aus `schedule_idx_stage1` mit dem partition-aware Fleet-Counter nachgerechnet (Matrizen hängen nur von θ ab → einmal je Provider). Fünf Gates: Baseline P-invariant, Stufe-2-Nachrechnung == Fleet-Tabelle (Profil und Σ Peaks), Systemprofil == `sys_Mon..Sat` im Grid, Baseline == (0,0)-Zeile, jede LSP genau eine Klasse. Alle grün.
+- **Kernbefund (Flexibilitätsthese):** TBC schafft den Freiheitsgrad „Liefertag“, homogenisiert aber nicht von selbst. Routing-Plan, System, P = 0: Σ Peaks 117 → **157** (Index; absolut 1 239 → 1 666, +34 %), CV 0.139 → 0.097; P = 0.25: 117 → 124, CV 0.130 — nicht besser als Baseline. Operator-Plan: Σ Peaks 97 / 97 / 100 / 103, CV 0.029 / 0.023 / 0.044 / 0.069 (P = 0 / 0.25 / 0.5 / 0.75). Peak fällt ~2× so stark wie die Fahrzeugtage (−17/−18 % vs. −7/−9 %) — der Überschuss ist reines Levelling (Mi/Do → Fr/Sa/Mo; Samstag wird von 781 auf 944 hochgeladen).
+- Je Klasse (Operator-Plan, P = 0.25): Service-bound Σ Peaks 117 → 104, CV .14 → .04 (Samstag bleibt bei P ≥ 0.5 die Delle: Amazon/DHL halten Sa niedrig); Hybrid 115 → 89, CV .13 → .01; Cost-aggressive 119 → 86, CV .15 → .01. Der Routing-Plan der Hybrid-Klasse bei P = 0 hat CV 0.31 (Do-Zacke, UPS/Hermes) — das ist die Figur zum Satz „ein pro Tag kostengünstiger Plan kann pro Woche verlustbringend sein“.
+- Auffällig: DHL Routing-Plan bei P ≥ 0.5 == Baseline (kein Cell bündelt), erst der Operator-Polish bewegt DHL (Σ Peaks 468 → 448). ~~Paper-Text (`tbc_preprint_main.tex:162`, „CV up to 60 %“) ist auf v6 noch nicht gezogen (51–84 %).~~ **Erledigt (29.08., Review-Befund M5):** das Manuskript trägt die 51–84 % (Abstract, `tbc_preprint_main.tex:207`), und „60 %“ kommt im tex nirgends mehr vor. Der offene Punkt ist zurückgezogen, damit er nicht ein zweites Mal abgearbeitet wird.
+
+## 40.22 P*-Knicke auf v6 (Korrektur zu §40.18) und die (10, 0.1)-Ecke (28.08., 15:10)
+
+- Routing-Linse (Stufe-1-Plan): unverändert zur Einreichung — Amazon 0.25, DHL 0.25, FedEx 0.5, Hermes 0.5, UPS 0.5, DPD 0.75, GLS 0.75.
+- Operator-Linse (Operator-Plan) auf v6: Amazon 0.25→0.5 (hybrid), Hermes 0.5→0.75 (cost-aggressive), **GLS 0.75→1.0** — außerhalb des Klassenbandes 0.25–0.75, also „unklassifiziert"; FedEx bleibt 0.5 (in v5 war FedEx auf 0.75 gerutscht, GLS nicht — der Head verschiebt bei FedEx/GLS die gepoolten Kosten so, dass die Knicke tauschen). Text: Carrier-Klassen nur linsenspezifisch; drei Anbieter rücken in der Operator-Linse eine Stufe hoch (Amazon, Hermes, GLS), GLS über das Band hinaus.
+- (10, 0.1) auf v6: Routing-Ersparnis 0.40 % (v5: 0.02 %; Einreichung 3.6 %), Ø Liefertage 5.89, ~9.6 % der Zellen nicht täglich (Einreichung: 42 %). Formulierung im Paper: „reduziert sich auf 0.4 % und knapp 10 % nicht-tägliche Zellen" — nicht „verschwindet".
+- Rabatt-Break-even: maßgeblich ist discount_scenarios_v6.csv (exakter Segment-Blend der Willigkeit, Zellpläne aus _tab_chosen): Operator-Linse 0.75 / 1.17 / 1.57 / 1.93 / 2.25 € für P = 0 / 0.25 / 0.5 / 0.75 / 1. Der Deep-Dive-Text (13B) nennt 2.37 € bei P=1 — abweichende Näherung, wird abgeglichen; bis dahin gilt die Tabelle.
+
+## 40.23 G1a auf dem Head-Grid: fünf Beinahe-Gleichstände, kein Defekt (28.08., 15:30)
+
+- Befund: 5 von 1 656 (Zelle, P)-Paaren „entkoppelter" Zellen (Tagesnachfrage ≥ 230 an jedem Tag) haben auf v6 einen anderen Stufe-1-Plan als die head-freie Nachrechnung. Die dd-Kostenzeilen dieser Zellen sind head vs. ohne Head byteidentisch (der Head wird in build_cost_matrices_ml strukturell nie für Einzelzellen referenziert). Δ Zielfunktion je Zelle: +0.39 … +16.41 € = 0.01–0.48 % der Wochenkosten; alle fünf sind Ein-Tages-Nachbarn des Argmin.
+- Ursache: `_pair_polish_round` bewegt zwei Zellen desselben Depots gemeinsam (beide erhalten einen neuen Tages-Toggle, kein „bleiben") und akzeptiert nach dem gemeinsamen Δ. 3/5 direkt: Partner ist eine gepoolte Zelle, deren Preis der Head ändert; 2/5 indirekt: der Head verlängert die Paar-Polish-Trajektorie im Depot. Die Entkopplungs-Prämisse von G1a galt nur für die Einzelzellen-Runde des Coordinate Descent.
+- Größenordnung: Anbieter-Δ cost_stage1 (v6−v5) an diesen Punkten −1 987 … +2 077 € — zwei bis drei Größenordnungen über dem Zellen-Effekt und durch die beabsichtigte Neubepreisung echter Pool-Gruppen dominiert (33–98 % der Pool-Kosten dort head-gepreist).
+- Ruling: G1a toleriert eine Abweichung nur, wenn sie ein Ein-Tages-Toggle ist UND |Δ| ≤ max(20 €, 0.5 % der Zellen-Zielfunktion); alles andere bleibt hartes FAIL. Umsetzung in 62_, Neu-Lauf auf v6.
+- **Ergebnis (28.08., 16:10, Commit 8f97af1):** 62_ auf v6 → G1a **PASS** (1 656 geprüft, 0 harte Mismatches, 5 tolerierte Near-Ties: DPD 30916, FedEx 30938, GLS 30519, GLS 30559, UPS 30625 — exakt die Tabelle der Untersuchung), G1b 680/1 656 Diffs (report-only), G3 PASS (70), G4 1 909 432.42 €/Woche im Korridor [1 895 580; 1 909 748], express_ok. Gesamt PASS. Toleranzen als Konstanten `G1A_TOLERANCE_FLAT_EUR = 20.0`, `G1A_TOLERANCE_REL = 0.005`; tolerierte Zeilen stehen in einer eigenen Tabelle im Report, nie stumm absorbiert. 7 neue Unit-Tests (`tests/unit/test_gates_check.py`).
+
+## 40.23b Karten- und Kurvenfiguren neu aus v6, Operator-Plan, Paper-Stil (28.08., 15:40)
+- Skript `scripts/revision/76_maps_v2.py` → `results/revision_2026_08_v6/figures/supp_map_freq_theta_v2`, `supp_map_saving_P_v2`, `supp_map_wait_theta_v2`, `supp_penalty_raumtyp_v2` (PDF+PNG, `_style.apply("paper")`, `\linewidth`) + je eine CSV in `tables/`. Ersetzt die Präsentationsfiguren fig41/fig44/fig71/fig75, die auf dem Legacy-Stage-3-Grid (`revision_2026_07`) standen. Alles **Operator-Plan (Stufe 2, `plan = "balanced"`)**; Kostenfiguren in der **Routing-Linse** (Operator-Linse ist hub-, nicht zellattributierbar, 72_), θ = 1 only (§38.2a). Quelle: `tab_per_cell_costs_v2.csv`; Gates: Baseline-Zellen planinvariant und täglich, Zellsumme == `routing_saving_plan2_pct` des Grids (1e-6 pp), jedes Polygon einer Modelleinheit zugeordnet, Raumtyp vollständig, θ=0 täglich.
+- **Saving-Karte (θ = 1):** System 20.0 / 16.7 / 12.3 / 9.0 / 6.9 / 2.2 % (P = 0 / 0.25 / 0.5 / 0.75 / 1 / 2); Flächen-Spanne 6.0–29.4 % bei P = 0, Median 20.5 %. Eine Fläche (30419, 7 LSPs) bei P = 2 −0.17 % — Pool-Attributionsrauschen, auf 0 geclippt und in der Fußnote offengelegt (Schwelle −0.5 pp für die divergierende Skala).
+- **Penalty-Kurve nach Raumtyp (θ = 1, euro-gewichtet):** rural 23.2 / 21.8 / 18.0 / 14.1 / 11.0 / 3.7 / 0.65 / 0.40 %, suburban 18.9 / 15.0 / 10.0 / 6.7 / 4.9 / 1.4 / 0.21 / 0.12 %, urban 15.6 / 9.9 / 5.2 / 3.3 / 2.6 / 0.85 / 0.30 / 0.00 % (P = 0 … 10). Anders als Legacy erreicht v6 bei P = 5 nicht exakt null (Polish behält etwas Pooling): ab P = 5 ≤ 0.7 %. Alter Fußnotensatz „every type is driven to zero by P = 5“ ist auf v6 nicht mehr wörtlich haltbar.
+- Saving-Karte nutzt `S.CMAP_SAVING_MAP = "YlGn"` (neu in `_style.py`; die Legacy-fig71-Rampe hellgelb → dunkelgrün, „keine Einsparung“ liest sich blass statt dunkel). Frequenz-Karte zusätzlich für P = 0: `supp_map_freq_theta_P0_v2` (+ `tab_map_freq_theta_P0_v2.csv`).
+- **Frequenz-Karte (P = 0.25):** parcel-gewichteter Median der Schedule-Größe über die LSPs je Fläche (kein .5-Median). Bei θ = 1 dominiert **3 d/wk** (Legacy-Stage-3-Karte: 2 d/wk) — konsistent mit Ø Liefertage 3.24 (§40.21): der Operator-Polish hebt die Frequenz gegenüber dem Routing-Plan an. Ein 2-d/wk-Cluster im Süden bleibt.
+- **Lesehilfe Frequenzkarte P = 0, θ = 1 — der 4-d/wk-Fleck im Westen (31515 Wunstorf):** kein Optimierer-Artefakt, sondern der Ein-Zellen-Depot-Effekt. Stufe 1 setzt dort alle 7 LSPs auf 2 d/wk (DHL: MT, Zellkosten 21 089 → 18 934 €, −10 %). Der Operator-Polish stellt DHL (42 % der Pakete, Depot „Deutsche Post, Wunstorf“ = 1 Zelle) auf **täglich** zurück: bei einem Ein-Zellen-Depot ist der Wochen-Peak des Hubs der Peak dieser einen Zelle, MT hebt ihn 16 → 46 Fahrzeuge (Operator-Kosten der Zelle 22 791 → 55 251 €, +142 %), weil 1 134.90 €/Peak-Fahrzeug die 2 155 € Routing-Ersparnis um das 15-fache übersteigen. Amazon (HAJ8) und DPD werden vom Polish auf 4 d/wk gehoben (Peak-Glättung im Mehrzellen-Hub); der parcel-gewichtete Median aus DHL 6 / Amazon+DPD 4 / Rest 2 ist 4. Gleiches Muster bei allen acht Ein-Zellen-DHL-Depots (30890, 31275, 31303, 31311, 31319, 31515, 31535, 31832): Stufe 1 → 2 d/wk, Stufe 2 → 6 d/wk, Flottenprofil identisch mit Baseline. In den anderen sieben Einheiten ist DHL nur ein kleinerer Paketanteil, deshalb bleibt der Median dort bei 2–3. Kontrastfigur: `supp_map_freq_theta_P0_routing_v2` (Stufe 1, P = 0) — dort ist Wunstorf wie alles andere bei 2 d/wk; `fig_freq` nimmt den Plan aus `cells.attrs["plan"]` (`load_stage1_cells()`).
+- **Wartezeit-Karte (P = 0.25):** parcel-gewichteter Mittelwert der Schedule-Wartezeit je Fläche = Wartezeit eines *gehaltenen* Pakets (bei θ<1 der willige Anteil). Max 0.7 d bei θ = 1 (Legacy 0.9 d).
+
+## 40.24 VROOM-Validierung auf v6 — Items 1+2 (θ = 1), 28.08., 16:30
+
+- Lauf: `67_validate_vroom_v2.py --items 1,2 --head bundle_head.pkl` aus dem Worktree 634433f (kein 67_/src-Drift seit dem Commit), 93.4 min Lösen, 5 927 Instanzen (4 342 Item 1, 1 585 Item 2), Cache-Treffer wie Zensus; **1 PARTIAL** (PLZ 30855, 1 unzugewiesener Job — aus MAPE ausgeschlossen, in den Summen enthalten). Report: `results/revision_2026_08_v6/validation/validation_report.md`, Rohdaten `tab_vroom_v2.csv`.
+- **Operator-Plan (Item 1), Routing-Linse pred / actual €:** P = 0: 1 519 281 / 1 500 583 (+1.25 %); P = 0.25: 1 580 500 / 1 554 152 (+1.70 %); P = 0.5: 1 664 800 / 1 625 713 (+2.40 %); P = 0.75: 1 726 484 / 1 678 455 (+2.86 %). **Σ Hub-Peaks pred / actual:** 1 030 / 1 032, 1 026 / 1 026, 1 062 / 1 064, 1 091 / 1 096. **OpCost-Gap** +1.08 / +1.65 / +2.20 / +2.54 %.
+- **Routing-Plan (Item 2):** P = 0: 1 468 411 / 1 455 962 (+0.85 %), Σ Peaks 1 666 / 1 667; P = 0.25: 1 543 060 / 1 519 676 (+1.54 %), Peaks 1 314 / 1 314.
+- **MAPE je Instanzart** 1.9–3.7 % (Einzeltouren 2.3–3.7 %, Pool-Gruppen 1.9–3.2 %), Bias durchgehend positiv (+0.02 … +3.4 %): das Surrogat (Daganzo-LGB-Hybrid + Head) preist **konservativ**, VROOM findet etwas billigere Touren; der Bias wächst mit P (mehr Liefertage → mehr, dünnere Einzeltouren). Flottenzählung nahezu exakt (Peaks ±0–5 Fahrzeuge auf ~1 000).
+- Realisierte Ersparnis in % folgt erst mit Item 0 (θ = 0-Baseline, gestartet 16:45, ~3 h) — der Report weist das explizit aus; Item 3 ((0.25, 0.5) Operator-Plan, G6-Fallback, ~4 h) danach.
+- **Saubere Basis, die das Paper druckt (Nachtrag 29.08., Review-Befund I1).** Die Zahlen oben sind die „all“-Basis (PARTIAL enthalten). Auf der **sauberen** Basis (`n_unassigned == 0 ∧ jobs_removed == 0 ∧ status ∈ {OK, CACHED}`) über **alle sechs** konsolidierten Punkte: **Routing-Linse 0.821 / 1.246 / 1.539 / 1.695 / 2.404 / 2.862 %**, **Operator-Linse 0.491 / 1.081 / 1.233 / 1.648 / 2.203 / 2.539 %** (Reihenfolge nach Routing-Gap: Item 2 P=0, Item 1 P=0, Item 2 P=0.25, Item 1 P=0.25/0.5/0.75). Der Unterschied zur „all“-Basis betrifft nur Item 2 P=0 (0.82 statt 0.85 %, die eine PARTIAL-Zeile). §3.4 des Papers schreibt daher **„0.8 bis 2.9 % und 0.5 bis 2.5 %“** — beide Spannen über **dieselbe** Population; bis 29.08. stand dort routingseitig „1.2 bis 2.9 %“, was nur die vier Item-1-Punkte abdeckte, während die Operator-Spanne alle sechs abdeckte. Baseline (Item 0, n = 1 683) sauber: +4.385 / +4.047 % → die gedruckten 4.4 / 4.0 %.
+
+## 40.25 VROOM-Validierung auf v6 — Item 0 (θ = 0-Baseline) und realisierte Ersparnis, 28.08., 18:50
+
+- Lauf: `--items 0` (Zensus zuerst! 67_ zensiert nur inline, wenn `instance_queue.csv` fehlt), 1 683 Instanzen, 672 neu gelöst, 124 min, **0 PARTIAL**. Baseline-Summen: **vorhergesagt** Routing 1 898 091 € / OpCost 2 098 401 €; **VROOM** Routing **1 818 360 €** / OpCost **2 016 778 €** → Surrogat **+4.4 % / +4.0 %** über VROOM an der täglichen Baseline — deutlich mehr Bias als an den Szenario-Punkten (+0.85 … +2.9 %, §40.24).
+- **Realisierte vs. vorhergesagte Ersparnis (Routing-Linse):** Routing-Plan (0, 1) 22.64 → **20.58 %** (clean; 19.93 % mit dem PARTIAL 30855), (0.25, 1) 18.70 → **16.43 %**; Operator-Plan 19.96 → 17.48 % (P = 0), 16.73 → 14.53 % (0.25), 12.29 → 10.59 % (0.5), 9.04 → 7.69 % (0.75).
+- **Operator-Linse:** Operator-Plan 24.30 → **22.08 %** (P = 0), 22.55 → 20.73, 17.77 → 16.29, 14.10 → 12.84; Routing-Plan −8.37 → **−12.09 %** (P = 0), +7.78 → +5.22 % (0.25).
+- Lesart: Der Bias des Hybrid-Surrogats ist nicht konstant — dünne tägliche Einzeltouren (Baseline) werden stärker überschätzt als gebündelte Touren; die Optimierung vergleicht deshalb eine zu teure Baseline mit realistischeren Szenarien und **überzeichnet die Ersparnis um ≈ 2 pp**. Die Einreichung hatte den umgekehrten Fall (22.8 vorhergesagt → 23.7 realisiert). Für das Paper: vorhergesagte Werte bleiben das Optimierungsergebnis, realisierte Werte werden daneben berichtet; Formulierung „die Vorhersage ist eine obere Schranke (≈ 2 pp)“ statt „konservativ“. Rangfolge und Vorzeichen aller Aussagen bleiben (Routing-Plan in der Operator-Linse noch deutlicher negativ: −12.1 %).
+- Item 3 ((0.25, 0.5) Operator-Plan, G6-Teilmenge) folgt (Zensus 19:40).
+
+## 40.26 Zeitkosten-Sensitivität (Task-15-Memo, 28.08., 20:05) — Prämisse von §40.12/§40.13 korrigiert
+
+- **Korrektur:** VROOM bepreist `per_hour` nur auf `summary.duration` (Fahrzeit); Servicezeit ist ein getrenntes Feld und geht nicht in `cost` ein (geprüft an `results/cache/bundle_Amazon/0972efd2320753dd.json`: duration 28 856 s, service 36 240 s). Die Annahme in §40.12/§40.13 („Routenzeit ist großteils Servicezeit → ohne Zeitterm läge die Ersparnis höher") ist damit falsch; **das Vorzeichen dreht sich.** Der Zeitterm wirkt als zweiter Distanzterm: corr(Dauer, Distanz) = 0.943, 36 €/h ≙ 1.52 €/km, effektiver Distanzsatz 1.90 statt 0.3864 €/km.
+- **Option B (Neubepreisung gespeicherter VROOM-Lösungen mit per_hour = 0, kein Solver; Basis `validation/tab_vroom_v2.csv`, Items 0–2):** realisierte Ersparnis bei P = 0 fällt von 19.93 → **12.64 %** (Routing-Plan) bzw. 17.48 → **11.21 %** (Operator-Plan); Δ über die Punkte −2.5 … −7.3 pp. Mechanismus: Zeitanteil der Baseline-Kosten 26.5 % > Szenarien 19.8–24.5 % — Konsolidierung spart überproportional Fahrzeit. Die „heute"-Spalte reproduziert §40.25 exakt.
+- **Option C (Neurouting + Retraining + Grid):** Cache vollständig entwertet (`cache.py::_request_hash` hasht den Request-Body inkl. `costs`): Pool 2 733 (13.8 h) + Bündel 877 (6.9 h) + Validierung kalt 7 610 (58.1 h) ≈ **79 VROOM-h** bei Parallelität 3 → vor Montag unmöglich. Retraining selbst ist billig (Daganzo-LGB-Hybrid, `fit_seconds` 0.83); Grid v6 dauerte 2.8 h.
+- **Bias-Hypothese zu §40.25:** Daganzo-Backbone ohne Zeitterm, α absorbiert ihn global, variiert aber 1.430/1.337/1.297 über agg_k 1/2/3 (Spread 10.3 %) — also konsolidierungsabhängig; bei per_hour = 0 wäre α = 1.004, Spread 0.8 %. Plausibel mitursächlich für den +4.4 %-Baseline-Bias; vor Montag nicht prüfbar.
+- `per_hour` ist in VROOM ein unsigned int: 0 ist gültig, 1e-13 nicht darstellbar.
+- **Empfehlung des Memos: B** (Supplement-Tabelle + effektives Kostenmodell in §2 benennen). **Entscheidung des Autors ausstehend** (A / B / C nach Deadline). Memo: `.superpowers/sdd/2026-08-25-realistic-tours-implementation/task-15-decision-memo.md`.
+
+## 40.27 VROOM-Validierung auf v6 — Item 3 ((0.25, 0.5), Operator-Plan, G6-Teilmenge), 28.08., 21:45
+
+- Lauf: `--items 3 --g6-fallback` (Zensus zuerst), 1 000 von 1 594 Instanzen (G6: alle Instanzen der drei kleinsten Anbieter + ≥ 50 % der Nachfrage jedes weiteren Anbieters, Round-Robin über (Instanzart, n_jobs-Terzil)), 122 min, 0 PARTIAL. Gesamt jetzt 8 610 Zeilen (1 PARTIAL, 30855 aus Item 2).
+- **Summen (Teilmenge), pred / VROOM:** Routing 1 163 209 / 1 104 442 € (**+5.3 %**), variabel 434 414 / 369 594 €, Σ Hub-Peaks 811 / 819 (−1.0 %), OpCost 1 354 818 / 1 299 077 € (**+4.3 %**).
+- **Je Instanzart (n, MAPE %, Bias %):** delivery_group 65 / 7.43 / +6.52; delivery_single 626 / 4.33 / +3.96; **express_group 79 / 22.64 / +21.46** (Σ 77 018 vs 65 051 €, +18.4 %); **express_single 230 / 12.90 / +12.03** (189 966 vs 170 528 €, +11.4 %).
+- Lesart: Unter Vollakzeptanz überschätzt das Surrogat vor allem die **Express-Touren** (+11 … +21 %) — die θ<1-Pläne tragen also einen Express-Kostenbias, der Bündelung *weniger* attraktiv erscheinen lässt, als sie ist (Gegenrichtung zum Baseline-Bias in §40.25). Die Gesamt-Überschätzung des Punkts (+5.3 %) liegt in der Größenordnung der Baseline (+4.4 %), d. h. die realisierte Ersparnis bei (0.25, 0.5) dürfte nahe der vorhergesagten liegen — exakt ist sie auf der Teilmenge nicht berechenbar.
+- **Report-Defekt:** die Zeile „pred/actual save %" für Item 3 (+38.7 %) vergleicht die 1 000-Instanzen-Teilmenge mit der vollen Baseline — bedeutungslos; 67_ wird korrigiert (n/a für Teilmengen-Items, Gap-Spalten beide Linsen). Nicht ins Paper übernehmen.
+- Offene Frage für die Limitations/Zukunft: Express-Gruppen-Preise stammen zu großen Teilen aus dem Fallback (dünne Bins); ein express-spezifischer Head oder mehr Express-Labels im Pool wären der nächste Schritt.
+
+## 40.28 Kilometer und CO₂ aus der v6-Validierung (70_ `tab_co2_km_v2`, 28.08., 22:40)
+
+- Quelle: VROOM-gelöste Touren (`validation/tab_vroom_v2.csv`), 0.25 kg CO₂/km (Konstante wie eingereicht). Item 3 ((0.25, 0.5), G6-Teilmenge) bleibt in der CSV markiert (`is_g6_subset`), ist aber aus der Vergleichstabelle ausgeschlossen (nicht mit der vollen Baseline vergleichbar).
+- **Wochen-km / t CO₂ (alle Anbieter):** Baseline (θ = 0, 1 683 Instanzen) **305 310 km / 76.3 t**. Operator-Plan θ = 1: P = 0 **224 782 km / 56.2 t (−26.4 %)**, P = 0.25 235 540 / 58.9 (−22.9 %), P = 0.5 253 012 / 63.3 (−17.1 %), P = 0.75 266 614 / 66.7 (−12.7 %). Routing-Plan θ = 1: P = 0 213 990 / 53.5 (−29.9 %; 1 PARTIAL-Instanz), P = 0.25 229 667 / 57.4 (−24.8 %).
+- Lesart: Die km-Ersparnis (−26 % beim Operator-Plan, P = 0) ist größer als die Kostenersparnis in der Routing-Linse (realisiert 17.5 %), weil die Fixkosten je Fahrzeugtag (189.15 €) nicht mit den km fallen — Bündelung spart überproportional Fahrstrecke (vgl. §40.26: Zeitanteil). Im Manuskript steht keine CO₂-Aussage (Part C), die Tabelle gehört ins Final-Pack/Supplement.
+- Referenzspalte `vs_least_consolidated_pct` in der CSV vergleicht innerhalb eines Plans mit dem am wenigsten gebündelten Punkt (P = 0.75 bzw. 0.25), nicht mit der Baseline — für Paper-Zwecke die obigen Baseline-Relationen verwenden.
+
+## 41 Final-Pack-Index (2026-08-28)
+
+Inventar, keine neuen Zahlen: jede Zahl der Revision steht in §40.14–§40.28, dieser Abschnitt sagt nur, wo die Artefakte liegen und welches Skript sie erzeugt.
+
+- **Ordner:** `results/revision_2026_08_final/` (gitignoriert wie ganz `results/`; das getrackte Artefakt sind die Skripte). Gebaut von `scripts/revision/79_build_final_pack.py --sync-log <71_-Transkript>` aus `results/revision_2026_08_v6/` — kopiert, nie verschoben, jede Kopie beidseitig md5-geprüft. 103 Dateien.
+- **`README.md` des Packs:** Provenienztabelle über alle Dateien (erzeugendes Skript, Grid, md5, Bytes) plus je ein Absatz pro Unterordner zum Unterschied gegenüber der Einreichung; die dort zitierten Zahlen stammen ausschließlich aus §40.21 und §40.25.
+- **`figures/`** — 19 Figure-Stems (38 PDF/PNG) plus `manifest.json` und die Bucket-Composition-CSV zu Fig. 6. Drei akzeptierte Paper-Figuren aus den eingefrorenen Buildern 30_/31_/32_ (über 70_), der Rest `supp_` aus 70_, 75_, 76_, 77_, 78_.
+- **`tables/`** — 33 `*_v2`-Tabellen desselben Grids inklusive CO₂/km (§40.28); Schreiber sind 70_ (Mehrzahl), 72_ (`tab_per_cell_costs_v2`), 73_ (`tab_plz_knee_with_features_v2`, `tab_value_of_stage2_v2`), 75_/76_/77_/78_ (je ihre eigenen).
+- **`validation/`** — `validation_report.md`, `tab_vroom_v2.csv`, `census.{md,csv}`, `instance_queue.csv`, `G6_sampling_note.md` (alle 67_) und `gates_report.md` (62_).
+- **`analyses/`** — `results_overview_v6.csv`, `discount_scenarios_v6.csv` und die beiden Dashboard-Entwurfsfiguren; die Entwürfe sind durch 77_/78_ abgelöst und liegen nur noch zur Rückverfolgung der Dashboard-Zahlen bei.
+- **`dashboard/`** — die veröffentlichten Seiten (Ergebnis-Dashboard, Figurengalerie) samt ihrer Bau-Skripte.
+- **`paper/`** — Transkript des echten 71_-Syncs (jede Kopie md5-verifiziert, keine identisch zur eingefrorenen Einreichung), Snapshot von `docs/CHANGES_rev1.md`, wörtlicher Auszug §40.14–§40.28.
+- **`decks/DECKS.md`** — nur Zeiger: Pfad, md5, Größe und Änderungsdatum der drei `_rev2026-08.pptx` (zusammen **47,9 MB** — 14,8 + 16,5 + 16,5, gemessen 29.08.; die früher hier und in `79_build_final_pack.py` notierten „~40 MB“ waren zu niedrig, Task-18-Befund 5 —, deshalb nicht kopiert), mit Vermerk, welches Deck zum Pack-Zeitpunkt noch in PowerPoint offen war (Rebuild ausstehend, Task 17).
+- **`gallery_manifest.json`** — Stem, deutscher Titel, ein Satz Bildunterschrift (aus §40.21/§40.22b/§40.23b) und Quellskript für alle 16 `supp_`-Stems; Unit-Test pinnt, dass die Stem-Menge exakt der `COMPANION_MAP` von 71_ entspricht.
+- **Neue Skripte dieser Runde:** `77_mechanism_v2.py` (Mechanismus-Figur + `tab_mechanism_theta_P_v2.csv`, `tab_saving_per_parcel_hist_v2.csv`), `78_fleet_week_v2.py` (Wochenflotte je Anbieter + `tab_fleet_week_by_provider_v2.csv`, nutzt `recompute_profiles` aus 75_), `79_build_final_pack.py`, `scripts/paper/guard_tex.py` (Struktur-Guard fürs Manuskript, als Pytest verdrahtet).
+- **Reihenfolge ist erzwungen, nicht dokumentiert:** 70_ verweigert das Manifest, solange 75_/76_/77_/78_ auf demselben Rev-Dir nicht gelaufen sind; 71_ verweigert den Sync, solange ein Manifest-Stem unabgebildet ist (13E).
+- **Fund am Rande:** `results/revision_2026_08_v6/figures/fig6_bucket_composition.csv` ist der Vor-Umbenennungs-Name von `supp_fig6_bucket_composition.csv` (gleicher Inhalt, nicht im Manifest, von keinem aktuellen Skript erzeugt) — 79_ überspringt die Datei benannt und mit Konsolennotiz, statt sie mitzuliefern.
+- **Doku-Nachzug (G6) erledigt:** `results/README.md` und `results/CANONICAL.md` haben einen datierten Abschnitt, der auf das Final-Pack zeigt und `revision_2026_07`/Stage-3 sowie v5 als abgelöst markiert.

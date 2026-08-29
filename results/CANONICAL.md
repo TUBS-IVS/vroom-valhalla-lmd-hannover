@@ -5,7 +5,23 @@ repository. Used as the source-of-truth for the Phase 2 reorganization:
 canonical folders move to `results/paper/` and `results/runs/`, everything
 else moves to `results/_archive/` (gitignored) or gets deleted outright.
 
-Last reviewed: 2026-05-31
+Last reviewed: 2026-05-31 (submission). Revision addendum: 2026-08-28.
+
+## 2026-08-28 addendum — the revision's canonical folder
+
+The classification below is the **submission's** and is unchanged. The EWGT
+2026 revision adds one canonical folder, which takes precedence for every
+revision number:
+
+| Folder | Status | Role |
+|---|---|---|
+| `revision_2026_08_final/` | **canonical (revision)** | The one folder for the revision: figures, tables, VROOM validation, controller analyses, dashboard sources, paper-side provenance and deck pointers, all from grid v6. Built by `scripts/revision/79_build_final_pack.py`; its `README.md` lists every file with its producing script, grid and md5. Gitignored like the rest of `results/`, so the scripts are the tracked artefact. |
+| `revision_2026_08_v6/` | working | The live grid the pack is copied from (`61_` … `67_`, `70_` … `79_`). |
+| `revision_2026_08_v5/` | **superseded** | v6 is v5 plus the bundle head. Referenced only by the pack's v6-vs-v5 delta table. |
+| `revision_2026_07/` | **superseded** | The Stage-3 grid of the first revision round. Kept for history; its numbers must never be quoted next to v6 numbers without saying which grid they come from. |
+
+Unchanged by all of this: `paper/EWGT_2026/` stays frozen at the submission,
+and the submission-era folders below keep their status.
 
 | Status | Meaning |
 |---|---|

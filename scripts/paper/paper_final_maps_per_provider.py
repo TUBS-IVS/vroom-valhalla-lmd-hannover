@@ -5,12 +5,41 @@ provider's assigned PLZs coloured by chosen delivery frequency (share=100%).
 
 Output: 11_spatial_maps/per_provider/fig_MAP_<provider>.{png,pdf}
         11_spatial_maps/fig_MAP3_provider_grid_P040.{png,pdf}  (7-provider grid at P=0.5)
+
+DEPRECATED (2026-08 revision). Stale entry point: it recomputes totals
+WITHOUT the pool term and predates the universal tour rule, the two cost
+lenses and the operator polish, so its numbers are not comparable with the
+current results. Use scripts/revision/61_grid_run_v2.py for the grid and
+scripts/revision/70_figs_tables_v2.py for figures and tables.
+
+Status B (Task 19): 74_-legacy's tab_chosen_schedules.csv is a direct
+schema match (schedule_size_balanced, plz, provider). v6 has no P=0.4 (only
+the standard {0, .25, .5, .75, 1, 2, 5, 10} grid), so the 7-provider grid's
+operating point moves to P=0.5 -- the nearest available point, and the same
+one other re-pointed scripts in this wave use as their modern operating
+point.
 """
 from __future__ import annotations
+import argparse
 import pickle, sys, warnings
 from pathlib import Path
 
 warnings.filterwarnings("ignore")
+
+# --- DEPRECATED ENTRY POINT (2026-08 revision) -----------------------------
+import warnings as _deprecation_warnings
+
+_deprecation_warnings.warn(
+    "paper_final_maps_per_provider.py is a STALE entry point: it recomputes totals WITHOUT the pool "
+    "term and predates the universal tour rule, the two cost lenses and the "
+    "operator polish. Its numbers are NOT comparable with the 2026-08 "
+    "revision. Use scripts/revision/61_grid_run_v2.py for the grid and "
+    "scripts/revision/70_figs_tables_v2.py for figures and tables.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+# ---------------------------------------------------------------------------
+
 try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
@@ -24,6 +53,9 @@ import pandas as pd
 from matplotlib import rcParams
 from matplotlib.colors import ListedColormap, BoundaryNorm
 from matplotlib.patches import Patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _paper_v6_common as V6  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 BAL = ROOT / "results" / "overnight_2026_05_29_path2"
@@ -54,6 +86,22 @@ def load_geometry(chosen):
 
 
 def main():
+    global BAL, OUT
+    ap = argparse.ArgumentParser(description=__doc__)
+    V6.add_v6_cli_args(ap, needs_legacy=True)
+    args = ap.parse_args()
+    if args.legacy_dir is not None:
+        BAL = Path(args.legacy_dir)
+    elif args.rev_dir is not None:
+        BAL, _ = V6.run_legacy_adapter(args.rev_dir,
+                                       Path(args.out_dir or OUT) / "_legacy")
+    if args.out_dir is not None:
+        OUT = Path(args.out_dir)
+    v6_mode = args.legacy_dir is not None or args.rev_dir is not None
+    p_op = 0.5 if v6_mode else 0.4
+    src_note = ("B: 74_-legacy tab_chosen_schedules.csv" if v6_mode
+               else "tab_chosen_schedules.csv (historical path2 run)")
+
     import geopandas as gpd
     OUT.mkdir(parents=True, exist_ok=True)
     pp_dir = OUT / "per_provider"
@@ -101,13 +149,19 @@ def main():
         fig.suptitle(f"{prov} — chosen delivery frequency per PLZ across penalties "
                       f"(share=100%)", fontsize=13, y=1.0)
         fig.tight_layout()
-        fig.savefig(pp_dir / f"fig_MAP_{prov}.png", bbox_inches="tight")
-        fig.savefig(pp_dir / f"fig_MAP_{prov}.pdf", bbox_inches="tight")
+        V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                                 script="paper_final_maps_per_provider.py",
+                                 source=src_note)
+        V6.savefig_pair(fig, pp_dir / f"fig_MAP_{prov}.png", pp_dir / f"fig_MAP_{prov}.pdf")
         plt.close(fig)
         print(f"  [OK] per_provider/fig_MAP_{prov}  ({len(prov_plz)} PLZ)")
 
-    # ── 7-provider grid at the operating point P=0.4 (geometric sweet-spot)
-    P_OP = 0.4
+    # ── 7-provider grid at the operating point (v6: P=0.5, nearest grid
+    # point to the historical 0.4 -- see module docstring). The output
+    # STEM stays fig_MAP3_provider_grid_P040 (Task 19: original stems), but
+    # the title/footer state the true P plotted so the filename's "040"
+    # is not read as a v6 fact.
+    P_OP = p_op
     fig, axes = plt.subplots(2, 4, figsize=(18, 9))
     op_p = op[op.penalty == P_OP]
     for idx, prov in enumerate(PROVIDERS):
@@ -129,13 +183,19 @@ def main():
     handles = [Patch(color=FREQ_COLOR[s], label=f"{s} d/wk") for s in (2, 3, 4, 5, 6)]
     axes[1, 3].legend(handles=handles, title="Chosen delivery\nfrequency",
                        loc="center", fontsize=11)
-    fig.suptitle(f"Per-LSP spatial delivery frequency at P={P_OP} €/parcel/day, share=100%",
-                  fontsize=14, y=1.0)
+    fig.suptitle(f"Per-LSP spatial delivery frequency at P={P_OP:g} €/parcel/day, share=100%"
+                  + ("  (filename retains its original _P040 stem; v6 has no "
+                     "P=0.4, this panel is P=0.5)" if v6_mode else ""),
+                  fontsize=13 if v6_mode else 14, y=1.0)
     fig.tight_layout()
-    fig.savefig(OUT / "fig_MAP3_provider_grid_P040.png", bbox_inches="tight")
-    fig.savefig(OUT / "fig_MAP3_provider_grid_P040.pdf", bbox_inches="tight")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script="paper_final_maps_per_provider.py",
+                             source=src_note)
+    V6.savefig_pair(fig, OUT / "fig_MAP3_provider_grid_P040.png",
+                    OUT / "fig_MAP3_provider_grid_P040.pdf")
     plt.close(fig)
-    print("  [OK] fig_MAP3_provider_grid_P040")
+    print("  [OK] fig_MAP3_provider_grid_P040"
+         + (f" (P={P_OP:g}, stem unchanged)" if v6_mode else ""))
 
     print(f"\nDone. {sum(1 for _ in (OUT).rglob('*') if _.is_file())} files in {OUT}")
 

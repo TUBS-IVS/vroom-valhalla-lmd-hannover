@@ -19,6 +19,7 @@ import pandas as pd
 import pytest
 
 from batch_delivery.config import N_DAYS
+from batch_delivery.features import ALL_COLS
 from batch_delivery.optimization.core import build_cost_matrices_ml
 
 
@@ -71,6 +72,12 @@ class _StopsSpy:
     def predict(self, df_feats: pd.DataFrame) -> np.ndarray:
         return df_feats["n_stops"].to_numpy(dtype=np.float64)
 
+    def predict_single(self, x25: np.ndarray) -> float:
+        # Part of the predictor protocol since the pooled small-delivery
+        # prices are precomputed in build_cost_matrices_ml (§9c).
+        return float(self.predict(
+            pd.DataFrame(x25.reshape(1, -1), columns=ALL_COLS))[0])
+
 
 def test_dd_stops_at_share_zero_equals_stops_per_day():
     """At share_willing=0 (fast_share=1), delivery day stops should NOT be
@@ -91,7 +98,10 @@ def test_dd_stops_at_share_zero_equals_stops_per_day():
         fast_share_b2c=1.0,
         fast_share_b2b=1.0,
     )
-    cost_3d = out["cost_3d"]
+    # ``cost_3d_raw`` = unpooled per-cell prediction. ``cost_3d`` zeroes
+    # delivery instances below MIN_TOUR_PARCELS (rev1 small-delivery rule);
+    # at share=0 this PLZ delivers 130 parcels/day, below that threshold.
+    cost_3d = out["cost_3d_raw"]
 
     # At share=0, every day delivers today's parcels only.
     # Stops per tour = stops_per_day = 50 (not 150 like the old bug).

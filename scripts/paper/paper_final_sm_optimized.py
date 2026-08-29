@@ -4,11 +4,40 @@ fleet-balanced outputs, so they can be compared side by side.
 Adds:
   05_optimization/fig_SM1b_schedule_mix_grid_OPTIMIZED.{png,pdf}  (init, no sweep)
   08_interpretation/fig_DT3_lgb_residual.{png,pdf}  (when LGB modifies, new model)
+
+DEPRECATED (2026-08 revision). Stale entry point: it recomputes totals
+WITHOUT the pool term and predates the universal tour rule, the two cost
+lenses and the operator polish, so its numbers are not comparable with the
+current results. Use scripts/revision/61_grid_run_v2.py for the grid and
+scripts/revision/70_figs_tables_v2.py for figures and tables.
+
+Status B (Task 19): fig_sm_optimized() (the stage-1/init schedule-mix grid)
+maps directly onto 74_-legacy's tab_chosen_schedules.csv
+(schedule_size_init). fig_dt3_lgb_residual() is pool-only (D-shaped: the
+production model + training pool are unaffected by the revision), but its
+train_daganzo_hybrid import moved to scripts/revision/_stage3_common.py in
+the 2026-05-31 refactor -- same fix as paper_final_sensitivity.py.
 """
 from __future__ import annotations
+import argparse
 import pickle, sys, warnings
 from itertools import combinations
 from pathlib import Path
+
+
+# --- DEPRECATED ENTRY POINT (2026-08 revision) -----------------------------
+import warnings as _deprecation_warnings
+
+_deprecation_warnings.warn(
+    "paper_final_sm_optimized.py is a STALE entry point: it recomputes totals WITHOUT the pool "
+    "term and predates the universal tour rule, the two cost lenses and the "
+    "operator polish. Its numbers are NOT comparable with the 2026-08 "
+    "revision. Use scripts/revision/61_grid_run_v2.py for the grid and "
+    "scripts/revision/70_figs_tables_v2.py for figures and tables.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+# ---------------------------------------------------------------------------
 
 warnings.filterwarnings("ignore")
 try:
@@ -28,8 +57,13 @@ from sklearn.tree import DecisionTreeRegressor, plot_tree, export_text
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts" / "revision"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _paper_v6_common as V6  # noqa: E402
+
 BAL = ROOT / "results" / "overnight_2026_05_29_path2"
 OUT = ROOT / "results" / "paper_final_2026_05_30"
+POOL_DIR = ROOT / "results" / "sweep_v3_mergefix"
 
 rcParams.update({
     "font.family": "serif", "font.size": 11,
@@ -67,8 +101,11 @@ def fig_sm_optimized():
     fig.suptitle("Schedule-size distribution — COST-OPTIMAL (init, no fleet sweep)",
                   fontsize=14, y=0.99)
     fig.tight_layout()
-    fig.savefig(d / "fig_SM1b_schedule_mix_grid_OPTIMIZED.png", bbox_inches="tight")
-    fig.savefig(d / "fig_SM1b_schedule_mix_grid_OPTIMIZED.pdf", bbox_inches="tight")
+    V6.add_provenance_footer(fig, plan="stage-1 (routing-optimal, init)",
+                             script="paper_final_sm_optimized.py",
+                             source="B: 74_-legacy tab_chosen_schedules.csv (schedule_size_init)")
+    V6.savefig_pair(fig, d / "fig_SM1b_schedule_mix_grid_OPTIMIZED.png",
+                    d / "fig_SM1b_schedule_mix_grid_OPTIMIZED.pdf")
     plt.close(fig)
     print("  [OK] SM1b: schedule_mix_grid OPTIMIZED (init, no sweep)")
 
@@ -76,17 +113,21 @@ def fig_sm_optimized():
 def fig_dt3_lgb_residual():
     """DT3: when does the LGB residual modify Daganzo prediction? (new model)
     Uses model internals + training pool — no VROOM needed."""
-    from train_daganzo_hybrid import DaganzoLGBHybrid, _LGBIdentityWrap
+    # train_daganzo_hybrid.py (pre-refactor home of this class) was folded
+    # into scripts/pipeline/01_train_surrogate.py; _stage3_common.py carries
+    # the same class verbatim (see its own comment) -- a relocation import,
+    # not a behaviour change.
+    from _stage3_common import DaganzoLGBHybrid, _LGBIdentityWrap
     import __main__
     __main__._LGBIdentityWrap = _LGBIdentityWrap
     from batch_delivery.features import ALL_COLS
     from batch_delivery.surrogate import build_combo_features
 
-    with open(ROOT / "results/sweep_v3_mergefix/daganzo_hybrid_v3aug_median.pkl", "rb") as f:
+    with open(POOL_DIR / "daganzo_hybrid_v3aug_median.pkl", "rb") as f:
         d = pickle.load(f)
     hybrid = DaganzoLGBHybrid(model=d["model"], combo_cols=d["combo_cols"], alpha=d["alpha"])
 
-    pool = pd.read_csv(ROOT / "results/sweep_v3_mergefix/training_matrix.csv")
+    pool = pd.read_csv(POOL_DIR / "training_matrix.csv")
     # Pure Daganzo prediction
     base = hybrid._daganzo_vec(pool.n_parcels.values, pool.n_stops.values,
                                pool.area_km2.values, pool.hub_dist_km.values)
@@ -109,8 +150,11 @@ def fig_dt3_lgb_residual():
                   f"Target = LGB-residual / Pure-Daganzo [%], in-sample R²={r2:.3f}",
                   fontsize=13, pad=15)
     fig.tight_layout()
-    fig.savefig(out_d / "fig_DT3_lgb_residual.png")
-    fig.savefig(out_d / "fig_DT3_lgb_residual.pdf")
+    V6.add_provenance_footer(
+        fig, plan="n/a (surrogate pool, no schedule plan)",
+        script="paper_final_sm_optimized.py",
+        source=f"{POOL_DIR.name}/daganzo_hybrid_v3aug_median.pkl (D, pool unchanged)")
+    V6.savefig_pair(fig, out_d / "fig_DT3_lgb_residual.png", out_d / "fig_DT3_lgb_residual.pdf")
     plt.close(fig)
     (out_d / "tab_DT3_rules.txt").write_text(
         f"LGB residual %% of Pure Daganzo (alpha=1.343), R2={r2:.3f}\n"
@@ -130,13 +174,45 @@ def fig_dt3_lgb_residual():
                   f"Now centered near 0 — Daganzo backbone is well-calibrated")
     ax.legend()
     fig.tight_layout()
-    fig.savefig(out_d / "fig_H1_lgb_residual_distribution.png")
-    fig.savefig(out_d / "fig_H1_lgb_residual_distribution.pdf")
+    V6.add_provenance_footer(
+        fig, plan="n/a (surrogate pool, no schedule plan)",
+        script="paper_final_sm_optimized.py",
+        source=f"{POOL_DIR.name}/training_matrix.csv (D, pool unchanged)")
+    V6.savefig_pair(fig, out_d / "fig_H1_lgb_residual_distribution.png",
+                    out_d / "fig_H1_lgb_residual_distribution.pdf")
     plt.close(fig)
     print("  [OK] H1: lgb_residual_distribution (new model)")
 
 
 def main():
+    global BAL, OUT, POOL_DIR
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--legacy-dir", default=None,
+                    help="74_'s <out>/run dir (default: historical "
+                         "results/overnight_2026_05_29_path2)")
+    ap.add_argument("--rev-dir", default=None,
+                    help="v6 grid dir; builds the legacy adapter if "
+                         "--legacy-dir is not also given")
+    ap.add_argument("--pool-dir", default=None,
+                    help="dir holding daganzo_hybrid_v3aug_median.pkl + "
+                         "training_matrix.csv (default: the historical, "
+                         "now-moved results/sweep_v3_mergefix)")
+    ap.add_argument("--out-dir", default=None,
+                    help="output directory (default: historical "
+                         "results/paper_final_2026_05_30)")
+    args = ap.parse_args()
+    if args.legacy_dir is not None:
+        BAL = Path(args.legacy_dir)
+    elif args.rev_dir is not None:
+        BAL, _ = V6.run_legacy_adapter(args.rev_dir,
+                                       Path(args.out_dir or OUT) / "_legacy")
+    if args.pool_dir is not None:
+        POOL_DIR = Path(args.pool_dir)
+    if args.out_dir is not None:
+        OUT = Path(args.out_dir)
+    for sub in ("05_optimization", "08_interpretation"):
+        (OUT / sub).mkdir(parents=True, exist_ok=True)
+
     print("Building optimized-output schedule grid + LGB interpretation (new model)...")
     fig_sm_optimized()
     fig_dt3_lgb_residual()

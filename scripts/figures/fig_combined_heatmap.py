@@ -11,10 +11,37 @@ points raise the weekly vehicle stock instead of lowering it.
 Same TRPro styling as fig_SM_mix_pct_8P (serif, dejavuserif mathtext,
 size 11, ticks 9, line width and savefig.dpi=300).
 
-Output: results/EWGT_Results/fig_grid_heatmap_6.{png,pdf}
+Default output: results/EWGT_Results/fig_grid_heatmap_6.{png,pdf}
+
+Task 19 W1b (v6 regeneration)
+-----------------------------
+v6 status A: every panel is directly derivable from the v6-native grid
+tables (``tab_costs_v2.csv`` / ``tab_wait_v2.csv`` /
+``tab_fleet_per_hub_v2.csv``) with column renames -- no
+``74_v2_to_legacy_tables.py`` adapter needed.  ``--rev-dir`` selects the
+data source by SCHEMA DETECTION: a directory carrying ``tab_costs_v2.csv``
+at its top level is read natively (v6 two-plan columns
+``cost_stage1_eur``/``cost_stage2_eur``, baseline computed from the grid's
+OWN theta=0 rows -- never the stale ``BASE_TOTAL = 1,909,747.75 EUR``
+2026-07/path2 constant, which prices a different, unheaded baseline); a
+directory carrying ``tab_balancing_summary.csv`` instead falls back to the
+original path2 columns and logic, UNCHANGED, so a pre-revision directory
+(if one still existed) would render exactly as before. ``--rev-dir``'s
+default is the script's original hardcoded path2 directory (unchanged);
+the v6 regeneration run passes ``--rev-dir results/revision_2026_08_v6``
+explicitly. ``--out-dir`` replaces the hardcoded ``OUT`` the same way.
+
+Both plans shown: panels (a)/(d)/(e)/(f) top-row-cost and peak/CV/total
+fleet compare the routing-optimal (stage 1) selection against the
+operator-polished (stage 2) full-pipeline output; (c) wait is the
+operator-polished (stage 2) plan only ("full pipeline output" per its own
+title). Provenance footer and pinned PDF/PNG metadata follow
+``scripts/figures/_v6_provenance.py``.
 """
-from pathlib import Path
+import argparse
+import sys
 import warnings
+from pathlib import Path
 
 warnings.filterwarnings("ignore")
 import matplotlib
@@ -25,10 +52,16 @@ import numpy as np
 import pandas as pd
 from matplotlib import rcParams
 
-ROOT = Path(__file__).resolve().parents[1]
-PATH2 = ROOT / "results" / "overnight_2026_05_29_path2"
-OUT = ROOT / "results" / "EWGT_Results"
-OUT.mkdir(parents=True, exist_ok=True)
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(ROOT / "scripts" / "revision"))
+import _v6_provenance as V  # noqa: E402
+import _figs_tables_v2 as H  # noqa: E402
+
+DEFAULT_REV = ROOT / "results" / "overnight_2026_05_29_path2"
+DEFAULT_OUT = ROOT / "results" / "EWGT_Results"
+SCRIPT = "fig_combined_heatmap.py"
+N_DAYS = 6
 
 rcParams.update({
     "font.family": "serif", "font.size": 13,
@@ -39,7 +72,7 @@ rcParams.update({
     "savefig.bbox": "tight", "savefig.dpi": 300, "pdf.fonttype": 42,
 })
 
-BASE_TOTAL = 1909747.75  # daily-delivery weekly cost across all providers
+BASE_TOTAL_PATH2_STALE = 1909747.75  # 2026-07/path2 only -- NEVER use on v6
 
 
 def heat(ax, mat, cmap, title, vmin=None, vmax=None, fmt="{:.1f}",
@@ -92,45 +125,15 @@ def heat(ax, mat, cmap, title, vmin=None, vmax=None, fmt="{:.1f}",
     return im
 
 
-def main():
-    s = pd.read_csv(PATH2 / "tab_balancing_summary.csv")
-    s = s[~np.isclose(s.penalty, 0.4)].copy()
-    f = pd.read_csv(PATH2 / "tab_fleet_per_hub.csv")
-    f = f[~np.isclose(f.penalty, 0.4)].copy()
-    sched = pd.read_csv(PATH2 / "tab_chosen_schedules.csv")
-    sched["plz"] = sched.plz.astype(str)
-    sched = sched[~np.isclose(sched.penalty, 0.4)].copy()
-
-    # Aggregate costs per (P, theta)
-    ag = s.groupby(["penalty", "share_willing"], as_index=False).agg(
-        init=("init_cost_eur", "sum"),
-        bal=("balanced_cost_eur", "sum"))
-    ag["init_sav"] = 100 * (BASE_TOTAL - ag.init) / BASE_TOTAL
-    ag["bal_sav"]  = 100 * (BASE_TOTAL - ag.bal)  / BASE_TOTAL
-    pivI = ag.pivot(index="penalty", columns="share_willing",
-                     values="init_sav")
-    pivB = ag.pivot(index="penalty", columns="share_willing",
-                     values="bal_sav")
-
-    # Avg waiting time, parcels-weighted across cells per (P, theta)
-    sched["wait_x_par"] = sched.avg_wait_d_balanced * sched.weekly_parcels
-    wg = sched.groupby(["penalty", "share_willing"], as_index=False).agg(
-        num=("wait_x_par", "sum"),
-        den=("weekly_parcels", "sum"))
-    wg["avg_wait_d"] = wg.num / wg.den
-    pivW = wg.pivot(index="penalty", columns="share_willing",
-                      values="avg_wait_d")
-
-    # System fleet per day
-    sys_day = (f.groupby(["penalty", "share_willing", "day"])
-                .agg(fb=("fleet_before", "sum"),
-                     fa=("fleet_after", "sum")).reset_index())
-    # Baseline at theta=0 averaged over P
+def _fleet_reduction_panels(sys_day: pd.DataFrame, fleet_col: str) -> pd.DataFrame:
+    """Peak/CV/total-fleet reduction per (P, theta) vs. the theta=0 profile
+    of the SAME ``fleet_col``, Mon-Sat. Shared by both the path2 and the
+    v6-native codepath -- only which column (and which rows) feed it
+    differs."""
     base_day = (sys_day[np.isclose(sys_day.share_willing, 0.0)]
-                  .groupby("day").fb.mean())
-    base = np.array([base_day.loc[d] for d in range(6)])
-    base_peak = float(base.max())
-    base_total = float(base.sum())
+                .groupby("day")[fleet_col].mean())
+    base = np.array([base_day.loc[d] for d in range(N_DAYS)])
+    base_peak, base_total = float(base.max()), float(base.sum())
     base_cv = float(base.std() / base.mean())
     print(f"Baseline Mo-Sa: peak={base_peak:.0f} total={base_total:.0f} "
           f"cv={base_cv:.3f}")
@@ -138,23 +141,105 @@ def main():
     rows = []
     for (P, sh), g in sys_day.groupby(["penalty", "share_willing"]):
         g = g.sort_values("day")
-        fa = g.fa.values
-        peak_a = float(fa.max()) if len(fa) else float("nan")
-        total_a = float(fa.sum()) if len(fa) else float("nan")
-        cv_a = float(fa.std() / fa.mean()) if fa.mean() > 0 else 0.0
+        v = g[fleet_col].values
+        peak = float(v.max()) if len(v) else float("nan")
+        total = float(v.sum()) if len(v) else float("nan")
+        cv = float(v.std() / v.mean()) if v.mean() > 0 else 0.0
+        # A perfectly flat baseline (base_cv == 0) has no variance to
+        # express a % reduction against -- same "no defined change" rule
+        # already used above for `cv` itself, not a silent data fallback.
+        cv_red = 100 * (base_cv - cv) / base_cv if base_cv > 0 else 0.0
         rows.append(dict(penalty=P, share_willing=sh,
-                          peak_red=100 * (base_peak - peak_a) / base_peak,
-                          cv_red=100 * (base_cv - cv_a) / base_cv,
-                          total_red=100 * (base_total - total_a)
-                                     / base_total))
-    cells = pd.DataFrame(rows)
-    pivPK = cells.pivot(index="penalty", columns="share_willing",
-                          values="peak_red")
-    pivCV = cells.pivot(index="penalty", columns="share_willing",
-                          values="cv_red")
-    pivTOT = cells.pivot(index="penalty", columns="share_willing",
-                           values="total_red")
+                         peak_red=100 * (base_peak - peak) / base_peak,
+                         cv_red=cv_red,
+                         total_red=100 * (base_total - total) / base_total))
+    return pd.DataFrame(rows)
 
+
+def _load_path2(rev: Path) -> tuple[pd.DataFrame, ...]:
+    """ORIGINAL (pre-revision) codepath, UNCHANGED: path2's own schema and
+    the stale ``BASE_TOTAL_PATH2_STALE`` EUR constant -- kept only so a
+    directory carrying the old files still renders exactly as before."""
+    s = pd.read_csv(rev / "tab_balancing_summary.csv")
+    s = s[~np.isclose(s.penalty, 0.4)].copy()
+    f = pd.read_csv(rev / "tab_fleet_per_hub.csv")
+    f = f[~np.isclose(f.penalty, 0.4)].copy()
+    sched = pd.read_csv(rev / "tab_chosen_schedules.csv")
+    sched["plz"] = sched.plz.astype(str)
+    sched = sched[~np.isclose(sched.penalty, 0.4)].copy()
+
+    ag = s.groupby(["penalty", "share_willing"], as_index=False).agg(
+        init=("init_cost_eur", "sum"), bal=("balanced_cost_eur", "sum"))
+    ag["init_sav"] = 100 * (BASE_TOTAL_PATH2_STALE - ag.init) / BASE_TOTAL_PATH2_STALE
+    ag["bal_sav"] = 100 * (BASE_TOTAL_PATH2_STALE - ag.bal) / BASE_TOTAL_PATH2_STALE
+    pivI = ag.pivot(index="penalty", columns="share_willing", values="init_sav")
+    pivB = ag.pivot(index="penalty", columns="share_willing", values="bal_sav")
+
+    sched["wait_x_par"] = sched.avg_wait_d_balanced * sched.weekly_parcels
+    wg = sched.groupby(["penalty", "share_willing"], as_index=False).agg(
+        num=("wait_x_par", "sum"), den=("weekly_parcels", "sum"))
+    wg["avg_wait_d"] = wg.num / wg.den
+    pivW = wg.pivot(index="penalty", columns="share_willing", values="avg_wait_d")
+
+    sys_day = (f.groupby(["penalty", "share_willing", "day"], as_index=False)
+               .agg(fa=("fleet_after", "sum")))
+    cells = _fleet_reduction_panels(sys_day, "fa")
+    pivPK = cells.pivot(index="penalty", columns="share_willing", values="peak_red")
+    pivCV = cells.pivot(index="penalty", columns="share_willing", values="cv_red")
+    pivTOT = cells.pivot(index="penalty", columns="share_willing", values="total_red")
+    meta = dict(plan=V.PLAN_BOTH, source="tab_balancing_summary.csv + "
+                "tab_fleet_per_hub.csv + tab_chosen_schedules.csv (path2)")
+    return pivI, pivB, pivW, pivPK, pivCV, pivTOT, meta
+
+
+def _load_v6_native(rev: Path) -> tuple[pd.DataFrame, ...]:
+    """v6 status A: derived straight from the native grid tables, no 74_
+    adapter. Baseline is THIS grid's own theta=0 row (never the stale
+    path2/2026-07 constant -- 74_'s own docstring rule)."""
+    costs = pd.read_csv(rev / "tab_costs_v2.csv")
+    wait = pd.read_csv(rev / "tab_wait_v2.csv")
+    fleet = pd.read_csv(rev / "tab_fleet_per_hub_v2.csv")
+    V.require_columns(costs, ["penalty", "share_willing", "cost_stage1_eur",
+                              "cost_stage2_eur"], source="tab_costs_v2.csv")
+    V.require_columns(wait, ["penalty", "share_willing", "wait_num_willing",
+                             "total_parcels"], source="tab_wait_v2.csv")
+    V.require_columns(fleet, ["penalty", "share_willing", "day", "fleet"],
+                      source="tab_fleet_per_hub_v2.csv")
+    H.check_grid_integrity(costs, wait, label="fig_combined_heatmap v6-native")
+
+    base = H.baseline(costs)  # base["routing_eur"]: this grid's OWN theta=0
+    ag = costs.groupby(["penalty", "share_willing"], as_index=False).agg(
+        init=("cost_stage1_eur", "sum"), bal=("cost_stage2_eur", "sum"))
+    ag["init_sav"] = 100 * (base["routing_eur"] - ag.init) / base["routing_eur"]
+    ag["bal_sav"] = 100 * (base["routing_eur"] - ag.bal) / base["routing_eur"]
+    pivI = ag.pivot(index="penalty", columns="share_willing", values="init_sav")
+    pivB = ag.pivot(index="penalty", columns="share_willing", values="bal_sav")
+
+    # Operator-polished (stage 2 / balanced) plan's wait -- "full pipeline
+    # output" per the panel's own title; wait_num_willing (no _stage1
+    # suffix) IS the stage-2 numerator (_figs_tables_v2.py convention).
+    wg = wait.groupby(["penalty", "share_willing"], as_index=False).agg(
+        num=("wait_num_willing", "sum"), den=("total_parcels", "sum"))
+    wg["avg_wait_d"] = wg.num / wg.den
+    pivW = wg.pivot(index="penalty", columns="share_willing", values="avg_wait_d")
+
+    # Fleet table is written at the FINAL (stage-2/balanced) plan only; at
+    # theta=0 stage1==stage2 by construction (nothing is willing to move),
+    # so the theta=0 slice of THIS SAME column is a valid "before" baseline
+    # for every (P, theta) cell -- no 74_/75_ stage-1 refleeting needed.
+    sys_day = (fleet.groupby(["penalty", "share_willing", "day"],
+                            as_index=False).fleet.sum())
+    cells = _fleet_reduction_panels(sys_day, "fleet")
+    pivPK = cells.pivot(index="penalty", columns="share_willing", values="peak_red")
+    pivCV = cells.pivot(index="penalty", columns="share_willing", values="cv_red")
+    pivTOT = cells.pivot(index="penalty", columns="share_willing", values="total_red")
+    meta = dict(plan=V.PLAN_BOTH, source="tab_costs_v2.csv + tab_wait_v2.csv "
+                "+ tab_fleet_per_hub_v2.csv (v6-native)")
+    return pivI, pivB, pivW, pivPK, pivCV, pivTOT, meta
+
+
+def render(pivI, pivB, pivW, pivPK, pivCV, pivTOT, out_dir: Path,
+          meta: dict) -> None:
     # ---- figure ----
     fig, axes = plt.subplots(2, 3, figsize=(17.5, 10.0))
 
@@ -207,18 +292,43 @@ def main():
         ax.set_ylabel(r"Service penalty $P$ [€/p/d]", fontsize=12.5)
 
     fig.tight_layout(pad=0.6, w_pad=1.4, h_pad=1.8,
-                      rect=[0, 0.03, 1, 1])
-    fig.text(0.5, 0.01,
+                      rect=[0, 0.05, 1, 1])
+    fig.text(0.5, 0.03,
              "All cost savings, fleet reductions and the wait metric are "
              r"reported relative to the daily-delivery baseline at $\theta=0$.",
              ha="center", va="bottom", fontsize=11)
+    V.footer(fig, plan=meta["plan"], script=SCRIPT, source=meta["source"],
+             y=0.005)
 
-    for ext in ("png", "pdf"):
-        fig.savefig(OUT / f"fig_grid_heatmap_6.{ext}",
-                     bbox_inches="tight")
+    written = V.savefig_pinned(fig, out_dir, "fig_grid_heatmap_6")
     plt.close(fig)
-    print(f"saved {OUT/'fig_grid_heatmap_6.png'}")
+    print(f"saved {written[0]}")
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    V.add_v6_args(ap, default_rev=DEFAULT_REV, default_out=DEFAULT_OUT,
+                 rev_help="grid directory: a v6-native dir (carries "
+                          "tab_costs_v2.csv) or the original path2 dir "
+                          "(carries tab_balancing_summary.csv)")
+    args = ap.parse_args(argv)
+    rev = Path(args.rev_dir)
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if (rev / "tab_costs_v2.csv").exists():
+        print(f"v6-native schema detected under {rev}")
+        pivI, pivB, pivW, pivPK, pivCV, pivTOT, meta = _load_v6_native(rev)
+    elif (rev / "tab_balancing_summary.csv").exists():
+        print(f"path2 schema detected under {rev}")
+        pivI, pivB, pivW, pivPK, pivCV, pivTOT, meta = _load_path2(rev)
+    else:
+        raise SystemExit(
+            f"{rev}: neither tab_costs_v2.csv (v6-native) nor "
+            "tab_balancing_summary.csv (path2) found -- refusing to guess")
+    render(pivI, pivB, pivW, pivPK, pivCV, pivTOT, out_dir, meta)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

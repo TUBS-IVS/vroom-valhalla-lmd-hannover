@@ -11,12 +11,29 @@ For each LSP we:
      - "Service-bound" (LSPs where daily delivery is near-optimal even at
        small P — typical of high-density / time-critical premium operators)
 
-Outputs:
+Default outputs:
   results/paper_final_2026_05_30/05_optimization/fig_per_provider_sweetspots.{png,pdf}
   results/paper_final_2026_05_30/05_optimization/_per_provider_knees.csv
+
+Task 19 W1b (v6 regeneration)
+-----------------------------
+v6 status B: the curve (per P, per provider) is read from
+``scripts/revision/74_v2_to_legacy_tables.py``'s ``tab_balancing_summary.csv``
+/ ``tab_chosen_schedules.csv`` (``_init`` = routing-optimal / stage 1, this
+script's only plan). The KNEE ITSELF, though, is switched from this
+script's OWN ``chord_knee()`` re-derivation to a direct read of 74_'s
+``tab_pstar_knees_smoothed.csv`` -- the audited per-LSP routing-lens P*
+table (Kompendium §40.22), computed by the identical chord-distance formula
+(``scripts/revision/_figs_tables_v2.py::lsp_knees``), so this figure's
+knee marker can never drift from the number the paper actually cites. Only
+``mean_freq``/``n_batched`` at the knee still come from this script's own
+curve (not carried by the knees table).
 """
-from pathlib import Path
+import argparse
+import sys
 import warnings
+from pathlib import Path
+
 warnings.filterwarnings("ignore")
 
 import matplotlib
@@ -27,10 +44,13 @@ import pandas as pd
 from matplotlib import rcParams
 from matplotlib.patches import FancyBboxPatch
 
-ROOT = Path(__file__).resolve().parents[1]
-PATH2 = ROOT / "results" / "overnight_2026_05_29_path2"
-OUT = ROOT / "results" / "paper_final_2026_05_30" / "05_optimization"
-OUT.mkdir(parents=True, exist_ok=True)
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "figures"))
+import _v6_provenance as V  # noqa: E402
+
+SCRIPT = "_fig_per_provider_sweetspots.py"
+DEFAULT_REV = ROOT / "results" / "overnight_2026_05_29_path2"
+DEFAULT_OUT = ROOT / "results" / "paper_final_2026_05_30" / "05_optimization"
 
 rcParams.update({
     "font.family": "serif", "font.size": 9,
@@ -62,9 +82,43 @@ def chord_knee(wait: np.ndarray, sav: np.ndarray) -> int:
     return int(np.argmax(y_n - x_n))
 
 
-def main():
-    summ = pd.read_csv(PATH2 / "tab_balancing_summary.csv")
-    chosen = pd.read_csv(PATH2 / "tab_chosen_schedules.csv")
+def _load_official_knees(rev: Path) -> pd.DataFrame | None:
+    """74_'s audited routing-lens P* table (``<out>/rev/`` sibling of
+    ``<out>/run/``), or None when it does not exist (default/path2 mode) --
+    the caller then falls back to this script's own ``chord_knee()``."""
+    path = rev.parent / "rev" / "tab_pstar_knees_smoothed.csv"
+    if not path.exists():
+        return None
+    knees = pd.read_csv(path)
+    V.require_columns(knees, ["provider", "P_star", "saving_pct", "wait_d"],
+                      source=str(path))
+    return knees
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    V.add_v6_args(ap, default_rev=DEFAULT_REV, default_out=DEFAULT_OUT,
+                 rev_help="legacy-adapted run/ directory (74_ <out>/run) "
+                          "for v6, or the original path2 dir")
+    args = ap.parse_args(argv)
+    rev = Path(args.rev_dir)
+    OUT = Path(args.out_dir)
+    OUT.mkdir(parents=True, exist_ok=True)
+
+    summ_path, chosen_path = rev / "tab_balancing_summary.csv", rev / "tab_chosen_schedules.csv"
+    summ = pd.read_csv(summ_path)
+    chosen = pd.read_csv(chosen_path)
+    V.require_columns(summ, ["penalty", "share_willing", "provider",
+                             "init_cost_eur", "balanced_cost_eur"],
+                      source=str(summ_path))
+    V.require_columns(chosen, ["penalty", "share_willing", "provider",
+                               "avg_wait_d_init", "weekly_parcels",
+                               "schedule_size_init"], source=str(chosen_path))
+    official_knees = _load_official_knees(rev)
+    print("knee source: " + ("tab_pstar_knees_smoothed.csv (audited)"
+                             if official_knees is not None
+                             else "this script's own chord_knee() (fallback"
+                                  " -- no audited knees table found)"))
 
     base = (summ[np.isclose(summ.share_willing, 0.0)]
             .groupby("provider").balanced_cost_eur.mean())
@@ -93,7 +147,19 @@ def main():
                        "mean_freq": mean_freq, "n_batched": n_batched})
         cur = pd.DataFrame(d).sort_values("penalty").reset_index(drop=True)
         curves[prov] = cur
-        ki = chord_knee(cur.wait_d.values, cur.sav_pct.values)
+        if official_knees is not None:
+            row = official_knees[official_knees.provider == prov]
+            assert len(row) == 1, (
+                f"{prov}: expected exactly one audited knee row, got "
+                f"{len(row)}")
+            P_star = float(row.P_star.iloc[0])
+            match = cur[np.isclose(cur.penalty, P_star)]
+            assert len(match), (
+                f"{prov}: audited P*={P_star:g} is not one of this curve's "
+                f"own penalty levels {sorted(cur.penalty)}")
+            ki = int(match.index[0])
+        else:
+            ki = chord_knee(cur.wait_d.values, cur.sav_pct.values)
         k_row = cur.iloc[ki]
         max_sav = cur.sav_pct.max()
         # Penalty sensitivity slope: average decrease per Δlog(P)
@@ -179,8 +245,12 @@ def main():
     fig.suptitle("Provider-individuelle Sweet-Spots — gleicher Optimierer, "
                   "verschiedene Kosten-Service-Trade-offs",
                   fontsize=11.5, y=1.02)
-    fig.savefig(OUT / "fig_per_provider_sweetspots.png", bbox_inches="tight")
-    fig.savefig(OUT / "fig_per_provider_sweetspots.pdf", bbox_inches="tight")
+    V.footer(fig, plan=V.PLAN1, script=SCRIPT,
+             source="tab_balancing_summary.csv + tab_chosen_schedules.csv"
+                    + (" + tab_pstar_knees_smoothed.csv (knee)"
+                       if official_knees is not None else ""),
+             y=-0.06)
+    written = V.savefig_pinned(fig, OUT, "fig_per_provider_sweetspots")
     plt.close(fig)
 
     print("=== Per-provider individual sweet-spots (theta=1) ===")
@@ -188,8 +258,9 @@ def main():
                 "knee_P", "knee_saving_pct", "knee_wait_d",
                 "knee_mean_freq", "category", "recommendation_P"]]
           .round(2).to_string(index=False))
-    print(f"\nsaved {OUT/'fig_per_provider_sweetspots.png'}")
+    print(f"\nsaved {written[0]}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

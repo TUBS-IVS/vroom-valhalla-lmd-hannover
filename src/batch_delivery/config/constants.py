@@ -146,6 +146,16 @@ FIXED_DHL_SCHEDULE: list[str] = ["Monday", "Wednesday", "Friday"]
 
 # ─── VROOM VRP configuration ────────────────────────────────────────────────
 VEHICLE_CAPACITY: int = 230            # parcels per vehicle (Van >2 t)
+
+# ─── Realistic-tour rule (rev1, spec 2026-08-25) ────────────────────────────
+# Every tour instance carries at least one vehicle load; smaller instances are
+# pooled nearest-neighbour under hard caps that keep every surrogate
+# evaluation inside its measured validity range (Kompendium §39.7/§40.1).
+MIN_TOUR_PARCELS: float = 230.0     # = VEHICLE_CAPACITY; OOF error 7.14 % below
+MAX_TOUR_STOPS: float = 556.0       # p99 of training n_stops; solve-time bound
+MAX_TOUR_AREA_KM2: float = 159.0    # p95; bias kinks to −4.33 % beyond
+MAX_HULL_RATIO: float = 1.22        # training max of convex-hull/area
+
 FIXED_COST_EUR: float = 189.15         # EUR/day per vehicle (incl. 8 h labor)
 COST_PER_KM_EUR: float = 0.3864        # EUR/km operating cost
 COST_PER_HOUR_EUR: float = 0.0         # EUR/h (labor included in fixed cost)

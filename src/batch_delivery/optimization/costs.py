@@ -21,18 +21,34 @@ from batch_delivery.config.constants import (
     COST_SCALE,
     FAST_SHARE_B2B,
     FAST_SHARE_B2C,
+    MIN_TOUR_PARCELS,
     N_DAYS,
     VEHICLE_CAPACITY,
 )
 from batch_delivery.features import (
-    _PROVIDER_IDX,
+    _PROVIDER_IDX,  # noqa: F401  re-export: bundle.py and notebooks import it from here
     ALL_COLS,
     TIER2_COLS,
     compute_tier2_features,
+    provider_index,
 )
 from batch_delivery.io.demand import compute_shifted_demand_plz, get_source_days
 from batch_delivery.legacy.daganzo import CalibratedDaganzo, predict_vec
 from batch_delivery.optimization.schedules import _compute_wait_mx
+from batch_delivery.surrogate.bundle import (  # memo plumbing, see bundle.py
+    _HULL_CAP,
+    _MEMO,
+    _MEMO_HULL,
+    _MEMO_PART,
+    _MEMO_PINS,
+    _MEMO_STATS,
+    _PART_CAP,
+    _PRICE_SRC,
+    _STAT_FIELDS,
+    MEMO_KEYS,  # noqa: F401  (re-exported: callers/tests import it here)
+    _bump,
+    _memo_stats,
+)
 from batch_delivery.utils import log
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -615,6 +631,56 @@ def build_cost_matrices_ml(
         + ndd_stops * non_delivery[None, :, :].astype(np.float64)
     )
 
+    # ── 5b) Geometry lookups shared by every downstream consumer ──────
+    # Built here (not after the ML block) so the ``n_active == 0`` early
+    # return can hand back a dict with exactly the same keys as the full
+    # return path — a missing key there used to surface as a KeyError deep
+    # inside _hub_express_day_ml / price_group.
+    plz_day_lon: list[list[np.ndarray]] = []
+    plz_day_lat: list[list[np.ndarray]] = []
+    plz_day_psd: list[list[np.ndarray]] = []
+    for pi, pc in enumerate(plz_keys):
+        pc_coords = plz_day_coords.get(pc, {})
+        lons_d, lats_d, psd_d = [], [], []
+        for d in range(N_DAYS):
+            cd = pc_coords.get(d)
+            if cd is not None:
+                lons_d.append(cd[0])
+                lats_d.append(cd[1])
+                psd_d.append(cd[2])
+            else:
+                lons_d.append(np.array([], dtype=np.float64))
+                lats_d.append(np.array([], dtype=np.float64))
+                psd_d.append(np.array([], dtype=np.float64))
+        plz_day_lon.append(lons_d)
+        plz_day_lat.append(lats_d)
+        plz_day_psd.append(psd_d)
+
+    hub_lon_arr = np.array([
+        hub_coords_by_plz.get(pc, (9.73, 52.38))[0] for pc in plz_keys
+    ])
+    hub_lat_arr = np.array([
+        hub_coords_by_plz.get(pc, (9.73, 52.38))[1] for pc in plz_keys
+    ])
+
+    # Per-cell centroid (first day with geometry) — the nearest-neighbour
+    # seed coordinates ``build_partition`` packs tours by. Degree space on
+    # purpose (see optimization/partition.py); cells without any geometry
+    # keep (0, 0) and are therefore never picked as close neighbours.
+    _cent_lon = np.zeros(n_plz, dtype=np.float64)
+    _cent_lat = np.zeros(n_plz, dtype=np.float64)
+    for pi in range(n_plz):
+        for dd in range(N_DAYS):
+            L = plz_day_lon[pi][dd]
+            if len(L):
+                _cent_lon[pi] = float(L.mean())
+                _cent_lat[pi] = float(plz_day_lat[pi][dd].mean())
+                break
+
+    # B2C share per PLZ (for Tier 3)
+    plz_total = daily_demand.sum(axis=1)
+    plz_b2c_share = np.where(plz_total > 0, daily_b2c.sum(axis=1) / plz_total, 0.5)
+
     # ── 6) Active mask ────────────────────────────────────────────────
     active = combined_demand > 0
     n_active = int(active.sum())
@@ -622,18 +688,40 @@ def build_cost_matrices_ml(
         empty = {
             "dd_cost_mx": np.zeros((n_plz, n_sched)),
             "cost_3d": np.zeros((n_plz, n_sched, N_DAYS)),
+            "cost_3d_raw": np.zeros((n_plz, n_sched, N_DAYS)),
             "veh_3d": np.zeros((n_plz, n_sched, N_DAYS)),
+            "veh_3d_raw": np.zeros((n_plz, n_sched, N_DAYS)),
             "wait_mx": np.zeros((n_plz, n_sched)),
             "raw_express": np.zeros((n_plz, N_DAYS)),
             "expr_stops": np.zeros((n_plz, N_DAYS)),
+            "express_cost": np.zeros((n_plz, N_DAYS)),
+            "fast_share_blend_arr": fast_share_blend_arr,
             "area_arr": area_arr, "hd_arr": hd_arr,
             "sched_active": sched_active, "daily_demand": daily_demand,
+            "small_delivery_mask": np.zeros(
+                (n_plz, n_sched, N_DAYS), dtype=bool),
+            "small_delivery_price": np.zeros((n_plz, n_sched, N_DAYS)),
+            "combined_demand": combined_demand,
+            "combined_stops": combined_stops,
+            "_pool_dem": np.zeros((n_plz, n_sched, N_DAYS)),
+            "_pool_stp": np.zeros((n_plz, n_sched, N_DAYS)),
+            "_cent_lon": _cent_lon,
+            "_cent_lat": _cent_lat,
+            "plz_day_lon": plz_day_lon,
+            "plz_day_lat": plz_day_lat,
+            "plz_day_psd": plz_day_psd,
+            "hub_lon_arr": hub_lon_arr,
+            "hub_lat_arr": hub_lat_arr,
+            "plz_b2c_share": plz_b2c_share,
+            "ml_predictor": ml_predictor,
+            "provider": provider,
         }
         return empty
 
     # ── 7) ML prediction (vectorised feature construction) ──────────
-    # NOTE: compute_tier2_features, ALL_COLS, TIER2_COLS, _PROVIDER_IDX, and
-    # get_source_days are all imported at module scope (see top of file).
+    # NOTE: compute_tier2_features, ALL_COLS, TIER2_COLS, _PROVIDER_IDX,
+    # provider_index and get_source_days are all imported at module scope
+    # (see top of file).
     # Do NOT add function-local imports here — Python's scoping rules would
     # then treat get_source_days as a local variable throughout this function,
     # causing UnboundLocalError at line 1087 in the earlier section.
@@ -707,9 +795,7 @@ def build_cost_matrices_ml(
                     "psd_max": float(ded_psd.max()) if len(ded_psd) > 0 else 0.0,
                 }
 
-    # B2C share per PLZ (for Tier 3)
-    plz_total = daily_demand.sum(axis=1)
-    plz_b2c_share = np.where(plz_total > 0, daily_b2c.sum(axis=1) / plz_total, 0.5)
+    # (``plz_b2c_share`` for Tier 3 is computed in §5b, above the early return.)
 
     # Pre-compute PSD statistics per (PLZ, day)
     _has_psd = np.zeros((n_plz, N_DAYS), dtype=bool)
@@ -793,7 +879,7 @@ def build_cost_matrices_ml(
     feat_mx[:, 19] = np.where(hp, _psd_std[pi_arr, d_arr] * psd_scale, 0.0)   # demand_std
     feat_mx[:, 20] = np.where(hp, _psd_max[pi_arr, d_arr] * psd_scale, np_f)  # max_stop_demand
     feat_mx[:, 21] = np_f / (min_veh * VEHICLE_CAPACITY)               # demand_cap_ratio
-    feat_mx[:, 22] = float(_PROVIDER_IDX.get(provider, 0))             # provider_idx
+    feat_mx[:, 22] = float(provider_index(provider))                   # provider_idx
     feat_mx[:, 23] = d_arr.astype(np.float64)                          # day_idx
     feat_mx[:, 24] = freq_f                                            # delivery_frequency
 
@@ -831,6 +917,42 @@ def build_cost_matrices_ml(
         daily_b2c, daily_b2b, fast_share_b2c, fast_share_b2b,
     )
 
+    # ── 8b) Small-delivery rule (rev1 realistic tours) ────────────────
+    # A delivery instance below one vehicle load never gets a tour of its
+    # own — it rides with its neighbours. Such instances are therefore NOT
+    # separable and must not appear in the per-cell matrix; the pooled twin
+    # ``_hub_smallday_pool_ml`` prices them at the hub instead. The zeroing
+    # happens BEFORE dd_cost_mx is summed, otherwise a small instance would
+    # be charged twice (separable matrix AND pooled twin).
+    #
+    # Restricted to delivery days on purpose: on non-delivery days the
+    # instance is an express residual, already pooled hub-wide by
+    # ``_hub_express_day_ml`` off ``raw_express`` / ``express_cost``.
+    # ``cost_3d_raw`` keeps the unpooled per-cell prediction for diagnostics.
+    cost_3d_raw = cost_3d.copy()
+    small_delivery_mask = (
+        active
+        & (combined_demand < MIN_TOUR_PARCELS)
+        & sched_active[None, :, :]
+    )
+    cost_3d[small_delivery_mask] = 0.0        # pooled twin owns these
+    # spec §4.3 v3: a pooled group is ONE tour, so its vehicles are counted by
+    # the group (``_hub_delivery_pool_vehicles``), never per member — exactly
+    # the rule the express partition already follows. The per-cell count would
+    # otherwise charge one vehicle to each member of a shared tour.
+    # ``veh_3d_raw`` keeps the unpooled per-cell count for diagnostics and for
+    # the cheap pruning heuristics that only need a movement magnitude.
+    veh_3d_raw = veh_3d.copy()
+    veh_3d[small_delivery_mask] = 0.0
+
+    # Pool signature per (plz, schedule, day): the parcels/stops this cell
+    # contributes to the hub pool, 0 when it does not participate. Two
+    # schedules with an identical signature leave the pool value untouched —
+    # ``_pool_affected_days`` uses that to skip recomputation exactly.
+    _pool_dem = np.where(small_delivery_mask, combined_demand, 0.0)
+    _pool_stp = np.where(
+        small_delivery_mask, np.maximum(1.0, combined_stops), 0.0)
+
     # ── 9) DD cost matrix & express arrays ────────────────────────────
     dd_cost_mx = (cost_3d * sched_active[None, :, :].astype(np.float64)).sum(axis=2)
     raw_express = (
@@ -841,45 +963,151 @@ def build_cost_matrices_ml(
         1.0, spd_arr[:, None] * fast_share_blend_arr[:, None] * np.ones((1, N_DAYS)),
     )
 
-    # Per-PLZ per-day coordinate arrays for _hub_express_day_ml
-    plz_day_lon: list[list[np.ndarray]] = []
-    plz_day_lat: list[list[np.ndarray]] = []
-    plz_day_psd: list[list[np.ndarray]] = []
-    for pi, pc in enumerate(plz_keys):
-        pc_coords = plz_day_coords.get(pc, {})
-        lons_d, lats_d, psd_d = [], [], []
-        for d in range(N_DAYS):
-            cd = pc_coords.get(d)
-            if cd is not None:
-                lons_d.append(cd[0])
-                lats_d.append(cd[1])
-                psd_d.append(cd[2])
-            else:
-                lons_d.append(np.array([], dtype=np.float64))
-                lats_d.append(np.array([], dtype=np.float64))
-                psd_d.append(np.array([], dtype=np.float64))
-        plz_day_lon.append(lons_d)
-        plz_day_lat.append(lats_d)
-        plz_day_psd.append(psd_d)
+    # ── 9b) Per-cell express cost (rev1 realistic-tour rule) ────────────
+    # The express instance is a *scaled single-day instance of the same
+    # cell* — the pool's scale/p_keep augmentation family. Real hub_dist and
+    # area (D3a fix), single-day tier2 geometry, psd stats scaled by the
+    # standard share (D3b fix). G2: assert the domain, never extrapolate
+    # silently.
+    express_cost = np.zeros((n_plz, N_DAYS), dtype=np.float64)
+    xi, xd = np.where(raw_express > 0)
+    if len(xi):
+        assert np.all(area_arr[xi] > 0), "G2: zero area in express instance"
+        assert np.all(hd_arr[xi] > 0), "G2: zero hub_dist in express instance"
+        xf = np.empty((len(xi), len(ALL_COLS)), dtype=np.float64)
+        npx = raw_express[xi, xd]
+        nsx = np.maximum(1.0, np.trunc(expr_stops[xi, xd]))
+        arx = np.maximum(0.01, area_arr[xi])
+        xf[:, 0] = np.trunc(npx)
+        xf[:, 1] = nsx
+        xf[:, 2] = arx
+        xf[:, 3] = hd_arr[xi]
+        xf[:, 4] = np.trunc(npx) / nsx
+        xf[:, 5] = np.trunc(npx) / VEHICLE_CAPACITY
+        xf[:, 6] = np.ceil(np.trunc(npx) / VEHICLE_CAPACITY)
+        xf[:, 7] = np.trunc(npx) / arx
+        xf[:, 8:8 + n_t2] = tier2_mx[xi, xd, :]
+        b2cx = np.trunc(np.trunc(npx) * plz_b2c_share[xi])
+        xf[:, 18] = b2cx / np.maximum(1.0, np.trunc(npx))
+        xhp = _has_psd[xi, xd]
+        xf[:, 19] = np.where(xhp, _psd_std[xi, xd] * fast_share_blend_arr[xi], 0.0)
+        xf[:, 20] = np.where(xhp, _psd_max[xi, xd] * fast_share_blend_arr[xi],
+                             np.trunc(npx))
+        min_vx = np.maximum(1.0, np.ceil(np.trunc(npx) / VEHICLE_CAPACITY))
+        xf[:, 21] = np.trunc(npx) / (min_vx * VEHICLE_CAPACITY)
+        xf[:, 22] = float(provider_index(provider))
+        xf[:, 23] = xd.astype(np.float64)
+        xf[:, 24] = 1.0                      # single-day residual semantics
+        express_cost[xi, xd] = ml_predictor.predict(
+            pd.DataFrame(xf, columns=ALL_COLS))
 
-    hub_lon_arr = np.array([
-        hub_coords_by_plz.get(pc, (9.73, 52.38))[0] for pc in plz_keys
-    ])
-    hub_lat_arr = np.array([
-        hub_coords_by_plz.get(pc, (9.73, 52.38))[1] for pc in plz_keys
-    ])
+    # ── 9c) Per-instance pooled-delivery prices (perf, bit-identical) ───
+    # At ``head=None`` — the base run — ``price_group`` prices a pooled group
+    # as the Sigma of its members' SINGLETON prices (surrogate/bundle.py:174-179),
+    # so the price is partition-independent and every term depends only on
+    # (plz, schedule, day). Precomputing that table once per matrix build turns
+    # ``_hub_smallday_pool_ml`` — which misses its cache on essentially every
+    # trial move — from "build_partition + one bundle_features + one surrogate
+    # call PER MEMBER" into a Sigma over array lookups.
+    #
+    # Identical by construction rather than by re-derivation: the row below is
+    # exactly the one ``price_group`` -> ``bundle_features`` builds for a lone
+    # member of the pool (same kind, same parcels/stops overrides, freq=1.0),
+    # and it is priced with the same ``predict_single``.
+    from batch_delivery.surrogate.bundle import bundle_features  # cycle: import here
+    small_delivery_price = np.zeros_like(cost_3d)
+    # bundle_features reads only these keys for a delivery singleton; passing a
+    # view keeps the precompute independent of the dict assembled below.
+    _bf_view = {
+        "plz_day_lon": plz_day_lon, "plz_day_lat": plz_day_lat,
+        "plz_day_psd": plz_day_psd, "hub_lon_arr": hub_lon_arr,
+        "hub_lat_arr": hub_lat_arr, "area_arr": area_arr, "hd_arr": hd_arr,
+        "plz_b2c_share": plz_b2c_share, "daily_demand": daily_demand,
+        "provider": provider, "fast_share_blend_arr": fast_share_blend_arr,
+        "raw_express": raw_express, "expr_stops": expr_stops,
+    }
+    #
+    # Task 6d: the per-row ``predict_single`` loop was 36.6 s of the 46.7 s
+    # build (6b report §7.4) — almost all of it the per-call DataFrame the
+    # predictor reconstructs. The 25-feature ROWS are built exactly as before,
+    # one per instance, and then priced in ONE batched ``predict``. That is a
+    # pure refactor only if ``predict`` and ``predict_single`` agree bit for
+    # bit on the same row, which is a property of the PREDICTOR, not of this
+    # code:
+    #
+    # * ``DaganzoLGBHybrid`` (production) is batch-invariant by construction —
+    #   ``predict_single`` IS ``predict`` on a 1-row frame, ``_daganzo_vec``
+    #   loops per row, and ``build_combo_features`` is element-wise, so no
+    #   arithmetic crosses row boundaries. Verified bit-identical over 800 rows
+    #   and over batch sizes 1/2/7/64/800 (Task 6d report §0).
+    # * A future predictor need NOT be. The 5-seed ``MLCostPredictor``
+    #   (StandardScaler -> MLPRegressor) reaches BLAS GEMM, and GEMM picks
+    #   different kernels/blocking by matrix shape, so the batch shape can move
+    #   the last ULP.
+    #
+    # Hence the sampled equality check below, which ASSERTS rather than
+    # degrades — see the guard.
+    _sd_parcels = np.zeros(n_plz, dtype=np.float64)
+    _sd_stops = np.zeros(n_plz, dtype=np.float64)
+    _sz, _ss, _sd = np.where(small_delivery_mask)
+    _sd_idx = list(zip(_sz.tolist(), _ss.tolist(), _sd.tolist()))
+    if _sd_idx:
+        _sd_rows = np.empty((len(_sd_idx), len(ALL_COLS)), dtype=np.float64)
+        for _k, (_z, _s, _d) in enumerate(_sd_idx):
+            _sd_parcels[_z] = combined_demand[_z, _s, _d]
+            _sd_stops[_z] = max(1.0, combined_stops[_z, _s, _d])
+            _sd_rows[_k] = bundle_features(
+                (_z,), _d, _bf_view, kind="delivery",
+                parcels_by_cell=_sd_parcels, stops_by_cell=_sd_stops, freq=1.0)
+            _sd_parcels[_z] = 0.0
+            _sd_stops[_z] = 0.0
+        _sd_batch = np.asarray(ml_predictor.predict(
+            pd.DataFrame(_sd_rows, columns=ALL_COLS)), dtype=np.float64)
+        # G-6d guard: the batch must EQUAL the per-row prediction. It asserts
+        # and aborts the build by design — fail-loud, no silent degrade: a
+        # predictor that is not batch-invariant moves every pooled price in the
+        # grid, which is a scientific-correctness question for a human, not
+        # something this function should quietly work around. The runner is
+        # resumable (``61_grid_run_v2.py`` completion markers), so an abort
+        # costs at most the triple in flight.
+        _chk = np.random.default_rng(20260826).choice(
+            len(_sd_idx), size=min(5, len(_sd_idx)), replace=False)
+        _exact = all(
+            float(ml_predictor.predict_single(_sd_rows[int(_k)]))
+            == float(_sd_batch[int(_k)]) for _k in _chk)
+        assert _exact, (
+            f"{type(ml_predictor).__name__}.predict(batch) != "
+            "predict_single(row) — the pooled small-delivery price table "
+            "cannot be batched with this predictor (see the batch-invariance "
+            "note above); revert §9c to the per-row loop for it")
+        for _k, (_z, _s, _d) in enumerate(_sd_idx):
+            small_delivery_price[_z, _s, _d] = _sd_batch[_k]
+    log.info("Pooled small-delivery prices: %d instance(s) precomputed",
+             len(_sd_idx))
 
     return {
         "dd_cost_mx": dd_cost_mx,
         "cost_3d": cost_3d,
+        "cost_3d_raw": cost_3d_raw,
         "veh_3d": veh_3d,
+        "veh_3d_raw": veh_3d_raw,
         "wait_mx": wait_mx,
         "raw_express": raw_express,
         "expr_stops": expr_stops,
+        "express_cost": express_cost,
+        "fast_share_blend_arr": fast_share_blend_arr,
         "area_arr": area_arr,
         "hd_arr": hd_arr,
         "sched_active": sched_active,
         "daily_demand": daily_demand,
+        "small_delivery_mask": small_delivery_mask,
+        "small_delivery_price": small_delivery_price,
+        "combined_demand": combined_demand,
+        "combined_stops": combined_stops,
+        "_pool_dem": _pool_dem,
+        "_pool_stp": _pool_stp,
+        "_cent_lon": _cent_lon,
+        "_cent_lat": _cent_lat,
         # ML-specific data for SA express
         "plz_day_lon": plz_day_lon,
         "plz_day_lat": plz_day_lat,
@@ -889,6 +1117,25 @@ def build_cost_matrices_ml(
         "plz_b2c_share": plz_b2c_share,
         "ml_predictor": ml_predictor,
         "provider": provider,
+        # ── Task 6d memo layers, empty and owned by THIS matrices dict ──
+        # Created here rather than lazily so that the shallow copies the
+        # optimisers make (``mat_pen = dict(m)`` with its own ``dd_cost_mx``)
+        # SHARE them: stage 1's partitions and prices are then still warm for
+        # stages 2 and 3. Safe because nothing a memo key omits differs
+        # between those copies — see ``price_group``'s scope note. Releasing
+        # the matrices releases the caches.
+        _MEMO: {},
+        _MEMO_PINS: {},
+        _MEMO_PART: {},
+        _MEMO_HULL: {},
+        _MEMO_STATS: dict.fromkeys(_STAT_FIELDS, 0),
+        # Created here for the same reason as the memos, and it matters more:
+        # the optimisers price against ``mat_pen = dict(m)`` (a SHALLOW copy
+        # with its own ``dd_cost_mx``). A lazily-created counter dict would be
+        # created ON THE COPY and thrown away with it, so every price source
+        # counted during stage 1 would be lost. Seeded here, the copy shares
+        # the same dict by reference and the counts survive.
+        _PRICE_SRC: {},
     }
 
 
@@ -897,6 +1144,162 @@ def build_cost_matrices_ml(
 # ─────────────────────────────────────────────────────────────────────────────
 # Hub-bundled express cost — ML version
 # ─────────────────────────────────────────────────────────────────────────────
+
+class _HullMemo(dict):
+    """A plain mapping as far as ``partition.py`` is concerned, plus counters.
+
+    ``build_partition`` only ever calls ``get`` and ``__setitem__``, so the
+    pure module stays unaware that anything is being measured. The overridden
+    ``get`` costs ~100 ns against the ~100 us ``ConvexHull`` it avoids.
+
+    Constraint: ``__init__`` takes a required argument, so a matrices dict
+    holding one of these is not picklable/deep-copyable as-is. Nothing in the
+    package does either (the shallow ``dict(m)`` copies the optimisers make are
+    fine); a caller that needs to would drop ``MEMO_KEYS`` first.
+    """
+
+    __slots__ = ("_stats",)
+
+    def __init__(self, stats: dict) -> None:
+        super().__init__()
+        self._stats = stats
+
+    def get(self, key, default=None):
+        val = super().get(key, default)
+        self._stats["hull_hit" if val is not default else "hull_miss"] += 1
+        return val
+
+
+def _hull_cache(matrices: dict, d: int) -> _HullMemo:
+    """The L2 hull memo for day *d*, created on first use.
+
+    Scoped per day because the point cloud of a member set is day-dependent;
+    the express and the pooled-delivery partitions read the SAME geometry
+    (``matrices["plz_day_lon"]``/``["plz_day_lat"]``), so they share it.
+    """
+    store = matrices.get(_MEMO_HULL)
+    if store is None:
+        store = matrices[_MEMO_HULL] = {}
+    cache = store.get(d)
+    if cache is None:
+        cache = store[d] = _HullMemo(_memo_stats(matrices))
+    elif len(cache) >= _HULL_CAP:             # bounded: forget, never misremember
+        cache.clear()
+        _bump(matrices, "hull_clear")
+    return cache
+
+
+def _partition_memo(matrices: dict) -> dict:
+    memo = matrices.get(_MEMO_PART)
+    if memo is None:
+        memo = matrices[_MEMO_PART] = {}
+    return memo
+
+
+def _cell_state_key(cells: list[int], parcels, stops) -> bytes:
+    """Compact exact key for a cell state: the ids plus the parcels and stops.
+
+    Bytes rather than a tuple of rounded floats: a rounded key can merge two
+    inputs that ``build_partition``'s ``>= min_parcels`` test would separate,
+    which would make the memo an approximation. Bit patterns cannot collide,
+    and repeated reads of the same array entry are bit-identical, so exactness
+    costs no hit rate. Compact because these keys are held for a whole
+    (theta, provider) block: ~12 bytes per cell instead of ~140.
+    """
+    return (np.asarray(cells, dtype=np.int32).tobytes()
+            + np.asarray([parcels[z] for z in cells], dtype=np.float64).tobytes()
+            + np.asarray([stops[z] for z in cells], dtype=np.float64).tobytes())
+
+
+def _express_partition(
+    contributing: list[int], d: int,
+    raw_express: np.ndarray, expr_stops: np.ndarray, matrices: dict,
+) -> tuple[tuple[int, ...], ...]:
+    """Who rides with whom in hub-day *d*'s express pool.
+
+    Factored out of :func:`_hub_express_day_ml` so the cost path (which does
+    not need it at ``head=None``) and the vehicle path (which always does) can
+    call it independently. Pure function of its arguments — same inputs, same
+    grouping, whoever asks first.
+
+    Task 6d (L3): that purity is what makes it memoisable. The grouping depends
+    only on ``(d, contributing, raw_express[:, d], expr_stops[:, d])`` plus the
+    day-fixed geometry, so the result is cached on the matrices dict. CD
+    revisits hub-day states heavily (2 restarts x 8 rounds x pair-polish), and
+    ``_hub_express_vehicles`` asks for the very same grouping the cost path
+    skipped at ``head=None`` — both are served from here.
+    """
+    from batch_delivery.optimization.partition import build_partition
+    cells = sorted(int(z) for z in contributing)   # build_partition sorts too
+    memo = _partition_memo(matrices)
+    key = ("express", int(d),
+           _cell_state_key(cells, raw_express[:, d], expr_stops[:, d]))
+    hit = memo.get(key)
+    if hit is not None:
+        _bump(matrices, "partition_hit")
+        return hit
+    _bump(matrices, "partition_miss")
+    parts = build_partition(
+        np.array(cells), raw_express[:, d], expr_stops[:, d],
+        matrices["area_arr"], matrices["hd_arr"],
+        matrices["_cent_lon"], matrices["_cent_lat"],
+        pts_lon={z: matrices["plz_day_lon"][z][d] for z in cells},
+        pts_lat={z: matrices["plz_day_lat"][z][d] for z in cells},
+        hull_cache=_hull_cache(matrices, d),
+    )
+    if len(memo) >= _PART_CAP:
+        memo.clear()
+        _bump(matrices, "partition_clear")
+    memo[key] = parts
+    return parts
+
+
+def _express_partition_vehicles(
+    parts: tuple[tuple[int, ...], ...], d: int, raw_express: np.ndarray,
+) -> float:
+    """Vehicles of an express partition: one ceil per tour, never summed first."""
+    return float(sum(
+        np.ceil(sum(np.trunc(raw_express[z, d]) for z in g) / VEHICLE_CAPACITY)
+        for g in parts
+    ))
+
+
+def _express_members(
+    hi: int, d: int, chosen: np.ndarray,
+    hub_plz_list: list[np.ndarray],
+    schedules: list[frozenset[int]],
+    raw_express: np.ndarray,
+    matrices: dict,
+) -> tuple[list[int], tuple | None]:
+    """The hub-day's express-contributing cells and their cache key.
+
+    ``([], None)`` when the hub contributes nothing that day — every caller
+    then answers 0.0 without touching ``express_cache``.
+
+    The express twin of :func:`_smallday_members`, and shared for the same
+    reason: the cost path, the vehicle path and Task 11's head-usage audit
+    must never be able to derive DIFFERENT member sets (and therefore
+    different cache keys) for the same hub-day state. A cell contributes iff
+    its chosen schedule does not deliver on *d* and it has express demand
+    that day; unlike the delivery twin the key is the membership SET alone,
+    because a cell's express demand on *d* does not depend on its schedule.
+    """
+    h_ps = hub_plz_list[hi]
+    # Vectorised: identify contributing PLZs via boolean masking
+    sched_active = matrices.get("sched_active")
+    if sched_active is not None:
+        is_non_delivery = ~sched_active[chosen[h_ps], d]
+    else:
+        is_non_delivery = np.array(
+            [d not in schedules[int(chosen[pi])] for pi in h_ps],
+            dtype=bool,
+        )
+    mask = is_non_delivery & (raw_express[h_ps, d] > 0)
+    if not mask.any():
+        return [], None
+    contributing = h_ps[mask].tolist()
+    return contributing, (hi, d, frozenset(contributing))
+
 
 def _hub_express_day_ml(
     hi: int, d: int, chosen: np.ndarray,
@@ -908,103 +1311,311 @@ def _hub_express_day_ml(
     express_cache: dict,
     express_scale: float = 1.0,
 ) -> float:
-    """Hub-level express cost for one day using ML prediction (vectorised).
+    """Hub-level express cost for one day — partition first, then price.
 
-    Aggregates express stops from non-delivering PLZ at the hub, computes
-    full 25-feature vector from merged coordinates, and predicts with the
-    MLP Ensemble.  Results are cached by ``(hub, day, contributing_plz)``.
+    rev1 realistic-tour rule: the non-delivering cells of a hub do not merge
+    into one giant instance. ``build_partition`` decides who rides with whom
+    (min-load, stops/area/hull caps) and ``price_group`` prices each tour.
+    Results are cached by ``(hub, day, contributing_plz)`` as
+    ``(cost, vehicles)``; ``_hub_express_vehicles`` reads the second slot.
     """
-    from batch_delivery.features import (
-        compute_tier1_features,
-        compute_tier2_features,
-        compute_tier3_features,
-    )
-
-    h_ps = hub_plz_list[hi]
-
-    # Vectorised: identify contributing PLZs via boolean masking
-    sched_active = matrices.get("sched_active")
-    if sched_active is not None:
-        is_non_delivery = ~sched_active[chosen[h_ps], d]
-    else:
-        is_non_delivery = np.array(
-            [d not in schedules[int(chosen[pi])] for pi in h_ps],
-            dtype=bool,
-        )
-    expr_demand = raw_express[h_ps, d]
-    mask = is_non_delivery & (expr_demand > 0)
-
-    if not mask.any():
+    contributing, cache_key = _express_members(
+        hi, d, chosen, hub_plz_list, schedules, raw_express, matrices)
+    if not contributing:
         return 0.0
 
-    contributing = h_ps[mask].tolist()
-    tot_dem = float(expr_demand[mask].sum())
-    tot_stp = float(expr_stops[h_ps[mask], d].sum())
-
-    cache_key = (hi, d, frozenset(contributing))
     cached = express_cache.get(cache_key)
     if cached is not None:
-        return cached * express_scale
+        return cached[0] * express_scale
 
-    # Merge coordinates from contributing PLZ
-    plz_day_lon = matrices["plz_day_lon"]
-    plz_day_lat = matrices["plz_day_lat"]
-    plz_day_psd = matrices["plz_day_psd"]
-    hub_lon_arr = matrices["hub_lon_arr"]
-    hub_lat_arr = matrices["hub_lat_arr"]
-    plz_b2c_share = matrices["plz_b2c_share"]
-    ml_predictor = matrices["ml_predictor"]
-    provider = matrices["provider"]
-    area_arr = matrices["area_arr"]
+    head = matrices.get("bundle_head")        # None until Gate U passes
+    if head is None:
+        # Sigma-fallback regime: ``price_group(kind="express", head=None)``
+        # returns ``sum(express_cost[z, d])`` over the group's members
+        # (surrogate/bundle.py:169-173), so summing over ANY partition of
+        # ``contributing`` gives the same total — the grouping is not
+        # load-bearing for the PRICE. Skipping build_partition here (a
+        # ConvexHull per candidate merge over up to ~47 co-hub cells) is what
+        # makes the coordinate-descent inner loop affordable; the partition's
+        # one real consumer, the vehicle count, is deferred to
+        # ``_hub_express_vehicles``, which fills the ``None`` slot in place.
+        # Only the summation ORDER differs from the partition path (cell order
+        # instead of group by group) — the terms are identical.
+        ec = matrices["express_cost"]
+        cost = float(sum(ec[z, d] for z in contributing))
+        express_cache[cache_key] = (cost, None)
+        return cost * express_scale
 
-    all_lon = [plz_day_lon[pi][d] for pi in contributing if len(plz_day_lon[pi][d]) > 0]
-    all_lat = [plz_day_lat[pi][d] for pi in contributing if len(plz_day_lat[pi][d]) > 0]
-    all_psd = [plz_day_psd[pi][d] for pi in contributing if len(plz_day_psd[pi][d]) > 0]
+    from batch_delivery.surrogate.bundle import price_group
 
-    if all_lon:
-        merged_lon = np.concatenate(all_lon)
-        merged_lat = np.concatenate(all_lat)
-        merged_psd = np.concatenate(all_psd)
-    else:
-        merged_lon = np.array([], dtype=np.float64)
-        merged_lat = np.array([], dtype=np.float64)
-        merged_psd = np.array([tot_dem])
-
-    # Hub coordinates (from first contributing PLZ)
-    hlon = float(hub_lon_arr[contributing[0]])
-    hlat = float(hub_lat_arr[contributing[0]])
-
-    # Aggregate area (sum of contributing PLZ areas)
-    tot_area = sum(float(area_arr[pi]) for pi in contributing)
-
-    # Weighted B2C share
-    dem_by_plz = [raw_express[pi, d] for pi in contributing]
-    total = sum(dem_by_plz)
-    b2c_share_w = sum(
-        plz_b2c_share[pi] * raw_express[pi, d] for pi in contributing
-    ) / max(1, total)
-
-    # Compute features
-    # FIX 2026-05-25: hub_dist_km=0.0 for express routes (they start at the hub).
-    # Matches training-side feature in features/core.py:657 (xpr_hd = 0.0).
-    # Previously passed area_arr[contributing[0]] as hub_dist_km (positional-arg
-    # bug) which corrupted express cost predictions by ~2 orders of magnitude.
-    t1 = compute_tier1_features(int(tot_dem), int(max(1, tot_stp)), tot_area, 0.0)
-    if len(merged_lon) > 0:
-        t2 = compute_tier2_features(merged_lon, merged_lat, hlon, hlat, merged_psd)
-    else:
-        from batch_delivery.features import TIER2_COLS
-        t2 = dict.fromkeys(TIER2_COLS, 0.0)
-    t3 = compute_tier3_features(
-        merged_psd if len(merged_psd) > 0 else np.array([tot_dem]),
-        int(tot_dem * b2c_share_w), int(tot_dem),
-        provider, d, 1,
-    )
-
-    feats = {**t1, **t2, **t3}
-    base25 = np.array([feats[c] for c in ALL_COLS], dtype=np.float64)
-    # Numpy-only single-row predict (avoids DataFrame overhead in hot loop).
-    cost = float(ml_predictor.predict_single(base25))
-
-    express_cache[cache_key] = cost
+    parts = _express_partition(contributing, d, raw_express, expr_stops,
+                               matrices)
+    cost = float(sum(
+        price_group(g, d, matrices, kind="express", head=head) for g in parts))
+    express_cache[cache_key] = (
+        cost, _express_partition_vehicles(parts, d, raw_express))
     return cost * express_scale
+
+
+def _hub_express_vehicles(
+    hi: int, d: int, chosen: np.ndarray,
+    hub_plz_list: list[np.ndarray],
+    schedules: list[frozenset[int]],
+    raw_express: np.ndarray,
+    matrices: dict,
+    express_cache: dict,
+) -> float:
+    """Vehicles of the hub's express partition on day *d*.
+
+    Shares ``express_cache`` with :func:`_hub_express_day_ml` — one entry per
+    ``(hub, day, contributing)`` holding ``(cost, vehicles)``, so asking for
+    the fleet never costs a second round of surrogate calls.
+
+    The vehicles slot is ``None`` when the cost was priced partition-free (see
+    :func:`_hub_express_day_ml`); this function is the only consumer that needs
+    the grouping, so it builds the partition then — once — and upgrades the
+    entry in place. The value is the one the eager path used to store.
+    """
+    contributing, key = _express_members(
+        hi, d, chosen, hub_plz_list, schedules, raw_express, matrices)
+    if not contributing:
+        return 0.0
+    cached = express_cache.get(key)
+    if cached is None:
+        _hub_express_day_ml(
+            hi, d, chosen, hub_plz_list, schedules, raw_express,
+            matrices["expr_stops"], matrices, express_cache, 1.0)
+        cached = express_cache[key]
+    if cached[1] is None:                     # partition deferred — pay it now
+        parts = _express_partition(
+            contributing, d, raw_express, matrices["expr_stops"], matrices)
+        cached = (cached[0], _express_partition_vehicles(parts, d, raw_express))
+        express_cache[key] = cached
+    return cached[1]
+
+
+def _smallday_members(
+    hi: int, d: int, chosen: np.ndarray,
+    hub_plz_list: list[np.ndarray], matrices: dict,
+) -> tuple[list[int], tuple | None]:
+    """The hub-day's pooled small-delivery cells and their cache key.
+
+    ``([], None)`` when the hub pools nothing that day (or the matrices
+    predate the rule) — both twins then answer 0.0 without touching the
+    cache. Shared so the cost twin and the vehicle twin can never derive
+    different keys for the same hub-day state.
+
+    The key carries ``(cell, schedule)`` pairs, not just the membership set
+    the express twin keys on: a member's pooled demand depends on how many
+    source days its own schedule holds behind this one.
+    """
+    mask3 = matrices.get("small_delivery_mask")
+    if mask3 is None:                         # legacy / hand-built matrices
+        return [], None
+    h_ps = hub_plz_list[hi]
+    sa = matrices["sched_active"]
+    small = [int(z) for z in h_ps
+             if sa[int(chosen[z]), d] and mask3[z, int(chosen[z]), d]]
+    if not small:
+        return [], None
+    return small, (hi, d, tuple(sorted((z, int(chosen[z])) for z in small)))
+
+
+def _smallday_partition(
+    hi: int, d: int, chosen: np.ndarray, small: list[int], matrices: dict,
+) -> tuple[tuple[tuple[int, ...], ...], np.ndarray, np.ndarray]:
+    """Who rides with whom in hub-day *d*'s pooled small-delivery groups.
+
+    Returns ``(parts, parcels, stops)`` — the grouping plus the per-cell
+    parcel/stop vectors it was built from, which the pricing path hands to
+    ``price_group`` and the vehicle path reduces with one ceil per group.
+    Factored out of :func:`_hub_smallday_pool_ml` so the cost path (which
+    skips it at ``head=None``) and :func:`_hub_delivery_pool_vehicles` (which
+    always needs it) build the identical grouping — same inputs, same tours,
+    whoever asks first.
+
+    ``hi`` is carried for call-site symmetry with the twins; the grouping is
+    fully determined by ``(d, small, chosen)``.
+
+    Task 6d (L3): the GROUPING is memoised on the matrices dict, keyed by the
+    cell state ``(d, cells, parcels, stops)`` it was built from. The returned
+    parcel/stop vectors stay freshly built per call — callers hand them to
+    ``price_group`` as ``parcels_by_cell``/``stops_by_cell`` and are free to
+    treat them as their own.
+    """
+    from batch_delivery.optimization.partition import build_partition
+    cd = matrices["combined_demand"]
+    cs = matrices["combined_stops"]
+    parcels = np.zeros(cd.shape[0])
+    stops = np.zeros(cd.shape[0])
+    cells = sorted(int(z) for z in small)     # build_partition sorts too
+    for z in cells:
+        parcels[z] = cd[z, int(chosen[z]), d]
+        stops[z] = max(1.0, cs[z, int(chosen[z]), d])
+    memo = _partition_memo(matrices)
+    key = ("delivery", int(d), _cell_state_key(cells, parcels, stops))
+    hit = memo.get(key)
+    if hit is not None:
+        _bump(matrices, "partition_hit")
+        return hit, parcels, stops
+    _bump(matrices, "partition_miss")
+    parts = build_partition(
+        np.array(cells), parcels, stops, matrices["area_arr"],
+        matrices["hd_arr"], matrices["_cent_lon"], matrices["_cent_lat"],
+        pts_lon={z: matrices["plz_day_lon"][z][d] for z in cells},
+        pts_lat={z: matrices["plz_day_lat"][z][d] for z in cells},
+        hull_cache=_hull_cache(matrices, d),
+    )
+    if len(memo) >= _PART_CAP:
+        memo.clear()
+        _bump(matrices, "partition_clear")
+    memo[key] = parts
+    return parts, parcels, stops
+
+
+def _delivery_partition_vehicles(
+    parts: tuple[tuple[int, ...], ...], parcels: np.ndarray,
+) -> float:
+    """Vehicles of a pooled delivery partition: one ceil per tour.
+
+    The delivery-side twin of :func:`_express_partition_vehicles` — the group
+    is ONE tour, so its members' parcels are summed BEFORE the ceil, never
+    rounded up individually (spec §4.3 v3).
+    """
+    return float(sum(
+        np.ceil(sum(np.trunc(parcels[z]) for z in g) / VEHICLE_CAPACITY)
+        for g in parts
+    ))
+
+
+def _hub_smallday_pool_ml(
+    hi: int, d: int, chosen: np.ndarray,
+    hub_plz_list: list[np.ndarray],
+    schedules: list[frozenset[int]],
+    matrices: dict,
+    pool_cache: dict,
+) -> float:
+    """Delivery-day twin: pool sub-threshold DELIVERING instances (rev1 rule).
+
+    Instances zeroed out of ``cost_3d`` by ``small_delivery_mask`` are priced
+    here instead: they are partitioned with their co-located neighbours at the
+    same hub and each resulting tour is priced once.
+
+    Demand depends on each member's schedule (own arrivals + held willing
+    ones), so the cache key carries ``(cell, schedule)`` pairs — not just the
+    membership set the express twin keys on.
+
+    Results are cached as ``(cost, vehicles)``;
+    :func:`_hub_delivery_pool_vehicles` reads the second slot.
+
+    At ``head=None`` the group price is a Sigma over per-member singleton
+    prices, so the partition is skipped and the precomputed
+    ``matrices["small_delivery_price"]`` table is summed instead; see the
+    fast-path comment below and ``build_cost_matrices_ml`` §9c.
+
+    OPEN ITEM (spec'd, not yet resolved): ``freq=1.0`` is passed to
+    ``bundle_features`` even though the pooled parcels ARE batched over
+    ``n_source`` days — the separable matrix feeds the surrogate
+    ``1 + willing_blend * (n_source - 1)`` for the very same instance
+    (§7 Tier 3). A group can mix members on different schedules, so the
+    generalisation needs a weighting rule rather than a copy of the scalar.
+    Until that is decided, pooled instances are priced as single-day ones.
+    """
+    small, key = _smallday_members(hi, d, chosen, hub_plz_list, matrices)
+    if not small:
+        return 0.0
+    hit = pool_cache.get(key)
+    if hit is not None:
+        return hit[0]
+
+    head = matrices.get("bundle_head")
+    sdp = matrices.get("small_delivery_price")
+    if head is None and sdp is not None:
+        # Sigma-fallback regime: ``price_group(kind="delivery", head=None)``
+        # prices a group as the sum of its members' SINGLETON prices
+        # (surrogate/bundle.py:174-179), and a singleton's price depends only
+        # on (cell, schedule, day) — never on who else is in the group. The
+        # table was precomputed in ``build_cost_matrices_ml`` §9c from exactly
+        # that expression, so the partition, the per-member ``bundle_features``
+        # and the per-member surrogate call are all dead work here. This cache
+        # misses on essentially every trial move (the key carries each member's
+        # schedule), which is why the miss path had to become cheap.
+        # Summation order (cell order instead of group by group) is the only
+        # difference from the partition path.
+        cost = float(sum(sdp[z, int(chosen[z]), d] for z in small))
+        # Partition deferred: its one remaining consumer is the vehicle
+        # count, which fills the None slot in place (see the twin below).
+        pool_cache[key] = (cost, None)
+        return cost
+
+    from batch_delivery.surrogate.bundle import price_group
+
+    parts, parcels, stops = _smallday_partition(
+        hi, d, chosen, small, matrices)
+    cost = float(sum(
+        price_group(g, d, matrices, kind="delivery",
+                    parcels_by_cell=parcels, stops_by_cell=stops,
+                    freq=1.0, head=head)
+        for g in parts
+    ))
+    pool_cache[key] = (cost, _delivery_partition_vehicles(parts, parcels))
+    return cost
+
+
+def _hub_delivery_pool_vehicles(
+    hi: int, d: int, chosen: np.ndarray,
+    hub_plz_list: list[np.ndarray],
+    schedules: list[frozenset[int]],
+    matrices: dict,
+    pool_cache: dict,
+) -> float:
+    """Vehicles of the hub's pooled small-delivery groups on day *d*.
+
+    spec §4.3 v3: a pooled group is ONE tour and contributes
+    ``ceil(Sigma_members trunc(combined_demand[z, chosen[z], d]) / Q)``
+    vehicles — the same counting rule the express partition already uses,
+    the same rule VROOM's ``n_routes`` reports in validation. Singleton
+    (>= MIN_TOUR_PARCELS) delivery instances keep their per-cell ``veh_3d``
+    count, which ``build_cost_matrices_ml`` zeroes for pooled members so the
+    two never overlap.
+
+    Shares ``pool_cache`` with :func:`_hub_smallday_pool_ml` — one entry per
+    hub-day state holding ``(cost, vehicles)``. The vehicles slot is ``None``
+    when the cost was priced partition-free (``head=None``); this function is
+    the only consumer that needs the grouping, so it builds the partition
+    then — once — and upgrades the entry in place. The value is the one the
+    eager (``head`` installed) path stores.
+    """
+    small, key = _smallday_members(hi, d, chosen, hub_plz_list, matrices)
+    if not small:
+        return 0.0
+    cached = pool_cache.get(key)
+    if cached is None:
+        _hub_smallday_pool_ml(
+            hi, d, chosen, hub_plz_list, schedules, matrices, pool_cache)
+        cached = pool_cache[key]
+    if cached[1] is None:                     # partition deferred — pay it now
+        parts, parcels, _ = _smallday_partition(
+            hi, d, chosen, small, matrices)
+        cached = (cached[0], _delivery_partition_vehicles(parts, parcels))
+        pool_cache[key] = cached
+    return cached[1]
+
+
+def _pool_affected_days(
+    pi: int, old_si: int, new_si: int, matrices: dict,
+) -> list[int]:
+    """Days whose small-delivery pool changes when *pi* moves old_si -> new_si.
+
+    NOT the schedules' symmetric difference: a day served by BOTH schedules
+    still changes the pool, because the batched demand of that day depends on
+    how many source days the schedule holds behind it. A day is unaffected
+    only when *pi*'s participation AND its pooled demand/stops are identical
+    under both schedules.
+    """
+    dem = matrices.get("_pool_dem")
+    if dem is None:                           # legacy / hand-built matrices
+        return []
+    stp = matrices["_pool_stp"]
+    diff = (dem[pi, old_si] != dem[pi, new_si]) | (stp[pi, old_si] != stp[pi, new_si])
+    return np.flatnonzero(diff).tolist()

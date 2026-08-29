@@ -7,6 +7,34 @@ Time-Based Consolidation in Last-Mile Parcel Delivery", EWGT 2026*.
 Layout follows a discoverability-first convention: anything starting with
 `paper_*` is directly cited in the paper, everything else supports it.
 
+## 2026-08-28 — the revision lives in `revision_2026_08_final/`
+
+Everything below this section describes the **submission** (reviewed
+2026-05-31) and is still accurate for it. For anything about the **EWGT 2026
+revision**, start instead at
+
+```
+results/revision_2026_08_final/     ← the one folder for the revision (grid v6)
+├── README.md                       ← every file: producing script, grid, md5
+├── figures/  tables/  validation/  analyses/  dashboard/  paper/  decks/
+└── gallery_manifest.json
+```
+
+built by `scripts/revision/79_build_final_pack.py` from
+`results/revision_2026_08_v6/`. Its own README carries the provenance table
+(producing script, grid, md5 and size for every file) and one paragraph per
+subfolder on what changed against the submission.
+
+Superseded by it, for revision purposes:
+
+| Folder | Status now |
+|---|---|
+| `revision_2026_07/` | **superseded** — the Stage-3 grid the first revision round used. Keep for history; do not quote its numbers alongside v6 ones. |
+| `revision_2026_08_v5/` | **superseded** by v6 (v5 + bundle head). Only `tab_grid_delta_v2` in the pack still refers to it, as the v6-vs-v5 comparison. |
+| `revision_2026_08_v6/` | the live grid. The final pack is a verified copy of the parts that matter; this directory stays the working tree, not the citable one. |
+
+`paper/EWGT_2026/` is unaffected: it stays frozen at the submission.
+
 ## Directory map
 
 ```

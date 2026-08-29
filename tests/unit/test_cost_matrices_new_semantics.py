@@ -20,6 +20,7 @@ import pandas as pd
 import pytest
 
 from batch_delivery.config import N_DAYS, WEEKDAYS
+from batch_delivery.features import ALL_COLS
 from batch_delivery.optimization.core import build_cost_matrices_ml
 
 
@@ -65,6 +66,12 @@ class _DemandSpy:
 
     def predict(self, df_feats: pd.DataFrame) -> np.ndarray:
         return df_feats["n_parcels"].to_numpy(dtype=np.float64)
+
+    def predict_single(self, x25: np.ndarray) -> float:
+        # Part of the predictor protocol since the pooled small-delivery
+        # prices are precomputed in build_cost_matrices_ml (§9c).
+        return float(self.predict(
+            pd.DataFrame(x25.reshape(1, -1), columns=ALL_COLS))[0])
 
 
 def _coords_for(plz: str):
@@ -174,7 +181,12 @@ def test_share_zero_keeps_today_arrivals():
         fast_share_b2c=1.0,   # 100% non-willing
         fast_share_b2b=1.0,
     )
-    cost_3d = out["cost_3d"]
+    # ``cost_3d_raw`` is the UNPOOLED per-cell prediction. ``cost_3d`` zeroes
+    # delivery instances below MIN_TOUR_PARCELS (the rev1 small-delivery rule
+    # hands those to ``_hub_smallday_pool_ml``), and at 130 parcels/day every
+    # instance here is below that threshold — so the spy must read the raw
+    # matrix to see the demand that actually reached the featuriser.
+    cost_3d = out["cost_3d_raw"]
 
     # Daily (size=6): every day is a delivery day with today's ALL arrivals
     # No willing-prior fraction since fast_share=1.0 → demand = 130 every day
