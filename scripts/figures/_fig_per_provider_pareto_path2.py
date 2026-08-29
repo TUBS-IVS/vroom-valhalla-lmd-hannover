@@ -3,12 +3,28 @@ has its own daily baseline and its own cost-vs-wait curve — providers with
 lower demand density consolidate more aggressively, providers with high demand
 density (DHL) can barely batch.
 
-Outputs:
+Default outputs:
   results/paper_final_2026_05_30/05_optimization/fig_PF6_provider_pareto.{png,pdf}
   results/paper_final_2026_05_30/05_optimization/_per_provider_pareto.csv
+
+Task 19 W1b (v6 regeneration)
+-----------------------------
+v6 status B: every column read (``init_cost_eur``, ``avg_wait_d_init``,
+``schedule_size_init``, ``weekly_parcels``) is the routing-optimal (stage 1)
+plan by this script's OWN design (it never reads a ``_balanced`` column),
+so per the brief's plan convention it stays on stage 1, not the default
+operator plan. Each provider's own theta=0 baseline is read fresh from the
+SAME (legacy-adapted) ``tab_balancing_summary.csv`` -- no separate baseline
+constant to go stale. Note: the fixed "$P=0.5$" marker below is this
+script's own pre-existing illustrative reference point, not a per-provider
+knee -- the actual per-LSP routing-lens P* varies (0.25/0.5/0.75) and is
+audited in ``tab_pstar_knees_smoothed.csv``; see ``_STATUS.md``.
 """
-from pathlib import Path
+import argparse
+import sys
 import warnings
+from pathlib import Path
+
 warnings.filterwarnings("ignore")
 
 import matplotlib
@@ -18,10 +34,13 @@ import numpy as np
 import pandas as pd
 from matplotlib import rcParams
 
-ROOT = Path(__file__).resolve().parents[1]
-PATH2 = ROOT / "results" / "overnight_2026_05_29_path2"
-OUT = ROOT / "results" / "paper_final_2026_05_30" / "05_optimization"
-OUT.mkdir(parents=True, exist_ok=True)
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "figures"))
+import _v6_provenance as V  # noqa: E402
+
+SCRIPT = "_fig_per_provider_pareto_path2.py"
+DEFAULT_REV = ROOT / "results" / "overnight_2026_05_29_path2"
+DEFAULT_OUT = ROOT / "results" / "paper_final_2026_05_30" / "05_optimization"
 
 rcParams.update({
     "font.family": "serif", "font.size": 10,
@@ -42,9 +61,25 @@ PROV_COLORS = {
 }
 
 
-def main():
-    summ = pd.read_csv(PATH2 / "tab_balancing_summary.csv")
-    chosen = pd.read_csv(PATH2 / "tab_chosen_schedules.csv")
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    V.add_v6_args(ap, default_rev=DEFAULT_REV, default_out=DEFAULT_OUT,
+                 rev_help="legacy-adapted run/ directory (74_ <out>/run) "
+                          "for v6, or the original path2 dir")
+    args = ap.parse_args(argv)
+    rev = Path(args.rev_dir)
+    OUT = Path(args.out_dir)
+    OUT.mkdir(parents=True, exist_ok=True)
+
+    summ_path, chosen_path = rev / "tab_balancing_summary.csv", rev / "tab_chosen_schedules.csv"
+    summ = pd.read_csv(summ_path)
+    chosen = pd.read_csv(chosen_path)
+    V.require_columns(summ, ["penalty", "share_willing", "provider",
+                             "init_cost_eur", "balanced_cost_eur"],
+                      source=str(summ_path))
+    V.require_columns(chosen, ["penalty", "share_willing", "provider",
+                               "avg_wait_d_init", "weekly_parcels",
+                               "schedule_size_init"], source=str(chosen_path))
 
     # Provider baselines
     base_per_prov = (summ[np.isclose(summ.share_willing, 0.0)]
@@ -92,15 +127,21 @@ def main():
                         edgecolor="black", linewidth=1.0, zorder=5)
     ax.set_xlabel("Average customer wait [days] (parcels-weighted, $\\theta = 1$)")
     ax.set_ylabel("Cost saving vs provider's daily baseline [%]")
-    ax.set_title("Per-provider Pareto frontiers — sweet-spot P = 0.5 marked",
-                  fontsize=11)
+    # NOTE (Task 19 W1b): P=0.5 is a fixed illustrative reference point, not
+    # each provider's own knee -- the routing-lens P* actually varies by
+    # provider (0.25/0.5/0.75; tab_pstar_knees_smoothed.csv). Worded as
+    # "reference point", not "sweet-spot", so the title cannot be read as
+    # re-asserting a uniform per-provider optimum.
+    ax.set_title("Per-provider Pareto frontiers — reference point P = 0.5 "
+                "marked", fontsize=11)
     ax.grid(alpha=0.3)
     ax.legend(loc="upper left", fontsize=8.5)
     ax.set_xlim(-0.02)
     ax.set_ylim(-1)
-    fig.tight_layout()
-    fig.savefig(OUT / "fig_PF6_provider_pareto.png", bbox_inches="tight")
-    fig.savefig(OUT / "fig_PF6_provider_pareto.pdf", bbox_inches="tight")
+    fig.tight_layout(rect=[0, 0.04, 1, 1])
+    V.footer(fig, plan=V.PLAN1, script=SCRIPT,
+             source="tab_balancing_summary.csv + tab_chosen_schedules.csv")
+    written = V.savefig_pinned(fig, OUT, "fig_PF6_provider_pareto")
     plt.close(fig)
 
     # ─── Summary table ──────────────────────────────────────────────────
@@ -108,12 +149,13 @@ def main():
         "provider", "wait_d", "sav_pct", "mean_freq", "baseline_k"]]
     max_sav_per_prov = df.loc[df.groupby("provider").sav_pct.idxmax(),
                                 ["provider", "penalty", "wait_d", "sav_pct"]]
-    print("\n=== Per-provider analysis at sweet-spot P=0.5, theta=1 ===")
+    print("\n=== Per-provider analysis at reference point P=0.5, theta=1 ===")
     print(sweet_per_prov.round(2).to_string(index=False))
     print("\n=== Maximum saving (P=0) per provider ===")
     print(max_sav_per_prov.round(2).to_string(index=False))
-    print(f"\nsaved {OUT/'fig_PF6_provider_pareto.png'}")
+    print(f"\nsaved {written[0]}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
