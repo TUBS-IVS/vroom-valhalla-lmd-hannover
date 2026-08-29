@@ -9,8 +9,16 @@ Group = PLZ (so a held-out PLZ is never seen during training — true OOS).
 Outputs (results/overnight_2026_05_27/diagnosis_v2/cv_battery/):
   tab_model_comparison_cv.csv
   fig_cv_mape_bars.{png,pdf}
+
+Status D (Task 19): the training pool (results/supplementary/sweep_v3_mergefix,
+moved there by the 2026-05-31 refactor from the pre-refactor
+results/sweep_v3_mergefix this script still hardcodes) is unchanged by the
+2026-08 revision, so this GroupKFold battery is re-run as-is on the same
+2733-row pool -- input unchanged, no adaptation. ``--pool-dir``/``--out-dir``
+default to the ORIGINAL (now-dead) paths so the diff is opt-in only.
 """
 from __future__ import annotations
+import argparse
 import math
 import sys
 import time
@@ -39,8 +47,10 @@ from sklearn.tree import DecisionTreeRegressor
 import lightgbm as lgb
 import xgboost as xgb
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _paper_v6_common as V6  # noqa: E402
 
 from batch_delivery.config.constants import (
     VEHICLE_CAPACITY, BHH_CONSTANT, FIXED_COST_EUR, COST_PER_KM_EUR,
@@ -58,7 +68,7 @@ rcParams.update({
 })
 
 OUT = ROOT / "results" / "overnight_2026_05_27" / "diagnosis_v2" / "cv_battery"
-OUT.mkdir(parents=True, exist_ok=True)
+POOL_DIR = ROOT / "results" / "sweep_v3_mergefix"
 
 
 def daganzo_cost_vec(np_a, ns_a, area_a, hd_a):
@@ -126,12 +136,30 @@ def make_lgb(**kwargs):
 
 
 def main():
+    global OUT, POOL_DIR
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--pool-dir", default=None,
+                    help="dir holding training_matrix.csv (default: the "
+                         "historical, now-moved results/sweep_v3_mergefix; "
+                         "pass results/supplementary/sweep_v3_mergefix for "
+                         "the current pool location)")
+    ap.add_argument("--out-dir", default=None,
+                    help="output directory (default: historical "
+                         "results/overnight_2026_05_27/diagnosis_v2/cv_battery)")
+    args = ap.parse_args()
+    if args.pool_dir is not None:
+        POOL_DIR = Path(args.pool_dir)
+    if args.out_dir is not None:
+        OUT = Path(args.out_dir)
+    OUT.mkdir(parents=True, exist_ok=True)
+
     print("=" * 72)
     print("GroupKFold CV model battery (group=PLZ, 5 folds)")
+    print(f"Status D (Task 19): input unchanged -- pool={POOL_DIR}")
     print("=" * 72)
 
     # Load training pool — same data the Hybrid was trained on
-    pool_path = ROOT / "results" / "sweep_v3_mergefix" / "training_matrix.csv"
+    pool_path = POOL_DIR / "training_matrix.csv"
     pool = pd.read_csv(pool_path)
     print(f"  pool: {len(pool):,} rows, {pool['plz'].nunique()} PLZ, "
           f"{pool['provider'].nunique()} providers")
@@ -383,8 +411,11 @@ def main():
         ax.text(val + 0.3, bar.get_y() + bar.get_height() / 2,
                 f"{val:.2f}%", va="center", fontsize=9)
     fig.tight_layout()
-    fig.savefig(OUT / "fig_cv_mape_bars.png")
-    fig.savefig(OUT / "fig_cv_mape_bars.pdf")
+    V6.add_provenance_footer(
+        fig, plan="n/a (surrogate pool, no schedule plan)",
+        script="paper_model_battery_cv.py",
+        source=f"{POOL_DIR.name}/training_matrix.csv (input unchanged, D)")
+    V6.savefig_pair(fig, OUT / "fig_cv_mape_bars.png", OUT / "fig_cv_mape_bars.pdf")
     plt.close(fig)
     print(f"Saved {OUT / 'fig_cv_mape_bars.png'}")
 
