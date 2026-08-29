@@ -335,10 +335,15 @@ def test_the_validation_dir_is_chosen_separately_from_the_grid(D, tmp_path):
 
 
 def test_unchanged_analyses_stay_pinned_to_the_submission_grid(D):
-    """These four must not follow PRES_REV_DIR, or they change meaning."""
+    """These two must not follow PRES_REV_DIR, or they change meaning.
+
+    `load_per_plz` used to be on this list and is deliberately no longer:
+    v6 ships per-cell plan costs, so the per-area decomposition exists on the
+    revision grid and pinning it to the submission's would date every Act-7
+    map without saying so. Its own dispatch is tested below.
+    """
     import inspect
-    for fn in (D.load_alpha_sensitivity, D.load_cd_restart_spread,
-               D.load_per_plz):
+    for fn in (D.load_alpha_sensitivity, D.load_cd_restart_spread):
         assert "REV_LEGACY" in inspect.getsource(fn), fn.__name__
     assert D.REV_LEGACY != D.REV
 
@@ -466,3 +471,247 @@ def test_overwrite_is_the_only_way_past_the_guard(guard, tmp_path):
     original = tmp_path / "EWGT_deck.pptx"
     original.write_bytes(b"x")
     assert guard.resolve(original, overwrite=True) == original
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# the schedule-choice dispatcher (Task 19-0)
+#
+# `load_chosen_stage3()` used to read `results/runs/path2_2026_05_29`
+# unconditionally -- a pre-revision run whose stage 2 was frequency-
+# PRESERVING. Every per-area frequency figure in the deck was therefore
+# drawn from it while its caption named the revision grid. These tests pin
+# the three things that must now hold: a v2 grid is served from its OWN
+# table, a legacy directory still gets the legacy loader and its invariance
+# check, and a v2 table missing a column fails loudly instead of falling
+# back.
+# ══════════════════════════════════════════════════════════════════════════
+def _legacy_run(tmp_path):
+    """A stand-in for the frozen 2026-05-29 run's two chosen tables."""
+    run = tmp_path / "legacy_run"
+    run.mkdir()
+    rows2, rows3 = [], []
+    for plz, idx, size, days in (("30159", 38, 6, "Mon,Tue,Wed,Thu,Fri,Sat"),
+                                 ("30169", 0, 2, "Mon,Thu")):
+        rows2.append(dict(penalty=0.0, share_willing=1.0, provider="DHL",
+                          plz=plz, schedule_idx_init=idx,
+                          schedule_size_init=size, weekdays_balanced=days,
+                          weekly_parcels=1000.0))
+        rows3.append(dict(penalty=0.0, share_willing=1.0, provider="DHL",
+                          plz=plz, schedule_idx_system_smoothed=idx,
+                          schedule_size_system_smoothed=size,
+                          weekdays_system_smoothed=days))
+    pd.DataFrame(rows2).to_csv(run / "tab_chosen_schedules.csv", index=False)
+    pd.DataFrame(rows3).to_csv(
+        run / "_tab_chosen_with_system_smoothing.csv", index=False)
+    return run
+
+
+def test_a_v2_grid_is_served_from_its_own_chosen_table(D, tmp_path,
+                                                       monkeypatch):
+    """The legacy run must not be touched at all on a v2 grid."""
+    monkeypatch.setattr(D, "RUN", tmp_path / "does_not_exist")
+    got = D.load_chosen_stage3()
+    assert got.plan.unique().tolist() == [D.PLAN_BALANCED]
+    # the operator plan puts the consolidated cell back on six days
+    at = got[(got.penalty == 0.0) & (got.share_willing == 1.0)]
+    assert set(at.schedule_size_system_smoothed) == {6}
+    assert set(at.schedule_size_stage1) == {2, 6}
+    assert set(at.weekdays_system_smoothed) == {"Mon,Tue,Wed,Thu,Fri,Sat"}
+    # ... and the routing plan is a different picture from the same file
+    r = D.load_chosen_stage3(D.PLAN_STAGE1)
+    ar = r[(r.penalty == 0.0) & (r.share_willing == 1.0)]
+    assert set(ar.schedule_size_system_smoothed) == {2, 6}
+    assert r.plan.unique().tolist() == [D.PLAN_STAGE1]
+
+
+def test_the_default_plan_is_the_operator_plan(D):
+    """76_maps_v2.py draws the paper's maps on stage 2; so must the deck."""
+    assert D.CHOSEN_PLAN_DEFAULT == D.PLAN_BALANCED
+    assert D.grid_plan() == D.PLAN_BALANCED
+    assert D.grid_plan(D.PLAN_OPERATOR) == D.PLAN_BALANCED
+    assert D.grid_plan(D.PLAN_ROUTING) == D.PLAN_STAGE1
+    assert D.grid_plan("stage1") == D.PLAN_STAGE1
+    with pytest.raises(ValueError, match="unknown plan"):
+        D.grid_plan("stage7")
+
+
+def test_the_plan_reaches_the_provenance_stamp(D):
+    """A figure has to be able to say which of the two plans it drew."""
+    assert D.REV.name in D.plan_stamp()
+    assert "stage 2" in D.plan_stamp(D.PLAN_BALANCED)
+    assert "stage 1" in D.plan_stamp(D.PLAN_STAGE1)
+    assert D.plan_stamp(D.PLAN_BALANCED) != D.plan_stamp(D.PLAN_STAGE1)
+
+
+def test_a_legacy_grid_still_gets_the_legacy_loader(D, tmp_path, monkeypatch):
+    legacy = tmp_path / "revision_legacy_chosen"
+    legacy.mkdir()
+    (legacy / "tab_costs_smoothed.csv").write_text(
+        "penalty,share_willing,provider,dd_cost_stage3_eur,"
+        "express_stage3_eur,total_stage3_eur\n0.0,1.0,DHL,1.0,0.0,1.0\n")
+    monkeypatch.setattr(D, "RUN", _legacy_run(tmp_path))
+    D.set_rev_dir(legacy)
+    assert D.SCHEMA == D.SCHEMA_LEGACY
+    got = D.load_chosen_stage3()
+    assert "plan" not in got.columns          # legacy has only one
+    assert set(got.schedule_size_system_smoothed) == {2, 6}
+    # and it cannot be asked for a plan it does not have
+    with pytest.raises(RuntimeError, match="carries ONE plan"):
+        D.load_chosen_stage3(D.PLAN_STAGE1)
+
+
+def test_the_legacy_frequency_invariance_check_still_bites(D, tmp_path,
+                                                           monkeypatch):
+    """The submission's stage 2 -> 3 preserved frequency; that is asserted.
+
+    v6's stage 2 does not, which is why the assert had to move off the v2
+    path rather than be deleted -- on a legacy grid it is still the thing
+    that keeps a frequency map honest.
+    """
+    legacy = tmp_path / "revision_legacy_broken"
+    legacy.mkdir()
+    (legacy / "tab_costs_smoothed.csv").write_text("penalty\n0.0\n")
+    run = _legacy_run(tmp_path)
+    bad = pd.read_csv(run / "_tab_chosen_with_system_smoothing.csv",
+                      dtype={"plz": str})
+    bad["schedule_size_system_smoothed"] = 3      # no longer matches stage 2
+    bad.to_csv(run / "_tab_chosen_with_system_smoothing.csv", index=False)
+    monkeypatch.setattr(D, "RUN", run)
+    D.set_rev_dir(legacy)
+    with pytest.raises(AssertionError, match="frequency NOT preserved"):
+        D.load_chosen_stage3()
+
+
+def test_a_v2_chosen_table_missing_a_column_fails_loudly(D):
+    """No silent fallback to the legacy run when the schema is short."""
+    raw = pd.read_csv(D.REV / "_tab_chosen_v2.csv", dtype={"plz": str})
+    raw.drop(columns=["schedule_idx_balanced"]).to_csv(
+        D.REV / "_tab_chosen_v2.csv", index=False)
+    D._CACHE.clear()
+    with pytest.raises(KeyError, match="schedule_idx_balanced"):
+        D.load_chosen_stage3()
+
+
+def test_frequency_is_not_asserted_invariant_on_a_v2_grid(D, capsys):
+    """v6's stage 2 is frequency-free; the loader reports it, never asserts."""
+    got = D.load_chosen_stage3()
+    out = capsys.readouterr().out
+    assert "frequency-free stage 2" in out
+    assert "40.14" in out
+    # the synthetic grid moves one of two cells at (P=0, theta=1)
+    moved = (got.schedule_size_stage1 != got.schedule_size_balanced)
+    assert moved.any(), "the fixture no longer exercises a frequency change"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# the per-area table follows the grid
+# ══════════════════════════════════════════════════════════════════════════
+def _per_plz_v2(rev, plans=("stage1", "balanced")):
+    rows = []
+    for plan in plans:
+        for plz, cost in (("30159", 80.0), ("30169", 90.0)):
+            rows.append(dict(
+                penalty=0.0, share_willing=1.0, provider="DHL", plz=plz,
+                plan=plan, hub="depot", schedule_idx=38,
+                cell_cost_eur=cost + (0.0 if plan == "stage1" else 5.0),
+                cell_cost_baseline_eur=100.0, weekly_parcels=1000.0))
+    out = rev.joinpath(*__import__("importlib").import_module(
+        "_data").PER_PLZ_V2_REL)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(out, index=False)
+    return out
+
+
+def test_per_area_costs_come_from_the_grid_in_use(D):
+    """Act 7 must read v6's per-area table, not the submission's."""
+    with pytest.raises(FileNotFoundError,
+                       match="00_recompute_per_plz_costs"):
+        D.load_per_plz()
+    _per_plz_v2(D.REV)
+    D._CACHE.clear()
+    a = D.load_per_plz(D.PLAN_BALANCED)
+    b = D.load_per_plz(D.PLAN_STAGE1)
+    assert a.plan.unique().tolist() == ["balanced"]
+    assert b.plan.unique().tolist() == ["stage1"]
+    # the legacy column names are aliased on, so Act 7 needs no edit
+    assert a.dd_cost_stage3_eur.tolist() == [85.0, 95.0]
+    assert b.dd_cost_stage3_eur.tolist() == [80.0, 90.0]
+    assert set(a.dd_cost_baseline_eur) == {100.0}
+
+
+def test_a_per_area_table_without_the_requested_plan_is_refused(D):
+    _per_plz_v2(D.REV, plans=("stage1",))
+    D._CACHE.clear()
+    with pytest.raises(KeyError, match="balanced"):
+        D.load_per_plz(D.PLAN_BALANCED)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# the validation must be finished before a figure is drawn from it
+# ══════════════════════════════════════════════════════════════════════════
+def _validation(tmp_path, items, planned=None, name="val"):
+    """A v2 validation directory carrying exactly `items`."""
+    val = tmp_path / name
+    val.mkdir()
+    rows = []
+    for it in items:
+        rows.append(dict(
+            item=it, instance_id=f"i{it}", penalty=0.0,
+            share_willing=0.0 if it == 0 else 1.0,
+            plan="stage1" if it in (0, 2) else "balanced",
+            provider="DHL", plz="30159", day=0, members="30159",
+            instance_kind="delivery_single", predicted_cost_eur=100.0,
+            vroom_cost_eur=90.0, vroom_n_routes=1, vroom_distance_km=10.0,
+            vroom_n_parcels=100, vroom_status="OK", n_unassigned=0,
+            jobs_removed=0))
+    pd.DataFrame(rows).to_csv(val / "tab_vroom_v2.csv", index=False)
+    if planned is not None:
+        pd.DataFrame([dict(item=it, instance_id=f"q{it}_{k}")
+                      for it, n in planned.items() for k in range(n)]
+                     ).to_csv(val / "instance_queue.csv", index=False)
+    return val
+
+
+def test_the_validation_grid_name_is_v6(D):
+    """The one line Part B moves; v6's validation finished 2026-08-28."""
+    assert D.VAL_GRID_NAME == "revision_2026_08_v6"
+    assert tuple(D.VAL_REQUIRED_ITEMS) == (0, 1, 2, 3)
+
+
+def test_an_incomplete_validation_is_refused(D, tmp_path):
+    """Items 0-3 or nothing: a half-written directory is not a validation."""
+    D.set_val_dir(_validation(tmp_path, [1, 2, 3], name="half"))
+    with pytest.raises(RuntimeError, match=r"INCOMPLETE.*missing \[0\]"):
+        D.require_validation_items()
+    with pytest.raises(RuntimeError, match="INCOMPLETE"):
+        D.load_vroom_v2()
+
+
+def test_a_complete_validation_passes_the_guard(D, tmp_path):
+    D.set_val_dir(_validation(tmp_path, [0, 1, 2, 3], name="whole"))
+    D.require_validation_items()
+    assert D.validation_items() == {0, 1, 2, 3}
+    assert len(D.load_vroom_v2()) == 4
+
+
+def test_a_sampled_item_is_detected_from_the_queue(D, tmp_path):
+    """Item 3 was cut to a sample by the G6 budget rule; no % may use it."""
+    val = _validation(tmp_path, [0, 1, 2, 3],
+                      planned={0: 1, 1: 1, 2: 1, 3: 4}, name="sampled")
+    D.set_val_dir(val)
+    assert D.validation_sampled_items() == {3}
+    sv = D.load_savings_validation()
+    assert set(sv[sv.sampled].item) == {3}
+    assert not sv[sv.item == 0].saving_defined.any()
+    assert sv[sv.item == 1].saving_defined.all()
+
+
+def test_the_two_plans_of_a_validation_are_not_summed(D, tmp_path):
+    """(P, theta) alone selects both plans; a per-cell figure needs one."""
+    D.set_val_dir(_validation(tmp_path, [0, 1, 2, 3], name="plans"))
+    both = D.load_vroom(theta=1.0)
+    assert set(both.plan) == {"balanced", "stage1"}
+    one = D.load_vroom(plan=D.PLAN_OPERATOR, theta=1.0)
+    assert set(one.plan) == {"balanced"} and len(one) < len(both)
+    with pytest.raises(AssertionError, match="no rows at theta"):
+        D.load_vroom(theta=0.42)

@@ -28,15 +28,27 @@ silently mean something else:
 
 * `load_alpha_sensitivity()` / `load_cd_restart_spread()` — model diagnostics,
   unchanged by the revision;
-* the VROOM validation loaders — the revision's validation (Task 12) is a
-  different schema and, at the time of writing, still being produced;
-* `load_per_plz()` — the per-area euro decomposition, which only exists on the
-  legacy grid. Its v2 replacement needs the per-cell plan-cost columns of
-  Task 11; until those land, `per_plz_eur_available()` is False and callers
-  must fall back to the frequency-based structural view AND say so.
+* the VROOM validation loaders — the revision's validation is a run of its own
+  and lags the grid it validates, so `VAL` follows `VAL_GRID_NAME` and not
+  `REV`. It is guarded: a v2 validation must carry items 0-3 or the loaders
+  refuse it, because a figure drawn from a half-written validation states a
+  saving against a baseline that has not been solved.
 
-All three read `REV_LEGACY` explicitly, so the split is visible in the code
+Both read `REV_LEGACY` / `VAL` explicitly, so the split is visible in the code
 rather than hidden in a default.
+
+Which plan the figures read
+---------------------------
+A v2 grid holds TWO schedule choices per cell, and `load_chosen_stage3()` used
+to read neither: it read `results/runs/path2_2026_05_29`, the pre-revision
+run, unconditionally. That run's stage 2 was frequency-PRESERVING; v6's is
+frequency-FREE (compendium 40.14), so the invariance the legacy loader
+asserted is measurably false on v6 — 20.1 % of cell choices change delivery
+frequency between stage 1 and stage 2. Every consumer therefore says which
+plan it is on. The default for the act figures is the OPERATOR plan
+(`balanced` == stage 2), the convention `scripts/revision/76_maps_v2.py` uses
+for the paper's spatial supplement (40.23b), and `plan_stamp()` puts it in the
+figure's provenance basis.
 """
 from __future__ import annotations
 
@@ -83,12 +95,21 @@ def _detect_schema(rev: Path) -> str:
 
 
 # The VROOM validation is a much longer run than the grid it validates, so the
-# two are not in step: v6's validation is being produced while v6's tables are
-# already final. `VAL` therefore follows its OWN setting -- $PRES_VAL_DIR, else
-# the last grid whose validation is FINISHED -- and never points at a directory
-# that is still being written. Part B moves this name when v6's validation
-# completes; every figure drawn from it states which grid it is on.
-VAL_GRID_NAME = "revision_2026_08_v5"
+# two are not in step. `VAL` therefore follows its OWN setting -- $PRES_VAL_DIR,
+# else the last grid whose validation is FINISHED -- and never points at a
+# directory that is still being written; every figure drawn from it states
+# which grid it is on. v6's validation completed 2026-08-28 (items 0-3, see
+# results/revision_2026_08_v6/validation/validation_report.md), so this name
+# now names v6 -- and `require_validation_items()` makes that a checked fact
+# rather than a hope: a v2 validation missing any of items 0-3 is refused.
+VAL_GRID_NAME = "revision_2026_08_v6"
+
+# item 0 = the theta = 0 daily baseline (without it no ACTUAL saving exists,
+# only predicted-vs-actual totals), 1 = the operator-plan scenario points,
+# 2 = the stage-1 plan at the same points, 3 = the theta < 1 point. A figure
+# drawn from a subset of these is drawn from a validation that is still being
+# written.
+VAL_REQUIRED_ITEMS = (0, 1, 2, 3)
 
 
 def _resolve_val() -> Path:
@@ -149,6 +170,28 @@ PLANS = (PLAN_ROUTING, PLAN_OPERATOR)
 PLAN_LABEL = {
     PLAN_ROUTING: "routing-optimal plan (stage 1)",
     PLAN_OPERATOR: "operator-polished plan (stage 2)",
+}
+
+# The grid's OWN name for each plan, as it appears in the `plan` column of
+# tab_per_cell_costs_v2.csv and in 61_grid_run_v2.py's column suffixes. The
+# two vocabularies are kept apart on purpose: `PLAN_ROUTING`/`PLAN_OPERATOR`
+# are what a figure means, `stage1`/`balanced` are what the file says, and
+# `grid_plan()` is the only place that maps one onto the other.
+PLAN_STAGE1 = "stage1"
+PLAN_BALANCED = "balanced"
+GRID_PLANS = (PLAN_STAGE1, PLAN_BALANCED)
+_PLAN_ALIAS = {
+    PLAN_ROUTING: PLAN_STAGE1, PLAN_STAGE1: PLAN_STAGE1,
+    PLAN_OPERATOR: PLAN_BALANCED, PLAN_BALANCED: PLAN_BALANCED,
+}
+# What the act figures read unless told otherwise. 76_maps_v2.py draws the
+# paper's spatial supplement on the operator-polished plan (40.23b) and these
+# figures are the deck's version of the same maps, so they agree by default
+# rather than by coincidence.
+CHOSEN_PLAN_DEFAULT = PLAN_BALANCED
+GRID_PLAN_LABEL = {
+    PLAN_STAGE1: "routing-optimal plan (stage 1)",
+    PLAN_BALANCED: "operator-polished plan (stage 2)",
 }
 
 LENS_ROUTING = "routing"      # what the tours cost to drive
@@ -341,11 +384,167 @@ def load_fleet_v2() -> pd.DataFrame:
     return _cached("fleet_v2", lambda: _read(REV / "tab_fleet_per_hub_v2.csv"))
 
 
-def load_chosen_v2() -> pd.DataFrame:
-    """`_tab_chosen_v2.csv`: the schedule index chosen per cell, both plans."""
+def grid_plan(plan: str | None = None) -> str:
+    """The grid's own name (`stage1` / `balanced`) for a plan.
+
+    Accepts either vocabulary -- the figure's (`routing` / `operator`) or the
+    file's -- so a caller never has to remember which side of the adapter it
+    is on. Anything else is refused rather than silently defaulted, because a
+    typo that fell through to the default would draw the wrong plan under the
+    right caption.
+    """
+    if plan is None:
+        return CHOSEN_PLAN_DEFAULT
+    key = str(plan)
+    if key not in _PLAN_ALIAS:
+        raise ValueError(
+            f"unknown plan {plan!r}; expected one of "
+            f"{sorted(set(_PLAN_ALIAS))}")
+    return _PLAN_ALIAS[key]
+
+
+def plan_stamp(plan: str | None = None) -> str:
+    """One clause naming the grid and the plan, for a figure's provenance.
+
+    Every figure that reads a per-cell schedule choice puts this in its
+    `basis`, so the manifest records WHICH of the v2 grid's two plans the
+    picture is of -- the distinction the pre-revision loader erased.
+    """
+    if SCHEMA != SCHEMA_V2:
+        return f"{REV.name} (legacy grid, single plan)"
+    return f"{REV.name}, {GRID_PLAN_LABEL[grid_plan(plan)]}"
+
+
+def _avg_wait_days(days) -> float:
+    """Mean days a uniformly-arriving parcel waits under one weekly pattern.
+
+    The same expression `scripts/revision/_stage3_common.avg_wait_days` uses,
+    inlined so the presentation layer does not import the revision helpers
+    (which carry their own env-driven RUN_DIR / OUT_DIR defaults).
+    """
+    if not days:
+        return 0.0
+    ds = sorted(days)
+    total = 0.0
+    for di in range(N_DAYS):
+        nxt = min(((d - di) % N_DAYS, d) for d in ds)[1]
+        total += (nxt - di) % N_DAYS
+    return total / N_DAYS
+
+
+def _schedule_lookup():
+    """(size, weekday string, average wait) per schedule index.
+
+    Derived from the enumeration the optimiser itself used, never read: the
+    grid stores only an INDEX, so recomputing size and wait here makes the
+    admissible-frequency and holding-days checks real checks rather than a
+    restatement of the file. Cross-checked against v6's
+    `tab_per_cell_costs_v2.csv` (`mean_days` / `wait_days`): exact.
+    """
+    def _make():
+        from batch_delivery.optimization.schedules import (
+            enumerate_valid_schedules)
+        sched = enumerate_valid_schedules()
+        assert len(sched) == 39, (
+            f"{len(sched)} weekly patterns, expected 39 for "
+            f"MAX_HOLDING_DAYS = 3")
+        size = np.array([len(x) for x in sched], dtype=np.int64)
+        days = np.array([",".join(WEEKDAYS[d] for d in sorted(x))
+                         for x in sched], dtype=object)
+        wait = np.array([_avg_wait_days(sorted(x)) for x in sched],
+                        dtype=np.float64)
+        return size, days, wait
+    return _cached("schedule_lookup", _make)
+
+
+_V2_CHOSEN_IDX_COL = {PLAN_STAGE1: "schedule_idx_stage1",
+                      PLAN_BALANCED: "schedule_idx_balanced"}
+
+
+def load_chosen_v2(plan: str | None = None) -> pd.DataFrame:
+    """`_tab_chosen_v2.csv`: the schedule index chosen per cell, both plans.
+
+    With `plan=None` this is the file verbatim -- three index columns side by
+    side. With `plan="balanced"` (the act figures' default) or
+    `plan="stage1"` it is that ONE plan, expanded into the column names the
+    per-PLZ frequency figures read: `schedule_idx_system_smoothed`,
+    `schedule_size_system_smoothed`, `weekdays_system_smoothed` and
+    `avg_wait_d_system_smoothed`. The `_system_smoothed` spelling is kept
+    because every caller reads it by that name; on v6 stage 3 is OFF, so
+    `schedule_idx_balanced == schedule_idx_system_smoothed` by construction
+    (61_grid_run_v2) and the name describes the final plan either way. Both
+    plans' sizes, weekdays and waits ride along as `*_stage1` / `*_balanced`,
+    so a figure contrasting the two never loads the table twice.
+
+    `weekly_parcels` is attached when the grid ships per-cell costs, which is
+    what the parcel-weighted median of 76_maps_v2 needs; without them the
+    column is absent rather than guessed, so a caller that needs it fails on
+    the KeyError instead of silently switching to an unweighted median.
+    """
     _v2_only("load_chosen_v2()")
-    return _cached("chosen_v2", lambda: _read(
+    raw = _cached("chosen_v2", lambda: _read(
         REV / "_tab_chosen_v2.csv", dtype={"plz": str}))
+    if plan is None:
+        return raw
+    gp = grid_plan(plan)
+    return _cached(f"chosen_v2_{gp}", lambda: _chosen_v2_plan(raw, gp))
+
+
+def _chosen_v2_plan(raw: pd.DataFrame, gp: str) -> pd.DataFrame:
+    need = ["penalty", "share_willing", "provider", "plz"] + [
+        _V2_CHOSEN_IDX_COL[q] for q in GRID_PLANS]
+    missing = [c for c in need if c not in raw.columns]
+    if missing:
+        raise KeyError(
+            f"{REV / '_tab_chosen_v2.csv'} lacks {missing}; the presentation "
+            f"figures need the full _tab_chosen_v2 schema of "
+            f"61_grid_run_v2.py. Point PRES_REV_DIR at a grid that runner "
+            f"wrote.")
+    size, days, wait = _schedule_lookup()
+    df = raw.copy()
+    df["plz"] = df.plz.astype(str).str.zfill(5)
+    for q in GRID_PLANS:
+        idx = df[_V2_CHOSEN_IDX_COL[q]].to_numpy()
+        df[f"schedule_size_{q}"] = size[idx]
+        df[f"weekdays_{q}"] = days[idx]
+        df[f"avg_wait_d_{q}"] = wait[idx]
+    idx = df[_V2_CHOSEN_IDX_COL[gp]].to_numpy()
+    df["schedule_idx_system_smoothed"] = idx
+    df["schedule_size_system_smoothed"] = size[idx]
+    df["weekdays_system_smoothed"] = days[idx]
+    df["avg_wait_d_system_smoothed"] = wait[idx]
+    df["plan"] = gp
+    observed = set(int(x) for x in df.schedule_size_system_smoothed.unique())
+    assert observed <= set(FREQ_SIZES), (
+        f"delivery frequencies {sorted(observed - set(FREQ_SIZES))} fall "
+        f"outside the admissible set {FREQ_SIZES}; the holding-days invariant "
+        f"or the schedule enumeration changed")
+    # Frequency is NOT invariant across the v2 grid's two plans -- stage 2 is
+    # frequency-free at theta > 0 (compendium 40.14). This is REPORTED, not
+    # asserted: the legacy loader asserted the opposite and would abort here.
+    moved = float((df.schedule_size_stage1
+                   != df.schedule_size_balanced).mean()) * 100.0
+    print(f"  [plan] {REV.name} / {GRID_PLAN_LABEL[gp]}; stage 2 changes the "
+          f"delivery frequency of {moved:.1f} % of cell choices "
+          f"(frequency-free stage 2, compendium 40.14)")
+    cpath = per_cell_costs_path()
+    if cpath is not None:
+        cells = _read(cpath, dtype={"plz": str})
+        cells["plz"] = cells.plz.astype(str).str.zfill(5)
+        vol = (cells[cells.plan.astype(str) == gp]
+               [["penalty", "share_willing", "provider", "plz",
+                 "cell_parcels_week"]]
+               .rename(columns={"cell_parcels_week": "weekly_parcels"}))
+        before = len(df)
+        df = df.merge(vol, on=["penalty", "share_willing", "provider", "plz"],
+                      how="left")
+        assert len(df) == before, (
+            f"the per-cell parcel join changed the row count {before} -> "
+            f"{len(df)}; the two tables are not on the same cell grain")
+        assert df.weekly_parcels.notna().all(), (
+            f"{int(df.weekly_parcels.isna().sum())} cell choice(s) have no "
+            f"parcel count in {cpath.name}")
+    return df
 
 
 def load_headline_v2() -> pd.DataFrame:
@@ -594,12 +793,12 @@ def per_cell_costs_path():
 
 
 def per_plz_eur_available() -> bool:
-    """True once the runner writes per-cell plan costs for this grid.
+    """True once the grid carries per-cell plan costs.
 
     Without them a per-area EURO map cannot be drawn on a v2 grid at all, and
     the honest substitute is the frequency-based structural view -- which the
-    figure then has to label as such. v6 ships `tab_per_cell_costs_v2.csv`;
-    v5 did not.
+    figure then has to label as such. v6 ships `tab_per_cell_costs_v2.csv`
+    (72_); v5 did not.
     """
     if SCHEMA != SCHEMA_V2:
         return False
@@ -743,18 +942,70 @@ def load_express() -> pd.DataFrame:
         express_stage3_eur=c.express_cost_eur, plan=PLAN_OPERATOR)
 
 
-def load_per_plz() -> pd.DataFrame:
-    """Per-PLZ Stage-3 dd cost, baseline reference and structural features.
+# What 00_recompute_per_plz_costs.py writes on a v2 grid, next to the other
+# v6 tables. The legacy grid keeps its own file at the top level.
+PER_PLZ_V2_REL = ("tables", "tab_per_plz_costs_theta1_v2.csv")
 
-    Produced by 00_recompute_per_plz_costs.py on the LEGACY grid; theta = 1
-    only, where the hub-bundled express component is exactly zero and a per-PLZ
-    decomposition is therefore exact. Pinned to `REV_LEGACY`: the v2 grid does
-    not carry per-cell euro at all until Task 11's plan-cost columns land (see
-    `per_plz_eur_available()`), and silently serving the legacy numbers from a
-    v2 REV would date the map without saying so.
+
+def per_plz_v2_path() -> Path:
+    return REV.joinpath(*PER_PLZ_V2_REL)
+
+
+def load_per_plz(plan: str | None = None) -> pd.DataFrame:
+    """Per-PLZ plan cost, daily-delivery reference and structural features.
+
+    theta = 1 only, on both schemas: that is where the hub-bundled EXPRESS
+    component is exactly zero, so a per-area decomposition is exact rather
+    than allocated (compendium 38.2a). Both files are written by
+    `00_recompute_per_plz_costs.py`.
+
+    LEGACY grid: `tab_per_plz_costs_theta1.csv`, one plan, and a euro there is
+    the direct-delivery cost -- the legacy grid had no pooled small-delivery
+    tours to attribute.
+
+    v2 grid: `tables/tab_per_plz_costs_theta1_v2.csv`, from 72_'s per-cell
+    table, for ONE plan (default: the operator-polished one). A euro there is
+    the cell's full ROUTING cost under the realistic-tour rule -- its own tour
+    plus its parcel-proportional share of every pooled tour it rides on -- and
+    the three parts are carried alongside as `own_cost_eur` /
+    `pool_share_eur` / `express_share_eur`. The legacy names
+    `dd_cost_stage3_eur` / `dd_cost_baseline_eur` are aliased onto the plan
+    and baseline cost so the Act-7 figures read the same column names on both
+    schemas; the "dd" in those names is historical, and every v6 figure says
+    routing lens in its caption. The operator lens is NOT offered per area: it
+    is hub-attributable, not cell-attributable (72_).
     """
-    df = _read(REV_LEGACY / "tab_per_plz_costs_theta1.csv", dtype={"plz": str})
-    assert (df.share_willing == 1.0).all(), "per-PLZ table must be theta=1 only"
+    if SCHEMA != SCHEMA_V2:
+        if plan is not None and grid_plan(plan) != CHOSEN_PLAN_DEFAULT:
+            raise RuntimeError(
+                f"the legacy grid {REV.name} carries ONE plan; it cannot "
+                f"serve {plan!r}.")
+        df = _read(REV_LEGACY / "tab_per_plz_costs_theta1.csv",
+                   dtype={"plz": str})
+        assert (df.share_willing == 1.0).all(), (
+            "per-PLZ table must be theta=1 only")
+        return df
+
+    gp = grid_plan(plan)
+    path = per_plz_v2_path()
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} is missing. Run\n"
+            f"  python scripts/presentation/00_recompute_per_plz_costs.py\n"
+            f"to derive it from {REV.name}'s tables/tab_per_cell_costs_v2.csv; "
+            f"the legacy 2026-07 per-area table is NOT a substitute -- it is a "
+            f"different grid with a different baseline.")
+    df = _read(path, dtype={"plz": str})
+    have = set(df.plan.astype(str).unique())
+    if gp not in have:
+        raise KeyError(
+            f"{path.name} carries plans {sorted(have)}, not {gp!r}; re-run "
+            f"00_recompute_per_plz_costs.py")
+    df = df[df.plan.astype(str) == gp].copy()
+    assert (df.share_willing == 1.0).all(), (
+        "per-PLZ table must be theta=1 only")
+    df["dd_cost_stage3_eur"] = df.cell_cost_eur
+    df["dd_cost_baseline_eur"] = df.cell_cost_baseline_eur
     return df
 
 
@@ -842,14 +1093,91 @@ def val_schema() -> str:
         f"validation has been produced.")
 
 
+def validation_items() -> set[int]:
+    """Which items of the v2 validation queue this directory actually holds."""
+    if val_schema() != VAL_SCHEMA_V2:
+        return set()
+    df = _cached("vroom_v2_raw", lambda: _read(VAL / "tab_vroom_v2.csv"))
+    return {int(x) for x in df.item.unique()}
+
+
+def require_validation_items() -> None:
+    """Refuse a v2 validation that is still being written.
+
+    The four items are solved as separate, hours-long runs, and the directory
+    exists from the first of them. Item 0 in particular is the theta = 0 daily
+    baseline: without it `load_savings_validation()` has no solved denominator
+    and every "realised saving" on a slide would be an actual numerator over a
+    predicted baseline. So the presence of all of `VAL_REQUIRED_ITEMS` is
+    asserted here, once, at the single point every v2 validation loader goes
+    through -- rather than discovered as a NaN three figures later.
+    """
+    if val_schema() != VAL_SCHEMA_V2:
+        return
+    have = validation_items()
+    missing = sorted(set(VAL_REQUIRED_ITEMS) - have)
+    if missing:
+        raise RuntimeError(
+            f"{VAL} is an INCOMPLETE v2 validation: it carries items "
+            f"{sorted(have)}, missing {missing} of the required "
+            f"{list(VAL_REQUIRED_ITEMS)} "
+            f"(0 = theta-0 baseline, 1 = operator-plan points, "
+            f"2 = stage-1 plan, 3 = theta < 1). Set PRES_VAL_DIR to a "
+            f"finished validation, or move _data.VAL_GRID_NAME back to a grid "
+            f"whose validation is complete -- a figure drawn from this "
+            f"directory would state a saving against a baseline nobody "
+            f"solved.")
+
+
+def validation_sampled_items() -> set[int]:
+    """Items whose instances were only PARTLY solved (spec G6 fallback).
+
+    The validation enumerates every instance into `instance_queue.csv` and
+    then solves what fits an eight-VROOM-hour budget; on v6 item 3 came in
+    over budget and was cut to a stratified sample (1 000 of 1 594). A sampled
+    item's cost TOTAL is therefore not a system total, and any percentage
+    formed from it -- a saving, a share -- is meaningless however real each
+    individual solve is.
+
+    Measured, not read from prose: the queue's count per item against the
+    solved table's. If the queue is missing the answer is "unknown", which is
+    returned as every item being suspect rather than none.
+    """
+    def _make():
+        solved = load_vroom_v2().groupby("item").size()
+        q = VAL / "instance_queue.csv"
+        if not q.exists():
+            print(f"  [vroom] no instance_queue.csv under {VAL}; the "
+                  f"completeness of every item is unknown")
+            return set(int(i) for i in solved.index)
+        planned = _read(q).groupby("item").size()
+        out = {int(i) for i in solved.index
+               if int(solved[i]) < int(planned.get(i, solved[i]))}
+        if out:
+            print("  [vroom] item(s) " + ", ".join(
+                f"{i} ({int(solved[i])} of {int(planned[i])} instances)"
+                for i in sorted(out))
+                + " were sampled, not enumerated; no system total or "
+                  "percentage may be formed from them")
+        return out
+    return _cached("vroom_sampled_items", _make)
+
+
 def load_vroom_v2() -> pd.DataFrame:
     """`validation/tab_vroom_v2.csv` verbatim: one row per solved INSTANCE.
 
     An instance is a hub-day-plan-kind routing problem, not a cell: a
     `*_group` row is one tour serving several cells at once, which is the whole
     point of the bundled pricing. `members` holds the cells it covers.
+
+    Guarded by `require_validation_items()`: every v2 validation read in this
+    module funnels through here, so a half-written validation directory is
+    refused once instead of producing a quietly wrong figure.
     """
-    return _cached("vroom_v2", lambda: _read(VAL / "tab_vroom_v2.csv"))
+    def _make():
+        require_validation_items()
+        return _read(VAL / "tab_vroom_v2.csv")
+    return _cached("vroom_v2", _make)
 
 
 def _vroom_v2_cells() -> pd.DataFrame:
@@ -877,7 +1205,8 @@ def _vroom_v2_cells() -> pd.DataFrame:
     return _cached("vroom_v2_cells", _make)
 
 
-def load_vroom() -> pd.DataFrame:
+def load_vroom(plan: str | None = None,
+               theta: float | None = None) -> pd.DataFrame:
     """Per (P, theta, provider, plz, day): real VROOM routes on the plan.
 
     LEGACY grid: `tab_vroom_smoothed.csv`. Non-OK rows are KEPT. Two rows
@@ -889,8 +1218,17 @@ def load_vroom() -> pd.DataFrame:
     24.92 % and removes 2 058 km. They are flagged here instead.
 
     v2 grid: the single-cell instances of `tab_vroom_v2.csv`, with the legacy
-    column names, plus `plan` -- the v2 validation covers BOTH plans, so a
-    caller that wants one must say which.
+    column names, plus `plan`.
+
+    `plan` and `theta` are FILTERS, and any figure that aggregates per cell or
+    per provider needs both. The v2 validation covers two plans and two
+    thetas: (P = 0, theta = 1) and (P = 0.25, theta = 1) are each solved
+    TWICE, once per plan (queue items 1 and 2), item 0 is the theta = 0
+    baseline and item 3 sits at theta = 0.5. Grouping by penalty alone
+    therefore sums a cell's balanced and stage-1 tours into one number and
+    mixes three different thetas into a series labelled theta = 1. The legacy
+    validation had one plan and one theta, so this could not happen there and
+    the filters are no-ops on it -- which is why they default to off.
     """
     if val_schema() == VAL_SCHEMA_LEGACY:
         df = _read(VAL / "tab_vroom_smoothed.csv", dtype={"plz": str})
@@ -899,6 +1237,17 @@ def load_vroom() -> pd.DataFrame:
         note = vroom_group_note()
         if note:
             print(f"  [vroom] {note}")
+        if plan is not None:
+            gp = grid_plan(plan)
+            df = df[df.plan.astype(str) == gp]
+            assert len(df), (
+                f"the validation of {VAL.parent.name} has no {gp!r} rows; it "
+                f"covers {sorted(_vroom_v2_cells().plan.astype(str).unique())}")
+        if theta is not None:
+            df = df[np.isclose(df.share_willing, theta)]
+            assert len(df), (
+                f"the validation of {VAL.parent.name} has no rows at "
+                f"theta = {theta}")
     bad = df[~df.vroom_status.isin(VROOM_OK)]
     if len(bad):
         cells = ", ".join(
@@ -1000,20 +1349,36 @@ def load_savings_validation() -> pd.DataFrame:
     LEGACY: the table as published, with `actual_saving_pct` and
     `conservatism_pp`.
 
-    v2: predicted and actual TOTALS per (P, theta, plan), which are real, plus
-    `actual_saving_pct` / `conservatism_pp` -- which are NaN whenever the
-    theta = 0 baseline has not been solved, because a saving needs a baseline
-    of the same kind. `actual_available` says which case a caller is in;
-    `vroom_actual_baseline_available()` is the same fact as a scalar.
+    v2: predicted and actual TOTALS per (item, P, theta, plan), which are
+    real, plus `actual_saving_pct` / `conservatism_pp` -- which are NaN
+    whenever the theta = 0 baseline has not been solved, because a saving
+    needs a baseline of the same kind. `actual_available` says which case a
+    caller is in; `vroom_actual_baseline_available()` is the same fact as a
+    scalar.
+
+    `saving_defined` says whether a PERCENTAGE may be formed from that row at
+    all: false for item 0 (it is the baseline) and for any item the G6 budget
+    fallback sampled rather than enumerated (`sampled`), whose totals are a
+    subset of the system and whose percentages would be arbitrary. The totals
+    of a sampled row are still real, and a caller may show them as totals.
     """
     if val_schema() == VAL_SCHEMA_LEGACY:
         return _read(VAL / "tab_savings_pred_vs_actual_smoothed.csv")
 
     df = load_vroom_v2()
-    g = (df.groupby(["penalty", "share_willing", "plan"], as_index=False)
+    g = (df.groupby(["item", "penalty", "share_willing", "plan"],
+                    as_index=False)
          .agg(surrogate_total_eur=("predicted_cost_eur", "sum"),
               vroom_actual_total_eur=("vroom_cost_eur", "sum"),
               n=("vroom_cost_eur", "size")))
+    sampled = validation_sampled_items()
+    # A saving is a system quantity. It exists for a point only if that
+    # point's instances were ALL solved, and it is not defined for item 0 --
+    # item 0 IS the baseline, so its "saving against itself" is a tautology
+    # that would sit on the figure looking like a measurement.
+    g["sampled"] = g.item.isin(sampled)
+    g["is_baseline"] = g.item == 0
+    g["saving_defined"] = ~g.sampled & ~g.is_baseline
     have = vroom_actual_baseline_available()
     base = float(baseline_eur(LENS_ROUTING)) if SCHEMA == SCHEMA_V2 else np.nan
     g["base_total_eur"] = base
@@ -1033,16 +1398,32 @@ def load_savings_validation() -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------
-# stage-2 schedule choices (frequency is invariant across stage 2 -> 3)
+# per-cell schedule choices, schema-dispatching
 # --------------------------------------------------------------------------
-def load_chosen_stage3() -> pd.DataFrame:
-    """Per-PLZ Stage-3 schedule choice (post system smoothing).
+def load_chosen_stage3(plan: str | None = None) -> pd.DataFrame:
+    """Per-PLZ schedule choice, in the column names the frequency maps read.
 
-    Also runs the frequency-invariance check that the per-PLZ *frequency* maps
-    rely on: system smoothing reassigns which weekdays are served but must not
-    change how many. Any map keyed on delivery frequency is only defensible
-    while this holds, so it is asserted rather than assumed.
+    v2 grid: `load_chosen_v2(plan)`, defaulting to the OPERATOR plan. The
+    figure states which plan it is on -- `plan_stamp()`.
+
+    Legacy grid: the 2026-05-29 Path-2 run, whose stage 2 was
+    frequency-PRESERVING, so it also runs the frequency-invariance check the
+    per-PLZ *frequency* maps used to rely on: system smoothing reassigns which
+    weekdays are served but must not change how many.
+
+    That invariance does NOT hold on a v2 grid -- v6's stage 2 is
+    frequency-free at theta > 0 (compendium 40.14) and moves the delivery
+    frequency of about a fifth of all cell choices -- which is exactly why
+    this function had to stop reading the legacy run unconditionally: it was
+    serving a pre-revision schedule choice, under a v6 caption, to fig35/36,
+    fig41-44, fig55 and the 97_/98_ backup sets.
     """
+    if SCHEMA == SCHEMA_V2:
+        return load_chosen_v2(grid_plan(plan))
+    if plan is not None and grid_plan(plan) != CHOSEN_PLAN_DEFAULT:
+        raise RuntimeError(
+            f"the legacy grid {REV.name} carries ONE plan; it cannot serve "
+            f"{plan!r}. Point PRES_REV_DIR at a v2 grid.")
     s2 = _read(RUN / "tab_chosen_schedules.csv", dtype={"plz": str})
     s3 = _read(RUN / "_tab_chosen_with_system_smoothing.csv", dtype={"plz": str})
     j = s2.merge(s3, on=["penalty", "share_willing", "provider", "plz"],
