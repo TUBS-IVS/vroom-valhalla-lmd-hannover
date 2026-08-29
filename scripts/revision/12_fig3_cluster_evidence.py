@@ -11,7 +11,10 @@ Two mechanisms are made visible here as evidence for the rebuttal/supplement:
 Both panels are log-log predicted-vs-actual scatter plots on the same axes
 as paper Fig 3(c) (Daganzo-LGB-Hybrid, OOF GroupKFold by PLZ).
 
-Saved to results/revision_2026_07/figures/fig_S1_cluster_evidence.{png,pdf}.
+Saved to <REV_DIR>/figures/fig_S1_cluster_evidence.{png,pdf}, where REV_DIR defaults to
+results/revision_2026_07 (see _stage3_common.OUT_DIR) and can be re-pointed via the
+REV_DIR environment variable, e.g. to redirect a re-run away from the frozen
+2026-07 source directory (Task 19: REV_DIR=results/revision_2026_08_analyses_v6/revision_2026_07).
 """
 from __future__ import annotations
 
@@ -36,7 +39,7 @@ from batch_delivery.config.constants import (VEHICLE_CAPACITY, BHH_CONSTANT,
                                               FIXED_COST_EUR, COST_PER_KM_EUR)
 from batch_delivery.surrogate import build_combo_features
 
-OUT_DIR = ROOT / "results" / "revision_2026_07" / "figures"
+OUT_DIR = C.OUT_DIR / "figures"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
