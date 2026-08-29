@@ -1,4 +1,4 @@
-From cc12c3a45f9e8dbe404688ff6433cae2e79c187b Mon Sep 17 00:00:00 2001
+From eff4d6173c9f605556fa968f52ab5fb3248cc779 Mon Sep 17 00:00:00 2001
 From: Lasse Bienzeisler <LasseBienzeisler@users.noreply.github.com>
 Date: Sat, 29 Aug 2026 00:20:53 +0200
 Subject: [PATCH 1/2] page budget: cuts 1-13 (17 -> 16 pages, supplementary 7
@@ -47,11 +47,11 @@ The I1 range sentence (section 3.4) and the M1 P*theta = 0 paragraph (section
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
  paper/EWGT_2026_rev1/supplementary.tex     | 123 +++++++++++++++++++++
- paper/EWGT_2026_rev1/tbc_preprint_main.tex |  25 ++---
- 2 files changed, 135 insertions(+), 13 deletions(-)
+ paper/EWGT_2026_rev1/tbc_preprint_main.tex |  27 +++--
+ 2 files changed, 136 insertions(+), 14 deletions(-)
 
 diff --git a/paper/EWGT_2026_rev1/supplementary.tex b/paper/EWGT_2026_rev1/supplementary.tex
-index c1e85ca..c837691 100644
+index 9cf145b..1a85725 100644
 --- a/paper/EWGT_2026_rev1/supplementary.tex
 +++ b/paper/EWGT_2026_rev1/supplementary.tex
 @@ -149,6 +149,129 @@ lens, is this double-counted term. Re-labelling the training pool with the
@@ -185,7 +185,7 @@ index c1e85ca..c837691 100644
  \label{sec:supp_figures}
  
 diff --git a/paper/EWGT_2026_rev1/tbc_preprint_main.tex b/paper/EWGT_2026_rev1/tbc_preprint_main.tex
-index 52780c7..2acad0a 100644
+index 3bc2cb2..2444480 100644
 --- a/paper/EWGT_2026_rev1/tbc_preprint_main.tex
 +++ b/paper/EWGT_2026_rev1/tbc_preprint_main.tex
 @@ -328,18 +328,18 @@ where $\alpha$ is a global calibration factor and the structured residual $g(\cd
@@ -250,21 +250,25 @@ index 52780c7..2acad0a 100644
  
  
  
-@@ -481,11 +481,10 @@ The submitted version reported a persistent saving in the high-penalty, low-adop
+@@ -481,14 +481,13 @@ The submitted version reported a persistent saving in the high-penalty, low-adop
  
  \input{tab_two_lens}
  
 -\autoref{tab:two_lens} reports the headline outcomes at full adoption under both lenses and for both plans, and \autoref{fig:grid_heatmap_6} the corresponding surfaces over the full $(P, \theta)$ grid. All savings are taken against this grid's own daily baseline (\autoref{tab:two_lens}); the bundle head prices the pooled tours the baseline itself runs, which puts that denominator $0.6\%$ below the one obtained with the conservative fallback everywhere, so savings must never be normalized across grid versions. Three findings stand out. First, in the routing lens the picture of the submitted version survives: the routing-optimal plan saves $22.6\%$ at $(0, 1)$ and the saving decays monotonically with $P$. Second, in the operator lens that same plan is $8.4\%$ \emph{worse} than daily delivery. Its two-day patterns concentrate each depot's work on a few weekdays, so the summed depot peak rises by $34.5\%$; under weekly staffing the vehicle-days it avoids below the peak were never a cash saving. Third, the operator-cost polish reverses this: it saves $24.3\%$ of operator cost at $(0, 1)$ while cutting the summed depot peak by $16.9\%$, and it still realizes $20.0\%$ in the routing lens --- it gives up $2.7$~pp of routing saving to buy the peak reduction. The polish is never negative in the operator lens anywhere on the grid, whereas the routing-optimal plan turns negative there under partial adoption, down to $-10.3\%$ at $(0, 0.9)$. Partial adoption is thus worthwhile in the operator lens and close to neutral in the routing one.
 +\autoref{tab:two_lens} reports the headline outcomes at full adoption under both lenses and for both plans, and \autoref{fig:grid_heatmap_6} the corresponding surfaces over the full $(P, \theta)$ grid. Three findings stand out. First, in the routing lens the picture of the submitted version survives: the routing-optimal plan saves $22.6\%$ at $(0, 1)$ and the saving decays monotonically with $P$. Second, in the operator lens that same plan is $8.4\%$ \emph{worse} than daily delivery. Its two-day patterns concentrate each depot's work on a few weekdays, so the summed depot peak rises by $34.5\%$; under weekly staffing the vehicle-days it avoids below the peak were never a cash saving. Third, the operator-cost polish reverses this: it saves $24.3\%$ of operator cost at $(0, 1)$ while cutting the summed depot peak by $16.9\%$, and it still realizes $20.0\%$ in the routing lens --- it gives up $2.7$~pp of routing saving to buy the peak reduction. The polish is never negative in the operator lens anywhere on the grid, whereas the routing-optimal plan turns negative there under partial adoption, down to $-10.3\%$ at $(0, 0.9)$. Partial adoption is thus worthwhile in the operator lens and close to neutral in the routing one.
  
--Read as a pure cost objective, neither lens points to $P = 0.25$. For the operator-polished plan the saving falls monotonically with $P$ in both lenses; for the routing-optimal plan only the routing-lens saving does, its operator-lens column starting negative and peaking at $P = 0.5$. Read on its own plan, therefore, each lens prefers $P = 0$ on cost alone: the routing lens by $3.9$~pp and the operator lens by $1.7$~pp. We nevertheless recommend $P = 0.25$~\euro/p/d, because that is the point at which the service side is priced in. At $(0.25, 1)$ the operator plan saves $22.6\%$ of operator cost and $16.7\%$ of routing cost, cuts the summed depot peak by $17.2\%$ --- more deeply than the cost-optimal extreme does --- and halves the additional wait ($0.39$ against $0.77$~d). That halving costs $1.7$~pp of operator saving, and it stops being a trade at all once the delay is actually paid for: under a flat $0.50$~\euro\ discount per delayed parcel, $P = 0.25$ is the best point on the grid in the operator lens, ahead of $P = 0.5$ by $0.8$~pp, while the routing lens separates the two by $0.01$~pp, which is a tie at this grid's resolution (Supplementary Section~S1). On the fleet side, two related quantities must be kept apart: the summed depot peak, which is what the operator lens charges, and the system's own peak day, which \autoref{fig:grid_heatmap_6} (d) reports and which falls by $17.5\%$ at $(0, 1)$. The Monday--Saturday coefficient of variation of the system fleet falls from $0.139$ in the baseline to $0.023$ at $(0.25, 1)$ and $0.044$ at $(0.5, 1)$, that is by $84$ and $68\%$, with a grid maximum of $87\%$ at $(0, 0.7)$. Stage~2 is a local search and the gap it leaves is small but real: at $(0, 1)$ its summed depot peak of $1{,}030$ vehicles stands against a flat-profile lower bound of $980$, and at $(0.25, 1)$ the residual gap is $32$ peak vehicles. Read as a real payout rather than as a shadow price, the penalty halves the saving from $P = 0.25$ onwards but never removes it, and the break-even discount --- the most an operator could pay per delayed parcel and still break even --- rises with $P$ from $0.75$ to $2.25$~\euro\ in the operator lens and from $0.56$ to $1.21$~\euro\ in the routing lens, above the $50$ cents assumed here at every operating point (Supplementary Section~S1).
-+Read as a pure cost objective, neither lens points to $P = 0.25$. For the operator-polished plan the saving falls monotonically with $P$ in both lenses; for the routing-optimal plan only the routing-lens saving does, its operator-lens column starting negative and peaking at $P = 0.5$. Read on its own plan, therefore, each lens prefers $P = 0$ on cost alone: the routing lens by $3.9$~pp and the operator lens by $1.7$~pp. We nevertheless recommend $P = 0.25$~\euro/p/d, because that is the point at which the service side is priced in. At $(0.25, 1)$ the operator plan saves $22.6\%$ of operator cost and $16.7\%$ of routing cost, cuts the summed depot peak by $17.2\%$ --- more deeply than the cost-optimal extreme does --- and halves the additional wait ($0.39$ against $0.77$~d). That halving costs $1.7$~pp of operator saving, and it stops being a trade at all once the delay is actually paid for: under a flat $0.50$~\euro\ discount per delayed parcel, $P = 0.25$ is the best point on the grid in the operator lens, ahead of $P = 0.5$ by $0.8$~pp, while the routing lens separates the two by $0.01$~pp, which is a tie at this grid's resolution (Supplementary Section~S1). On the fleet side the summed depot peak, which the operator lens charges, and the system's own peak day, which \autoref{fig:grid_heatmap_6} (d) reports, must be kept apart; the Monday--Saturday coefficient of variation of the system fleet falls by $84\%$ at $(0.25, 1)$ against this grid's baseline of $0.139$. Supplementary Section~S6 reports the whole series, the residual gap of the local search to the flat-profile bound, and the break-even discount, which exceeds the $50$ cents assumed here at every operating point.
+-Read as a pure cost objective, neither lens points to $P = 0.25$. For the operator-polished plan the saving falls monotonically with $P$ in both lenses; for the routing-optimal plan only the routing-lens saving does, its operator-lens column starting negative and peaking at $P = 0.5$. Read on its own plan, therefore, each lens prefers $P = 0$ on cost alone: the routing lens by $3.9$~pp and the operator lens by $1.7$~pp. We nevertheless recommend $P = 0.25$~\euro/p/d, because that is the point at which the service side is priced in. At $(0.25, 1)$ the operator plan saves $22.6\%$ of operator cost and $16.7\%$ of routing cost, cuts the summed depot peak by $17.2\%$ --- more deeply than the cost-optimal extreme does --- and halves the additional wait ($0.39$ against $0.77$~d). That halving costs $1.7$~pp of operator saving, and it stops being a trade at all once the delay is actually paid for: under a flat $0.50$~\euro\ discount per delayed parcel, $P = 0.25$ is the best point on the grid in the operator lens, ahead of $P = 0.5$ by $0.8$~pp, while the routing lens separates the two by $0.01$~pp, which is a tie at this grid's resolution (Supplementary Section~S1). On the fleet side, two related quantities must be kept apart: the summed depot peak, which is what the operator lens charges, and the system's own peak day, which \autoref{fig:grid_heatmap_6} (d) reports and which falls by $17.5\%$ at $(0, 1)$ (per-LSP weekly profiles in Supplementary Fig.~S12).
++Read as a pure cost objective, neither lens points to $P = 0.25$. For the operator-polished plan the saving falls monotonically with $P$ in both lenses; for the routing-optimal plan only the routing-lens saving does, its operator-lens column starting negative and peaking at $P = 0.5$. Read on its own plan, therefore, each lens prefers $P = 0$ on cost alone: the routing lens by $3.9$~pp and the operator lens by $1.7$~pp. We nevertheless recommend $P = 0.25$~\euro/p/d, because that is the point at which the service side is priced in. At $(0.25, 1)$ the operator plan saves $22.6\%$ of operator cost and $16.7\%$ of routing cost, cuts the summed depot peak by $17.2\%$ --- more deeply than the cost-optimal extreme does --- and halves the additional wait ($0.39$ against $0.77$~d). That halving costs $1.7$~pp of operator saving, and it stops being a trade at all once the delay is actually paid for: under a flat $0.50$~\euro\ discount per delayed parcel, $P = 0.25$ is the best point on the grid in the operator lens, ahead of $P = 0.5$ by $0.8$~pp, while the routing lens separates the two by $0.01$~pp, which is a tie at this grid's resolution (Supplementary Section~S1). On the fleet side the summed depot peak, which the operator lens charges, and the system's own peak day, which \autoref{fig:grid_heatmap_6} (d) reports, must be kept apart; the Monday--Saturday coefficient of variation of the system fleet falls by $84\%$ at $(0.25, 1)$ against this grid's baseline of $0.139$, and the per-LSP weekly profiles behind it are Supplementary Fig.~S12.
+ % src: results/revision_2026_08_v6/tables/tab_fleet_week_by_provider_v2.csv,
+ %      peak_baseline / peak_plan1 / peak_plan2 summed over the seven providers
+-The Monday--Saturday coefficient of variation of the system fleet falls from $0.139$ in the baseline to $0.023$ at $(0.25, 1)$ and $0.044$ at $(0.5, 1)$, that is by $84$ and $68\%$, with a grid maximum of $87\%$ at $(0, 0.7)$. Stage~2 is a local search and the gap it leaves is small but real: at $(0, 1)$ its summed depot peak of $1{,}030$ vehicles stands against a flat-profile lower bound of $980$, and at $(0.25, 1)$ the residual gap is $32$ peak vehicles. Read as a real payout rather than as a shadow price, the penalty halves the saving from $P = 0.25$ onwards but never removes it, and the break-even discount --- the most an operator could pay per delayed parcel and still break even --- rises with $P$ from $0.75$ to $2.25$~\euro\ in the operator lens and from $0.56$ to $1.21$~\euro\ in the routing lens, above the $50$ cents assumed here at every operating point (Supplementary Section~S1).
++Supplementary Section~S6 reports the whole series, the residual gap of the local search to the flat-profile bound, and the break-even discount, which exceeds the $50$ cents assumed here at every operating point.
  
 -The mechanism behind the operator-lens result is depot structure rather than consolidation depth. Consolidation pays in the operator lens where a depot can \emph{rotate} delivery days across several cells, so their busy days fall on different weekdays and the peak stays flat; a depot serving a single cell has no rotation available, since under any two-day pattern its week is one large peak and one large trough, and its peak falls only when it delivers more often. Eight of DHL's sixteen depots serve exactly one cell, and the polish returns them to near-daily delivery, while DHL's largest depot, serving thirteen cells, keeps rotated two-day patterns. There, temporal consolidation saves kilometres but not fleet.
  
  
  
-@@ -505,7 +504,7 @@ The mechanism behind the operator-lens result is depot structure rather than con
+@@ -508,7 +507,7 @@ The mechanism behind the operator-lens result is depot structure rather than con
  
  The per-LSP operating point $P^\star$ is identified as the chord-distance knee of each carrier's (saving, wait) Pareto front at $\theta = 1$ (\autoref{fig:structural_grid_6}, a), i.e.\ the point with the largest orthogonal distance to the chord between the cost-minimum and wait-minimum extremes, beyond which the saving lost per further day of wait reduction grows sharply. In the routing lens, and evaluated on the routing-optimal plan, this groups the seven operators into service-bound (Amazon, DHL) at $P^\star = 0.25$, hybrid (FedEx, Hermes, UPS) at $P^\star = 0.5$, and cost-aggressive (DPD, GLS) at $P^\star = 0.75$, unchanged from the submitted version. The classification is, however, lens-dependent, and this is the strongest qualification the revision puts on the submitted result. Applied to the operator plan under the operator lens, three carriers move up: Amazon from $0.25$ to $0.5$ (service-bound to hybrid) and Hermes from $0.5$ to $0.75$ (hybrid to cost-aggressive), while GLS moves from $0.75$ to $1.0$ and thereby leaves the $[0.25, 0.75]$ band altogether, so that under the operator lens it is not classified at all; DHL, FedEx, UPS, and DPD keep their $P^\star$. Peak smoothing begins to pay only at a higher penalty, so the knee of the operator-lens front sits further to the right. The three-class taxonomy is therefore a routing-lens statement, and no carrier class may be quoted without naming the lens it was derived in.
  
@@ -273,7 +277,7 @@ index 52780c7..2acad0a 100644
  % src: tab_per_cell_structural_v2.csv, level=cell lens='routing lens' plan=balanced
  %      value=saving_pct, medians over share_willing <= 0.9
  This efficiency pattern creates an equity concern: service quality between urban and rural areas should be maintained \citep{Pereira04032017}, especially since rural and suburban deliveries account for a substantial share of LMD activity \citep{BIENZEISLER2026104682}. The depot-structure mechanism runs alongside it and is visible per depot rather than per area: depots serving a single cell stay at six delivery days across the entire adoption range while those serving thirteen or more fall to two, although only DHL operates a multi-depot network here, so that half of the mechanism is evidenced within one carrier (Supplementary Fig.~S6).
-@@ -530,7 +529,7 @@ This efficiency pattern creates an equity concern: service quality between urban
+@@ -533,7 +532,7 @@ This efficiency pattern creates an equity concern: service quality between urban
  
  Three levels of evidence bear on whether the surrogate can be trusted at the operating points reported above, and they must not be merged.
  
@@ -286,7 +290,7 @@ index 52780c7..2acad0a 100644
 2.51.2.windows.1
 
 
-From 9b5a527327f00b271efeca7a23062f1dd81fa37e Mon Sep 17 00:00:00 2001
+From d4adda6e6bcaa31e7f2216b15f8b9495811c51bb Mon Sep 17 00:00:00 2001
 From: Lasse Bienzeisler <LasseBienzeisler@users.noreply.github.com>
 Date: Sat, 29 Aug 2026 00:20:53 +0200
 Subject: [PATCH 2/2] page budget: cuts 14-18 (duplication and density)
@@ -314,7 +318,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  1 file changed, 12 insertions(+), 12 deletions(-)
 
 diff --git a/paper/EWGT_2026_rev1/tbc_preprint_main.tex b/paper/EWGT_2026_rev1/tbc_preprint_main.tex
-index 2acad0a..0ed9d36 100644
+index 2444480..cb0e5c8 100644
 --- a/paper/EWGT_2026_rev1/tbc_preprint_main.tex
 +++ b/paper/EWGT_2026_rev1/tbc_preprint_main.tex
 @@ -204,7 +204,7 @@
@@ -380,7 +384,7 @@ index 2acad0a..0ed9d36 100644
  
  \subsection{Tour geometry and the validity domain of the surrogate}
  \label{sec:tour_rule}
-@@ -545,7 +545,7 @@ Partial adoption was validated separately, at $(P, \theta) = (0.25, 0.5)$ on the
+@@ -548,7 +548,7 @@ Partial adoption was validated separately, at $(P, \theta) = (0.25, 0.5)$ on the
  \subsection{Limitations}
  \label{sec:limitations}
  
@@ -389,7 +393,7 @@ index 2acad0a..0ed9d36 100644
  
  
  
-@@ -556,11 +556,11 @@ Six limitations and one methodological caveat bound these results. (i) The opera
+@@ -559,11 +559,11 @@ Six limitations and one methodological caveat bound these results. (i) The opera
  \section{Conclusion}
  \label{concl}
  

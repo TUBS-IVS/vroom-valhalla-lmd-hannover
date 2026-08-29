@@ -269,4 +269,30 @@ would lower the levels without materially changing the comparisons made here.
   \label{fig:supp_map_wait}
 \end{figure}
 
+\begin{figure}[h]
+  \centering
+  \begin{minipage}{\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{supp_fig_fleet_week_P0.pdf}\\[2mm]
+    {\small (a) $P = 0$}
+  \end{minipage}\\[3mm]
+  \begin{minipage}{\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{supp_fig_fleet_week_P025.pdf}\\[2mm]
+    {\small (b) $P = 0.25$}
+  \end{minipage}
+  \caption{Monday--Saturday vehicles per LSP at full adoption ($\theta = 1$), for
+  the daily-delivery baseline, the routing-optimal plan of stage~1 --- recomputed
+  with the partition-aware fleet counter --- and the operator-polished plan of
+  stage~2. Summed depot peaks over the seven providers and their $22$ depots go
+  $1{,}239 \rightarrow 1{,}666 \rightarrow 1{,}030$ vehicles at $P = 0$ (a) and
+  $1{,}239 \rightarrow 1{,}314 \rightarrow 1{,}026$ at $P = 0.25$ (b): the
+  routing-optimal plan \emph{raises} the peak fleet it never pays for, and only
+  the operator polish converts the freedom to move a delivery day into a flatter
+  week. Vehicle counts are model outputs computed from the HAGRID-based demand
+  and the tour rule of Section~2.2 of the main text; they are not carrier data
+  and no operator reported them.}
+  \label{fig:supp_fleet_week_lsp}
+\end{figure}
+
 \end{document}

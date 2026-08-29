@@ -1121,3 +1121,53 @@ the baseline is recovered exactly; at $P = 0$ with $\theta > 0$ nothing is
 pinned and the polish's wait and frequency changes are simply unpriced — which
 is why the service differences reported at $(0, 1)$ are a by-product, not an
 optimized trade.
+
+---
+
+## G9 - Task 14D: per-LSP weekly fleet figure (author decision, 2026-08-29)
+
+The author ruled that the 78_ per-LSP weekly-fleet figures are to be used as
+rendered, in absolute vehicle counts.
+
+- **New Supplementary Fig. S12**, two panels from the tracked stems
+  `supp_fig_fleet_week_P0.pdf` and `supp_fig_fleet_week_P025.pdf` (synced by
+  71_ in commit `b56c86c`): Monday-Saturday vehicles per LSP at full adoption
+  for the daily baseline, the routing-optimal plan (stage 1, recomputed with the
+  partition-aware fleet counter) and the operator plan (stage 2). Appended at the
+  END of the supplementary so it numbers as S12 and **every existing S1-S11
+  pointer stays valid** (verified in the built `.aux`).
+- Summed depot peaks in the caption: **1,239 -> 1,666 -> 1,030** at P = 0 and
+  **1,239 -> 1,314 -> 1,026** at P = 0.25. Verified by summing
+  `peak_baseline` / `peak_plan1` / `peak_plan2` over the seven providers in
+  `results/revision_2026_08_v6/tables/tab_fleet_week_by_provider_v2.csv`,
+  cross-checked against that file's own "All seven LSPs" row and against
+  compendium 40.22b (1 239 -> 1 666, +34 % at P = 0).
+- **Disclosure sentence in the caption**: the vehicle counts are model outputs
+  computed from the HAGRID-based demand and the tour rule, not carrier data.
+- One pointer clause in the main text's fleet passage, with its own `% src:`
+  block naming the table and the columns summed.
+- Supplementary grows 7 -> **8 pages**; the main text stays at 17 with 23
+  bibitems.
+
+### The guard gained a second check, because the first one missed a swallow
+
+Adding that `% src:` block re-created the I1 defect: the second comment line
+absorbed "The Monday--Saturday coefficient of variation ...". The guard did not
+catch it, because 1a only looks for LaTeX **control sequences** and that sentence
+contains none. A second rule now flags any `% src:` line whose body contains a
+body-text marker -- math (`$`), an em-dash (`---`) or a tie (`~`) -- which no
+provenance line ever needs. It caught the defect immediately, and then caught a
+**second** instance of it in the regenerated page-budget patch, where block 10's
+replacement text had been absorbed the same way. Both are fixed; a bare
+sentence-boundary rule was tried first and rejected because it false-positives on
+legitimate multi-line provenance prose.
+
+### The patch
+
+`page_budget_cuts.patch` no longer applied once the pointer clause landed
+(`git apply --check` rc = 1). Regenerated with `git am -3` onto the 14D base: one
+content conflict, in block 10's rewrite of exactly that fleet sentence, resolved
+by keeping the block-10 text **and** carrying the Fig. S12 pointer into it, so
+the pointer survives the cut. `git apply --check` rc = **0**; patched builds are
+**16 + 10 pages**, 23 bibitems, guard clean after both patches and after the
+first alone.
