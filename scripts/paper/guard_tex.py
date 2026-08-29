@@ -6,14 +6,30 @@ swallowed by one of those comment blocks -- the text simply disappeared from
 the PDF and nothing said so. Everything here is a tripwire for that class of
 silent loss, and every check is a hard failure, never a warning:
 
-1. **comment-swallow** -- no comment line may hide a LaTeX control sequence
-   (``\\section``, ``\\caption``, ``\\label``, ``\\ref``, ``\\cite``,
-   ``\\footnote`` and relatives). A commented-out ``\\section`` is almost
-   always a paragraph that fell into a ``%`` block, not a deliberate edit;
-   the few deliberate ones are named in :data:`DEFAULT_DRAFT_BLOCKS`, which
-   is applied automatically, and extra ones with ``--ignore-prefix``. The
-   guard **reports how many comment lines each exemption suppressed**, so a
-   broad exemption can never hide a growing block in silence.
+1. **comment-swallow** -- a comment line must never hide body text. Two
+   sub-rules, because one convention in this manuscript can trigger the
+   defect two different ways:
+
+   1a. No comment line may hide a LaTeX control sequence (``\\section``,
+       ``\\caption``, ``\\label``, ``\\ref``, ``\\cite``, ``\\footnote`` and
+       relatives). A commented-out ``\\section`` is almost always a
+       paragraph that fell into a ``%`` block, not a deliberate edit; the
+       few deliberate ones are named in :data:`DEFAULT_DRAFT_BLOCKS`, which
+       is applied automatically, and extra ones with ``--ignore-prefix``.
+   1b. No ``% src:`` provenance line -- or one of its ``%``-indented
+       continuation lines -- may carry a body-text marker: inline math
+       ``$``, an em-dash ``---``, or a tie ``~``. A ``% src:`` comment only
+       ever names a results file, a column, and a formula in plain prose;
+       it never needs any of the three, so finding one means a real
+       sentence bled onto the comment line -- the same defect as 1a, but
+       invisible to it, because ordinary manuscript prose with inline math
+       has no LaTeX control sequence to catch. Added after this shipped
+       four times across the Part-C provenance pass (task 14C/14D); shares
+       1a's exemption mechanism.
+
+   The guard **reports how many comment lines each 1a exemption
+   suppressed**, so a broad exemption can never hide a growing block in
+   silence.
 2. **page count** -- the built PDF's pages, read with ``pdftotext`` (pages
    are separated by form feeds), against ``--expect-pages``. This is the
    page-budget tripwire: a submission limit is not something to discover
@@ -40,7 +56,7 @@ script's own and no longer have to be passed in::
         --expect-pages 17 --expect-bibitems 23
 
     python scripts/paper/guard_tex.py --tex paper/EWGT_2026_rev1/supplementary.tex \\
-        --pdf build/supplementary.pdf --expect-pages 7
+        --pdf build/supplementary.pdf --expect-pages 8
 
 Pass ``--no-default-ignores`` to see the manuscript's deliberate draft blocks
 reported alongside real defects.
@@ -100,6 +116,17 @@ _BIBITEM_RE = re.compile(r"\\bibitem(?:\[[^\]]*\])?\{([^}]+)\}")
 _BIB_ENTRY_RE = re.compile(r"^\s*@\w+\s*\{\s*([^,\s]+)\s*,", re.MULTILINE)
 _BIBLIOGRAPHY_RE = re.compile(r"\\bibliography\{([^}]+)\}")
 
+#: Rule 1b. A ``% src:`` provenance line, and a continuation of one -- the
+#: manuscript's own convention for wrapping a long provenance comment onto
+#: several lines, each indented ``%`` + two or more spaces (see
+#: :func:`src_provenance_body_markers`).
+_SRC_LINE_RE = re.compile(r"^%\s*src\s*:")
+_SRC_CONTINUATION_RE = re.compile(r"^%\s{2,}\S")
+#: Inline math, an em-dash, or a tie -- body-text punctuation a provenance
+#: comment never needs, so any of the three on a rule-1b line means real
+#: manuscript prose bled onto it.
+_BODY_MARKER_RE = re.compile(r"\$|---|~")
+
 
 class ToolMissing(RuntimeError):
     """A required external binary is not on PATH."""
@@ -127,6 +154,58 @@ def hidden_control_sequences(tex: str,
         if any(s.startswith(p) for p in ignore_prefixes):
             continue
         if _HIDDEN_RE.search(s):
+            out.append((i, s[:120]))
+    return out
+
+
+def src_provenance_body_markers(tex: str,
+                                ignore_prefixes: tuple[str, ...] = ()
+                                ) -> list[tuple[int, str]]:
+    """``(line number, line)`` for every ``% src:`` provenance line -- or one
+    of the ``%``-indented continuation lines immediately following it -- that
+    carries a body-text marker: inline math ``$``, an em-dash ``---``, or a
+    tie ``~``.
+
+    Rule 1b, added for a defect rule 1a cannot see. A ``% src:`` comment
+    placed at the start of a line that still carries body text swallows that
+    text -- LaTeX's ``%`` runs to the end of the line -- and if the swallowed
+    sentence has no LaTeX control sequence (ordinary prose with inline math,
+    not a ``\\cite`` or a ``\\ref``), rule 1a passes it silently. A provenance
+    line never needs ``$``, ``---``, or ``~``: it names a results file, a
+    column, and a formula in plain prose, so any of the three on one of its
+    lines means a real sentence bled onto it. Four real instances motivated
+    this rule (task 14C/14D): three ``% src:`` sites in the original
+    revision-C provenance pass and one in a later figure-pointer edit --
+    none had a control sequence for rule 1a to catch on its own, though two
+    happened to carry one anyway in the same swallowed sentence.
+
+    A block is the ``% src:`` line plus every immediately following line
+    that, stripped, matches ``%`` followed by two or more spaces -- the
+    convention this manuscript already uses to wrap a long provenance
+    comment onto several lines. The block ends at the first line that is not
+    itself such a continuation. Exactly like rule 1a, a line starting with
+    one of *ignore_prefixes* is skipped rather than flagged, so a genuine
+    future exception can be named explicitly instead of disabling the rule.
+
+    A stricter, simpler candidate was tried first and rejected: flag a bare
+    sentence boundary, a literal ``". "`` followed by a capital letter. It
+    false-positives on this manuscript's own legitimate multi-line
+    provenance (``"...{OK, CACHED}. BOTH ranges span the SAME six"``), which
+    is exactly the kind of sentence-shaped provenance prose this convention
+    allows.
+    """
+    out: list[tuple[int, str]] = []
+    in_block = False
+    for i, line in enumerate(tex.replace("\r\n", "\n").split("\n"), 1):
+        s = line.lstrip()
+        is_start = bool(_SRC_LINE_RE.match(s))
+        is_continuation = in_block and bool(_SRC_CONTINUATION_RE.match(s))
+        in_block = is_start or is_continuation
+        if not in_block:
+            continue
+        if any(s.startswith(p) for p in ignore_prefixes):
+            continue
+        if _BODY_MARKER_RE.search(s):
             out.append((i, s[:120]))
     return out
 
@@ -226,7 +305,7 @@ def run_checks(tex_path: Path, pdf: Path | None = None,
     tex = tex_path.read_text(encoding="utf-8", errors="replace")
 
     hidden = hidden_control_sequences(tex, ignore_prefixes)
-    echo(f"1. comment lines hiding a control sequence: {len(hidden)}"
+    echo(f"1a. comment lines hiding a control sequence: {len(hidden)}"
          f"  {'OK' if not hidden else '*** FAIL ***'}")
     for i, s in hidden:
         echo(f"      line {i}: {s}")
@@ -244,6 +323,16 @@ def run_checks(tex_path: Path, pdf: Path | None = None,
     if hidden:
         failures.append(f"{len(hidden)} comment line(s) hide a control sequence "
                         f"in {tex_path.name}")
+
+    src_markers = src_provenance_body_markers(tex, ignore_prefixes)
+    echo(f"1b. % src: line(s) carrying a body-text marker ($, ---, ~): "
+         f"{len(src_markers)}  {'OK' if not src_markers else '*** FAIL ***'}")
+    for i, s in src_markers:
+        echo(f"      line {i}: {s}")
+    if src_markers:
+        failures.append(f"{len(src_markers)} % src: line(s) carry a body-text "
+                        f"marker ($, ---, ~) in {tex_path.name} -- body text "
+                        f"was likely swallowed by the comment")
 
     if pdf is not None:
         pages = pdftotext_page_count(pdf)
