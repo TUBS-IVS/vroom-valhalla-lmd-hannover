@@ -102,6 +102,26 @@ def fig62_pred_vs_actual():
     """
     sv = D.load_savings_validation()
     have = D.vroom_actual_baseline_available()
+    # A percentage needs a full system total on both sides. On v6 that rules
+    # out item 0 (it IS the baseline) and item 3, which the G6 budget
+    # fallback sampled to 1 000 of 1 594 instances -- its totals are real but
+    # they are a subset, so a "39 % saving" read off them would be an artefact
+    # of the sample size. Both are dropped here and named in the caveat.
+    dropped = []
+    if have and "saving_defined" in sv.columns:
+        drop = sv[~sv.saving_defined]
+        dropped = [f"item {int(r.item)} (P={r.penalty:g}, "
+                   f"theta={r.share_willing:g}, {r.plan}): "
+                   + ("the baseline itself" if r.is_baseline
+                      else f"sampled, {int(r.n)} instances")
+                   for r in drop.itertuples()]
+        sv = sv[sv.saving_defined].copy()
+        for d in dropped:
+            print(f"  [excluded] {d}")
+        assert len(sv), (
+            "no validated point carries a defined saving; every item is "
+            "either the baseline or a sampled one")
+    thetas = sorted(set(sv.share_willing)) if len(sv) else []
     if not have and "plan" in sv.columns:
         # one bar pair per (point, plan); label them so the two plans of the
         # revision are never silently averaged into one series
@@ -140,7 +160,10 @@ def fig62_pred_vs_actual():
         b2 = ax.bar(x + w / 2, v2, w, color=D.PALETTE["accent2"], label=labels[1])
         ax.set_xticks(x)
         ax.set_xticklabels(sv.label)
-        ax.set_xlabel(r"Service penalty [€/p/d], all at $\theta = 100\%$")
+        ax.set_xlabel(r"Service penalty [€/p/d], all at "
+                      + (r"$\theta = 100\%$" if thetas == [1.0]
+                         else r"$\theta \in \{"
+                              + ", ".join(f"{t:g}" for t in thetas) + r"\}$"))
         ax.set_ylabel(ylab)
         ax.set_title(title)
         ax.grid(alpha=0.25, axis="y")
@@ -188,8 +211,14 @@ def fig62_pred_vs_actual():
                         "Surrogate price vs solver cost at the validated "
                         "points"),
                  tier=S.TIER_A, act=ACT, basis=BASIS, claim=claim,
-                 caveats=("Four points only, all at theta=1; the conservatism "
-                          "band widens with the penalty." if have else
+                 caveats=((f"{len(sv)} validated points, all at theta=1, on "
+                           f"both plans; the conservatism band widens with "
+                           f"the penalty. Excluded because no system "
+                           f"percentage can be formed from them: "
+                           + "; ".join(dropped) + "."
+                           if dropped else
+                           f"{len(sv)} validated points; the conservatism "
+                           f"band widens with the penalty.") if have else
                           "No realised SAVING is stated: the theta = 0 "
                           "baseline of this grid has not been solved, so a "
                           "saving would pair an actual numerator with a "

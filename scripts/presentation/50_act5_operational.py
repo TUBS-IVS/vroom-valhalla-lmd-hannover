@@ -7,10 +7,14 @@ Figures
   fig54_load_factor       parcels per route and cost per parcel per provider
   fig55_pattern_clock     which weekdays the chosen schedules actually use
 
-fig55 is the one figure here that is genuinely *new* at Stage 3 rather than a
-re-render: system smoothing preserves how many days each area is served but
-reassigns which ones, so the weekday distribution is a Stage-3 quantity and
-differs from the Stage-2 choice it was derived from. The figure shows both.
+fig55 contrasts two plans' weekday usage. On the legacy grid those were
+stage 2 and stage 3, where smoothing preserved how many days each area was
+served and only reassigned which ones. On a v2 grid stage 3 is off
+(`schedule_idx_system_smoothed == schedule_idx_balanced` by construction), so
+the contrast that exists is stage 1 against stage 2 -- and that one changes
+frequencies as well as weekdays, because v6's stage 2 is frequency-free at
+theta > 0 (compendium 40.14). The figure picks the pair its grid actually
+has and states which.
 """
 from __future__ import annotations
 
@@ -28,7 +32,8 @@ import _plots as P
 import _style as S
 
 ACT = "5 - Operational"
-STAGE3 = "Stage 3 (per-hub balancing + system smoothing)"
+PLAN = D.CHOSEN_PLAN_DEFAULT
+STAGE3 = D.plan_stamp(PLAN)
 
 P_REF = 0.25
 THETA_REF = 1.0
@@ -142,7 +147,11 @@ def fig52_fleet_per_provider():
 
 # ---------------------------------------------------------------- fig53
 def fig53_co2():
-    v = D.load_vroom()
+    # The v2 validation covers two plans and three thetas; a per-penalty sum
+    # over all of it would put the theta = 0 baseline and the theta = 0.5
+    # point into a series the caption calls theta = 100 %, and would count
+    # (P = 0, 0.25) twice, once per plan. Both filters are therefore explicit.
+    v = D.load_vroom(plan=PLAN, theta=THETA_REF)
     per = (v.groupby(["penalty"], as_index=False)
            .agg(km=("vroom_distance_km", "sum"),
                 routes=("vroom_n_routes", "sum"),
@@ -195,7 +204,9 @@ def fig53_co2():
         S.save(fig, "fig53_co2", style, S.TIER_A)
 
     D.prov.write("fig53_co2", title="Vehicle-km and CO2 at the validated points",
-                 tier=S.TIER_A, act=ACT, basis="Stage-3 VROOM revalidation",
+                 tier=S.TIER_A, act=ACT,
+                 basis=f"VROOM validation of {D.VAL.parent.name}, "
+                       f"{D.GRID_PLAN_LABEL[PLAN]}, theta=1",
                  claim=f"Consolidation cuts distance as well as cost: weekly "
                        f"vehicle-km fall from {ref.km / 1000:.1f}k at "
                        f"P={ref.penalty:g} to {per.km.min() / 1000:.1f}k at "
@@ -213,7 +224,7 @@ def fig53_co2():
 
 # ---------------------------------------------------------------- fig54
 def fig54_load_factor():
-    v = D.load_vroom()
+    v = D.load_vroom(plan=PLAN, theta=THETA_REF)
     per = (v.groupby(["penalty", "provider"], as_index=False)
            .agg(km=("vroom_distance_km", "sum"),
                 routes=("vroom_n_routes", "sum"),
@@ -258,7 +269,9 @@ def fig54_load_factor():
     lo = per[np.isclose(per.penalty, 0.0)]
     D.prov.write("fig54_load_factor",
                  title="Load factor and unit cost per provider",
-                 tier=S.TIER_B, act=ACT, basis="Stage-3 VROOM revalidation",
+                 tier=S.TIER_B, act=ACT,
+                 basis=f"VROOM validation of {D.VAL.parent.name}, "
+                       f"{D.GRID_PLAN_LABEL[PLAN]}, theta=1",
                  claim=f"Consolidation raises vehicle utilisation: at P=0 "
                        f"parcels per route span "
                        f"{lo.parcels_per_route.min():.0f}-"
@@ -269,9 +282,45 @@ def fig54_load_factor():
 
 # ---------------------------------------------------------------- fig55
 def fig55_pattern_clock():
-    s2 = pd.read_csv(D.RUN / "tab_chosen_schedules.csv", dtype={"plz": str})
-    D.prov.record(D.RUN / "tab_chosen_schedules.csv")
-    s3 = D.load_chosen_stage3()
+    """Which weekdays the plans use, and what the polish does to that.
+
+    On the legacy grid this contrasted stage 2 with stage 3: system smoothing
+    reassigned weekdays without changing any area's frequency, and the figure
+    measured that reassignment.
+
+    On v6 stage 3 is OFF -- vehicles do not move between hubs, so the hub
+    peaks ARE the fleet, and 61_grid_run_v2 dropped the smoothing pass from
+    the production path. `schedule_idx_system_smoothed` is then equal to
+    `schedule_idx_balanced` by construction and the old contrast is
+    identically empty. The v6 contrast is the one that exists: the ROUTING
+    plan (stage 1) against the OPERATOR plan (stage 2). That polish does move
+    frequencies as well as weekdays -- it is frequency-free at theta > 0
+    (compendium 40.14) -- so the figure reports both, and the caption no
+    longer claims frequency is preserved.
+    """
+    v2 = D.SCHEMA == D.SCHEMA_V2
+    if v2:
+        s3 = D.load_chosen_stage3(D.PLAN_BALANCED)
+        s2 = s3                      # both plans ride in the same frame
+        col_a, col_b = "weekdays_stage1", "weekdays_balanced"
+        lab_a = "Stage 1 (routing-optimal plan)"
+        lab_b = "Stage 2 (operator-polished plan)"
+        assert (s3.schedule_idx_balanced
+                == s3.schedule_idx_system_smoothed).all(), (
+            "stage 3 moved the plan on this grid; fig55's v6 contrast "
+            "assumes --stage3 off, where balanced == system_smoothed")
+        freq_moved = float((s3.schedule_size_stage1
+                            != s3.schedule_size_balanced).mean()) * 100.0
+    else:
+        s2 = pd.read_csv(D.RUN / "tab_chosen_schedules.csv", dtype={"plz": str})
+        D.prov.record(D.RUN / "tab_chosen_schedules.csv")
+        s3 = D.load_chosen_stage3()
+        col_a = ("weekdays_balanced" if "weekdays_balanced" in s2.columns
+                 else next(c for c in s2.columns if "weekday" in c))
+        col_b = "weekdays_system_smoothed"
+        lab_a = "Stage 2 (cost-optimal per hub)"
+        lab_b = "Stage 3 (after system smoothing)"
+        freq_moved = 0.0
 
     # The weekday columns hold day *names* ("Mon,Tue,Sat"), not day indices.
     idx_of = {name: i for i, name in enumerate(D.WEEKDAYS)}
@@ -294,26 +343,23 @@ def fig55_pattern_clock():
         assert share.sum() > 0, f"column {col!r} parsed to an all-zero profile"
         return share
 
-    col2 = "weekdays_balanced" if "weekdays_balanced" in s2.columns else None
-    if col2 is None:
-        cands = [c for c in s2.columns if "weekday" in c]
-        assert cands, f"no weekday column in stage-2 table: {list(s2.columns)}"
-        col2 = cands[0]
-    share2 = _weekday_share(s2, col2, P_REF, THETA_REF)
-    share3 = _weekday_share(s3, "weekdays_system_smoothed", P_REF, THETA_REF)
+    share2 = _weekday_share(s2, col_a, P_REF, THETA_REF)
+    share3 = _weekday_share(s3, col_b, P_REF, THETA_REF)
     shifted = float(np.abs(share3 - share2).sum() / 2)
-    print(f"  stage2 weekday share: {np.round(share2, 1)}")
-    print(f"  stage3 weekday share: {np.round(share3, 1)}")
-    print(f"  net reassignment: {shifted:.1f} percentage points of area-days")
+    print(f"  {lab_a} weekday share: {np.round(share2, 1)}")
+    print(f"  {lab_b} weekday share: {np.round(share3, 1)}")
+    print(f"  net reassignment: {shifted:.1f} percentage points of area-days; "
+          f"delivery frequency changed for {freq_moved:.1f} % of cell choices")
+    assert shifted > 0, (
+        f"the two plans use identical weekdays at P={P_REF:g}, "
+        f"theta={THETA_REF:g}; there is nothing for this figure to show")
 
     for style in S.styles():
         S.apply(style)
         fig, ax = plt.subplots(figsize=S.figsize(style, (7.6, 4.4), (11.5, 5.6)))
         x = np.arange(D.N_DAYS)
-        ax.bar(x - 0.2, share2, 0.4, color=D.PALETTE["stage2"],
-               label="Stage 2 (cost-optimal per hub)")
-        ax.bar(x + 0.2, share3, 0.4, color=D.PALETTE["stage3"],
-               label="Stage 3 (after system smoothing)")
+        ax.bar(x - 0.2, share2, 0.4, color=D.PALETTE["stage2"], label=lab_a)
+        ax.bar(x + 0.2, share3, 0.4, color=D.PALETTE["stage3"], label=lab_b)
         ax.set_xticks(x)
         ax.set_xticklabels(D.WEEKDAYS)
         ax.set_ylabel("Areas served on that weekday [%]")
@@ -321,22 +367,41 @@ def fig55_pattern_clock():
                      rf"$\theta = {THETA_REF * 100:.0f}\%$")
         ax.grid(alpha=0.25, axis="y")
         ax.legend(framealpha=0.9, loc="lower right")
-        P.footnote(fig, f"Smoothing reassigns weekdays without changing any "
+        P.footnote(fig, f"{shifted:.1f} pp of area-days move between "
+                        f"weekdays; the polish also changes the delivery "
+                        f"frequency of {freq_moved:.1f} % of cell choices."
+                        if v2 else
+                        f"Smoothing reassigns weekdays without changing any "
                         f"area's delivery frequency: "
                         f"{shifted:.1f} pp of area-days move.", style)
         fig.tight_layout(rect=[0, 0.05, 1, 1])
         S.save(fig, "fig55_pattern_clock", style, S.TIER_A)
 
     D.prov.write("fig55_pattern_clock",
-                 title="Weekday usage, stage 2 vs stage 3",
+                 title=(f"Weekday usage, {lab_a.split(' (')[0].lower()} vs "
+                        f"{lab_b.split(' (')[0].lower()}"),
                  tier=S.TIER_A, act=ACT, basis=STAGE3,
-                 claim=f"System smoothing works purely by moving delivery days "
-                       f"between weekdays: {shifted:.1f} pp of area-days are "
-                       f"reassigned while every area's frequency is unchanged. "
-                       f"This is what buys the fleet-CV reduction at zero cost "
-                       f"in service frequency.",
-                 caveats="Weekday shares sum to more than 100% because an area "
-                         "is served on several days per week.")
+                 claim=(f"The operator polish rewrites the weekly pattern, not "
+                        f"only its timing: {shifted:.1f} pp of area-days move "
+                        f"between weekdays AND the delivery frequency of "
+                        f"{freq_moved:.1f} % of cell choices changes. That "
+                        f"second half is what the frequency-preserving stage 2 "
+                        f"of the submission could not do, and it is where the "
+                        f"operator-lens saving comes from."
+                        if v2 else
+                        f"System smoothing works purely by moving delivery "
+                        f"days between weekdays: {shifted:.1f} pp of area-days "
+                        f"are reassigned while every area's frequency is "
+                        f"unchanged. This is what buys the fleet-CV reduction "
+                        f"at zero cost in service frequency."),
+                 caveats=("Weekday shares sum to more than 100% because an "
+                          "area is served on several days per week. On this "
+                          "grid stage 3 is off, so the contrast is stage 1 "
+                          "against stage 2 -- the submission's stage-2/stage-3 "
+                          "contrast is identically empty here."
+                          if v2 else
+                          "Weekday shares sum to more than 100% because an "
+                          "area is served on several days per week."))
 
 
 def main():

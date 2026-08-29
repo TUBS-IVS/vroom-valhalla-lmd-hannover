@@ -50,6 +50,21 @@ ROOT = Path(__file__).resolve().parents[2]
 STYLE = "slides"
 TIER = S.TIER_B
 
+
+# ── which grid and which plan these backup slides are drawn on ─────────────
+# 97_/98_ write no provenance sidecar (they are talk backup, outside the
+# MANIFEST's 43-figure set), so the stamp goes where a backup slide is
+# actually read: on the figure. `_stamp()` is called by every figure below.
+PLAN = D.CHOSEN_PLAN_DEFAULT
+PLAN_NOTE = D.plan_stamp(PLAN)
+
+
+def _stamp(fig, extra: str = "") -> None:
+    """Print the grid and plan this figure was drawn from along its foot."""
+    txt = PLAN_NOTE + (" · " + extra if extra else "")
+    fig.text(0.995, 0.005, txt, ha="right", va="bottom", fontsize=10,
+             color=S.INK_SOFT)
+
 # The efficient operating point the talk carries.
 P_REF, THETA_REF = 0.25, 1.0
 # The corner the bump lives in.
@@ -133,7 +148,7 @@ def _view(units):
 # ═══════════════════════════════════════════════════════════════════════════
 def figP1_mix_by_provider():
     """The frequency mix each carrier chooses, as adoption rises."""
-    s = _drop_p04(D.load_chosen_stage3())
+    s = _drop_p04(D.load_chosen_stage3(PLAN))
     at = s[np.isclose(s.penalty, P_REF)]
     provs = _providers(at)
     S.apply(STYLE)
@@ -168,12 +183,13 @@ def figP1_mix_by_provider():
                                     frameon=False, fontsize=15,
                                     title_fontsize=15)
     fig.tight_layout(rect=[0.02, 0.04, 1, 0.94])
+    _stamp(fig)
     S.save(fig, "figP1_mix_by_provider", STYLE, TIER)
 
 
 def figP2_saving_by_provider():
     """The saving grid each carrier sees, against its own baseline."""
-    c = _drop_p04(D.load_costs())
+    c = _drop_p04(D.load_costs(D.PLAN_OPERATOR))
     base = D.load_baseline_per_provider().set_index("provider").dd_cost
     c["saving_pct"] = 100 * (c.provider.map(base) - c.total_stage3_eur) \
         / c.provider.map(base)
@@ -208,12 +224,13 @@ def figP2_saving_by_provider():
     fig.tight_layout(rect=[0.02, 0.04, 1, 0.94])
     cax = sp.inset_axes([0.10, 0.12, 0.13, 0.76])
     fig.colorbar(im, cax=cax, label="Saving [%]")
+    _stamp(fig)
     S.save(fig, "figP2_saving_by_provider", STYLE, TIER)
 
 
 def figP3_map_saving_provider():
     """Where each carrier's saving sits in space."""
-    d = D.load_per_plz()
+    d = D.load_per_plz(PLAN)
     at = d[np.isclose(d.penalty, P_REF)]
     view = _view(d.plz.unique())
     provs = _providers(at)
@@ -246,12 +263,13 @@ def figP3_map_saving_provider():
     fig.subplots_adjust(hspace=0.28)
     cax = sp.inset_axes([0.12, 0.14, 0.14, 0.72])
     fig.colorbar(sm, cax=cax, label="Cost saving per area [%]")
+    _stamp(fig)
     S.save(fig, "figP3_map_saving_provider", STYLE, TIER)
 
 
 def figP4_map_freq_provider():
     """Each carrier's chosen delivery frequency in space."""
-    s = D.load_chosen_stage3()
+    s = D.load_chosen_stage3(PLAN)
     at = s[np.isclose(s.penalty, P_REF) & np.isclose(s.share_willing, THETA_REF)]
     view = _view(s.plz.unique())
     cmap = ListedColormap([D.FREQ_COLOR[k] for k in D.FREQ_SIZES])
@@ -285,6 +303,7 @@ def figP4_map_freq_provider():
                  f"P = {P_REF:g} €/p/d, θ = {THETA_REF:.0%}")
     fig.tight_layout(rect=[0, 0, 1, 0.93])
     fig.subplots_adjust(hspace=0.28)
+    _stamp(fig)
     S.save(fig, "figP4_map_freq_provider", STYLE, TIER)
 
 
@@ -292,19 +311,47 @@ def figP4_map_freq_provider():
 # the bump at theta = 10 %
 # ═══════════════════════════════════════════════════════════════════════════
 def _bulge_frame():
-    """The cells at (P = 10, theta = 0.1) with their baseline vehicle-days."""
-    raw = pd.read_csv(D.RUN / "tab_chosen_schedules.csv")
-    raw["plz"] = raw.plz.astype(str)
-    cell = raw[np.isclose(raw.penalty, P_BULGE)
-               & np.isclose(raw.share_willing, TH_BULGE)].copy()
-    base = (raw[np.isclose(raw.penalty, 0.0) & np.isclose(raw.share_willing, 0.0)]
-            [["provider", "plz", "veh_init", "dd_cost_init"]]
-            .rename(columns={"veh_init": "veh_base",
-                             "dd_cost_init": "dd_base"}))
-    m = cell.merge(base, on=["provider", "plz"], how="left")
-    m["consolidates"] = m.schedule_size_init < 6
-    m["d_veh"] = m.veh_base - m.veh_init
-    m["d_dd"] = m.dd_base - m.dd_cost_init
+    """The cells at (P = 10, theta = 0.1) with their baseline vehicle-days.
+
+    On a v2 grid this comes from 72_'s per-cell table: `veh_days_share` and
+    `cell_cost_eur` at the chosen plan, against the same two quantities in
+    the (0, 0) baseline row. It used to read the 2026-05-29 legacy run
+    unconditionally, which is what made the withdrawn figures below
+    unfalsifiable -- they showed a pre-revision artefact on a slide captioned
+    with revision numbers. They stay withdrawn; this only makes the record
+    reproducible on the grid in use.
+    """
+    if D.SCHEMA != D.SCHEMA_V2:
+        raw = pd.read_csv(D.RUN / "tab_chosen_schedules.csv")
+        raw["plz"] = raw.plz.astype(str)
+        cell = raw[np.isclose(raw.penalty, P_BULGE)
+                   & np.isclose(raw.share_willing, TH_BULGE)].copy()
+        base = (raw[np.isclose(raw.penalty, 0.0)
+                    & np.isclose(raw.share_willing, 0.0)]
+                [["provider", "plz", "veh_init", "dd_cost_init"]]
+                .rename(columns={"veh_init": "veh_base",
+                                 "dd_cost_init": "dd_base"}))
+        m = cell.merge(base, on=["provider", "plz"], how="left")
+        m["consolidates"] = m.schedule_size_init < 6
+        m["d_veh"] = m.veh_base - m.veh_init
+        m["d_dd"] = m.dd_base - m.dd_cost_init
+        return m
+
+    d = D.load_per_cell_costs_v2(PLAN)
+    d["plz"] = d.plz.astype(str).str.zfill(5)
+    cell = d[np.isclose(d.penalty, P_BULGE)
+             & np.isclose(d.share_willing, TH_BULGE)].copy()
+    assert len(cell), f"no cells at P={P_BULGE}, theta={TH_BULGE}"
+    base = (d[np.isclose(d.penalty, 0.0) & np.isclose(d.share_willing, 0.0)]
+            [["provider", "plz", "veh_days_share", "cell_cost_eur"]]
+            .rename(columns={"veh_days_share": "veh_base",
+                             "cell_cost_eur": "dd_base"}))
+    m = cell.merge(base, on=["provider", "plz"], how="left", validate="1:1")
+    assert m.veh_base.notna().all(), "cells without a baseline row"
+    m["weekly_parcels"] = m.cell_parcels_week
+    m["consolidates"] = m.mean_days < D.N_DAYS
+    m["d_veh"] = m.veh_base - m.veh_days_share
+    m["d_dd"] = m.dd_base - m.cell_cost_eur
     return m
 
 
@@ -356,24 +403,26 @@ def figB1_who_consolidates():
     fig.suptitle(f"Who consolidates at P = {P_BULGE:g} €/p/d, "
                  f"θ = {TH_BULGE:.0%} — and how big they are")
     fig.tight_layout(rect=[0, 0, 1, 0.93])
+    _stamp(fig)
     S.save(fig, "figB1_who_consolidates", STYLE, TIER)
 
 
 def figB2_where_the_money_is():
     """How much of the saving is fewer vehicle-days, and how much is distance.
 
-    Rebuilt 2026-08-25 on the corrected fleet table. The earlier version read
+    Rebuilt 2026-08-25 on the corrected fleet table: the earlier version read
     the per-cell dd vehicle column, which leaves the pooled express tour out
-    entirely, and concluded that almost no vehicles are saved. On the proper
-    system metric 180 of 6 397 vehicle-days fall away at the low corner -- half
-    the money -- and 524 at the headline point.
+    entirely, and concluded that almost no vehicles are saved. The split
+    between "fewer vehicle-days" and "shorter driving" is measured from the
+    grid in use and printed, because it moved with the revision -- do not
+    quote a share from this docstring, read it off the run.
     """
     VAN = 189.15
     f = D.fleet_totals()
-    c = D.load_costs()
+    c = D.load_costs(D.PLAN_OPERATOR)
     tot = (c.groupby(["penalty", "share_willing"], as_index=False)
              .total_stage3_eur.sum())
-    tot["saved"] = D.BASE_TOTAL - tot.total_stage3_eur
+    tot["saved"] = D.baseline_eur(D.LENS_ROUTING) - tot.total_stage3_eur
 
     def veh_week(pen, th):
         r = f[np.isclose(f.penalty, pen) & np.isclose(f.share_willing, th)]
@@ -432,16 +481,19 @@ def figB2_where_the_money_is():
     ax.set_xlabel(f"Vehicle-days per week  (baseline {base:.0f})")
     ax.legend(loc="upper left", fontsize=13, framealpha=0.95)
     ax.grid(alpha=0.25, axis="x")
-    fig.suptitle("Half the saving is fewer vehicle-days at the thin corner — "
-                 "a quarter of it at the operating point")
+    # the two shares are what the figure is about, so they come from the data
+    sh = [100 * r[2] / r[3] for r in rows]
+    fig.suptitle(f"{sh[0]:.0f} % of the saving is fewer vehicle-days at the "
+                 f"thin corner — {sh[1]:.0f} % of it at the operating point")
     fig.tight_layout(rect=[0, 0, 1, 0.93])
+    _stamp(fig)
     S.save(fig, "figB2_where_the_money_is", STYLE, TIER)
 
 
 def figB3_ptheta_collapse():
     """Share consolidating collapses onto the product of penalty and adoption."""
     withdrawn("figB3_ptheta_collapse")
-    s = _drop_p04(D.load_chosen_stage3())
+    s = _drop_p04(D.load_chosen_stage3(PLAN))
     col = "schedule_size_system_smoothed"
     g = (s.assign(c=(s[col] < 6).astype(float))
            .groupby(["penalty", "share_willing"], as_index=False).c.mean())
@@ -474,15 +526,23 @@ def figB3_ptheta_collapse():
                  label="Service penalty P")
     fig.suptitle("θ alone explains almost nothing — the product with P does")
     fig.tight_layout(rect=[0, 0, 0.93, 0.93])
+    _stamp(fig)
     S.save(fig, "figB3_ptheta_collapse", STYLE, TIER)
 
 
 def figB4_size_vs_takt():
     """Cell size against the takt it chooses, at three effective penalties."""
-    s = _drop_p04(D.load_chosen_stage3())
-    vol = (D.load_per_plz()[["provider", "plz", "weekly_parcels"]]
-           .drop_duplicates(["provider", "plz"]))
-    s = s.merge(vol, on=["provider", "plz"], how="left")
+    s = _drop_p04(D.load_chosen_stage3(PLAN))
+    if "weekly_parcels" not in s.columns:
+        # legacy grid: the chosen table carries no volume, so it is joined in
+        # from the per-area table. A v2 chosen frame already carries the
+        # grid's own cell_parcels_week and joining again would collide.
+        vol = (D.load_per_plz(PLAN)[["provider", "plz", "weekly_parcels"]]
+               .drop_duplicates(["provider", "plz"]))
+        s = s.merge(vol, on=["provider", "plz"], how="left")
+    assert s.weekly_parcels.notna().all(), (
+        f"{int(s.weekly_parcels.isna().sum())} cell choice(s) without a "
+        f"parcel volume")
     s["freq"] = s.schedule_size_system_smoothed
     picks = [(5.0, 0.1), (5.0, 0.2), (5.0, 0.3)]
     S.apply(STYLE)
@@ -515,6 +575,7 @@ def figB4_size_vs_takt():
     fig.suptitle("Small cells consolidate, large cells stay daily — and the "
                  "threshold moves with P · θ")
     fig.tight_layout(rect=[0, 0, 1, 0.92])
+    _stamp(fig)
     S.save(fig, "figB4_size_vs_takt", STYLE, TIER)
 
 

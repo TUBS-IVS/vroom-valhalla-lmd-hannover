@@ -697,12 +697,30 @@ def bulge_rows(f: Facts) -> list:
 # validation directory `_data.VAL` points at, so a slide can never restate the
 # submission's realised savings by accident -- which is precisely what two
 # slides of the explainer deck did until 2026-08-28.
-VALIDATION_STAMP = "Validierung v5 · v6 mit Baseline folgt"
+def validation_stamp() -> str:
+    """The chip a validation slide carries, derived from the run in use.
+
+    It named "v5, v6 mit Baseline folgt" while v6's theta = 0 baseline was
+    still being solved. That baseline landed 2026-08-28 (item 0 of
+    `results/revision_2026_08_v6/validation/`), so the stamp now names the
+    grid it is actually reading and says nothing is outstanding. Derived
+    rather than typed, for the same reason `tag_text()` is: a frozen literal
+    is a claim nobody re-checks.
+    """
+    grid = D.VAL.parent.name.rsplit("_", 1)[-1]
+    if not D.vroom_actual_baseline_available():
+        return f"Validierung {grid} · Baseline folgt"
+    return f"Validierung {grid} · inkl. Baseline"
+
+
+VALIDATION_STAMP = validation_stamp()
 
 
 def validation_facts() -> dict:
     """What the validation in use actually supports, as numbers for a slide."""
     sv = D.load_savings_validation()
+    if "saving_defined" in sv.columns:
+        sv = sv[sv.saving_defined]          # see validation_rows()
     dg = D.load_vroom_diagnostics()
     allrow = dg[dg.penalty.astype(str) == "ALL"]
     out = dict(
@@ -735,8 +753,18 @@ def validation_facts() -> dict:
 
 
 def validation_rows(vf: dict) -> list:
-    """Per validated point: what the surrogate priced against what VROOM cost."""
+    """Per validated point: what the surrogate priced against what VROOM cost.
+
+    Restricted to the points a system percentage exists for: not the theta = 0
+    baseline (it IS the reference) and not an item the G6 budget rule sampled
+    rather than enumerated, whose totals are a subset of the system. Both are
+    real solves and both are reported in the validation's own report; they
+    just do not belong in a table the speaker note calls "both plans at
+    theta = 1".
+    """
     sv = D.load_savings_validation().sort_values(["plan", "penalty"])
+    if "saving_defined" in sv.columns:
+        sv = sv[sv.saving_defined]
     return [[f"P = {r.penalty:g}",
              (str(r.plan).replace("balanced", "operator-polished")
               .replace("stage1", "routing-optimal")

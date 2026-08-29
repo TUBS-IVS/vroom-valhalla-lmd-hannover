@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 from matplotlib.patches import Patch
@@ -29,12 +30,57 @@ import _plots as P
 import _style as S
 
 ACT = "3 - Core results"
-STAGE3 = "Stage 3 (per-hub balancing + system smoothing), theta grid complete"
+# Which grid and which of its plans this act is drawn from is a property of
+# the data, not a constant: on a v2 grid the per-cell schedule choice fig35
+# reads is one of TWO, and saying "Stage 3" would name a stage v6 does not
+# even run (stage 3 is off; stage 2 is the final plan).
+PLAN = D.CHOSEN_PLAN_DEFAULT           # the operator-polished plan, 40.23b
+STAGE3 = D.plan_stamp(PLAN)
 
 
 def _drop_p04(df):
     """P=0.4 exists only in the older balanced run, not in the Stage-3 grid."""
     return df[~np.isclose(df.penalty, 0.4)].copy()
+
+
+def _freq_moved(sched) -> float:
+    """% of cell choices whose delivery frequency stage 2 changed."""
+    if "schedule_size_stage1" not in sched.columns:
+        return float("nan")
+    return float((sched.schedule_size_stage1
+                  != sched.schedule_size_balanced).mean()) * 100.0
+
+
+def _gate_mix(sched, col) -> None:
+    """The plotted mix must be the grid's own schedule indices, recounted.
+
+    fig35 draws a share; a share cannot show that the wrong PLAN, or the
+    wrong RUN, was counted -- both produce a plausible-looking stack. So the
+    counts behind the areas are re-derived here straight from
+    `_tab_chosen_v2.csv` (raw indices, expanded through the 39-pattern
+    enumeration) and compared cell by cell against what the figure will
+    plot. On a legacy grid there is one plan and nothing to confuse, so the
+    gate is skipped and says so.
+    """
+    if D.SCHEMA != D.SCHEMA_V2:
+        print("  [gate] legacy grid: single plan, mix gate not applicable")
+        return
+    size, _days, _wait = D._schedule_lookup()
+    raw = D.load_chosen_v2()
+    idx_col = D._V2_CHOSEN_IDX_COL[PLAN]
+    raw = raw[~np.isclose(raw.penalty, 0.4)]
+    want = (pd.Series(size[raw[idx_col].to_numpy()])
+            .groupby([raw.penalty.values, raw.share_willing.values])
+            .value_counts().sort_index())
+    got = (sched.groupby(["penalty", "share_willing"])[col]
+           .value_counts().sort_index())
+    assert want.equals(got.astype(want.dtype)), (
+        "fig35's frequency mix does not reproduce the counts of "
+        f"{(D.REV / '_tab_chosen_v2.csv').name} at the "
+        f"{D.GRID_PLAN_LABEL[PLAN]} -- the figure is counting some other "
+        "plan or some other run")
+    print(f"  [gate] mix reproduces {len(got)} (P, theta, frequency) counts "
+          f"of _tab_chosen_v2.csv at the {D.GRID_PLAN_LABEL[PLAN]}")
 
 
 # ---------------------------------------------------------------- fig31
@@ -53,7 +99,10 @@ def fig31_saving_grid():
                vmin=0, vmax=float(np.ceil(piv.values.max() / 5) * 5),
                cbar_label="Saving [%]", style=style)
         P.grid_labels(ax, style)
-        base_str = f"{D.BASE_TOTAL:,.0f}".replace(",", " ")
+        # The grid's OWN baseline, not the pinned legacy one: v6's daily
+        # reference is 1 898 090.80 EUR, 11 341.62 below the submission's,
+        # and printing the wrong one under a v6 heatmap restates every cell.
+        base_str = f"{D.baseline_eur(D.LENS_ROUTING):,.0f}".replace(",", " ")
         P.footnote(fig, f"Baseline = {base_str} € per week, daily delivery. "
                         f"{STAGE3}.", style)
         fig.tight_layout()
@@ -131,7 +180,6 @@ def fig33_fleet_grid():
             peak_red=100 * (base_peak - fa.max()) / base_peak,
             cv_red=100 * (base_cv - cv) / base_cv,
             total_chg=100 * (fa.sum() - base_total) / base_total))
-    import pandas as pd
     cells = pd.DataFrame(rows)
     pk = cells.pivot(index="penalty", columns="share_willing", values="peak_red")
     cv = cells.pivot(index="penalty", columns="share_willing", values="cv_red")
@@ -233,10 +281,11 @@ def fig34_pareto():
 
 # ---------------------------------------------------------------- fig35
 def fig35_schedule_mix():
-    sched = D.load_chosen_stage3()
+    sched = D.load_chosen_stage3(PLAN)
     sched = sched[~np.isclose(sched.penalty, 0.4)].copy()
     col = "schedule_size_system_smoothed"
     pens = sorted(sched.penalty.unique())
+    _gate_mix(sched, col)
 
     for style in S.styles():
         S.apply(style)
@@ -307,9 +356,14 @@ def fig35_schedule_mix():
                        "and the service penalty: at P=0 the 2-3 day/wk classes "
                        "dominate as theta grows, while from P=5 upward almost "
                        "every area stays at 6 day/wk.",
-                 caveats="Delivery frequency is invariant from Stage 2 to "
-                         "Stage 3 (asserted in load_chosen_stage3); smoothing "
-                         "reassigns weekdays, not their count.")
+                 caveats=f"Frequencies are the {D.GRID_PLAN_LABEL[PLAN]}'s, "
+                         f"counted straight off the grid's schedule indices "
+                         f"(gated against _tab_chosen_v2.csv). They are NOT "
+                         f"the routing plan's: v6's stage 2 is frequency-free "
+                         f"at theta > 0 and moves the delivery frequency of "
+                         f"{_freq_moved(sched):.1f} % of cell choices "
+                         f"(compendium 40.14), so the two plans give "
+                         f"different mixes and the plan has to be stated.")
 
 
 

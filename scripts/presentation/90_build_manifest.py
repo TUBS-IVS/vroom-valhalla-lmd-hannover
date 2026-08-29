@@ -216,11 +216,15 @@ def _deck_provenance() -> list[str]:
             size = f"{f.stat().st_size:,}".replace(",", " ")
             L.append(f"| `{rel_name}` | {size} | `{_md5(f)}` |")
     L.append("")
-    L.append("Pinned to the submission grid on purpose, whatever `PRES_REV_DIR` "
-             "says: `load_alpha_sensitivity()`, `load_cd_restart_spread()`, "
-             "`load_per_plz()` and the VROOM-validation loaders. None of those "
-             "analyses was re-run for the revision, and the revision's own "
-             "validation is a different schema still being produced.")
+    L.append("Pinned to the submission grid on purpose, whatever "
+             "`PRES_REV_DIR` says: `load_alpha_sensitivity()` and "
+             "`load_cd_restart_spread()` — neither analysis was re-run for "
+             "the revision. The VROOM validation follows its own setting "
+             "(`_data.VAL_GRID_NAME`, currently "
+             f"`{D.VAL.parent.name}`) because a validation run lags the grid "
+             "it validates; it is refused unless it carries queue items "
+             f"{list(D.VAL_REQUIRED_ITEMS)}. Everything else, including "
+             "`load_chosen_stage3()` and `load_per_plz()`, follows `REV`.")
     L.append("")
     return L
 
@@ -314,17 +318,35 @@ def main():
     L.append("")
     L.append("| Check | Where | Guards against |")
     L.append("|---|---|---|")
-    L.append("| Per-area cost sums to the provider Stage-3 total | "
+    L.append("| Per-area cost sums to the provider plan total | "
              "`00_recompute_per_plz_costs.py` gate A | a per-area "
              "decomposition that silently drops or double-counts cost |")
-    L.append("| Per-area baseline sums to the pinned 1 909 747.75 € | "
-             "gate B | a baseline reference drifting from the paper's |")
+    L.append("| Per-area baseline sums to the grid's own pinned daily "
+             "reference | gate B | a baseline reference drifting between "
+             "grids, which would restate every saving |")
+    L.append("| own + pool share + express share == cell cost | gate C | an "
+             "attribution that does not add up to the price it splits |")
     L.append("| Express component is exactly 0 at θ = 1 | "
              "`00_recompute` premise check | mixing hub-bundled express into "
              "per-area figures |")
-    L.append("| `schedule_size_init == schedule_size_system_smoothed` | "
-             "`_data.load_chosen_stage3()` | mislabelling every frequency map "
-             "if smoothing ever changed frequencies |")
+    L.append("| Frequency mix reproduces `_tab_chosen_v2.csv` | "
+             "`fig35._gate_mix` | plotting some other plan's or some other "
+             "run's schedule choice under this grid's caption |")
+    L.append("| Per-area frequency, wait and saving reproduce "
+             "`76_maps_v2.py`'s tables | `fig41`/`fig44`/`fig71` gates | the "
+             "deck's maps drifting from the paper's supplement |")
+    L.append("| Validation carries queue items 0–3 | "
+             "`_data.require_validation_items()` | a saving stated against a "
+             "baseline nobody solved |")
+    L.append("| A sampled validation item forms no percentage | "
+             "`_data.validation_sampled_items()` | reading a system saving "
+             "off a stratified subset of the instances |")
+    L.append("| `schedule_size_init == schedule_size_system_smoothed` "
+             "(legacy grids only) | `_data.load_chosen_stage3()` | "
+             "mislabelling every frequency map if smoothing ever changed "
+             "frequencies. NOT asserted on a v2 grid: its stage 2 is "
+             "frequency-free at θ > 0 (compendium 40.14) and the loader "
+             "reports the share it moves instead |")
     L.append("| Observed delivery frequencies ⊆ {2,…,6} | "
              "`_data.load_chosen_stage3()` | inventing a 1 day/wk class that "
              "`MAX_HOLDING_DAYS = 3` forbids |")

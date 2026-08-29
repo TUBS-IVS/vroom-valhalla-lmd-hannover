@@ -1,8 +1,17 @@
-"""Act 7 -- where consolidation pays off, per area. Stage-3 basis, theta = 1.
+"""Act 7 -- where consolidation pays off, per area. theta = 1.
 
-Built on tab_per_plz_costs_theta1.csv from 00_recompute_per_plz_costs.py: the
-Stage-3 direct-delivery cost and the daily-delivery reference cost for every
-model unit, reconciled cell by cell against the provider aggregates.
+Built on `00_recompute_per_plz_costs.py`'s per-area table: the chosen plan's
+cost and the daily-delivery reference cost for every model unit, reconciled
+cell by cell against the provider aggregates by that script's own gates.
+
+On a v2 grid that table comes from 72_'s `tab_per_cell_costs_v2.csv` and a
+euro is the cell's full ROUTING cost under the realistic-tour rule -- its own
+tour plus its parcel-proportional share of every pooled tour it rides on --
+at the OPERATOR-polished plan (compendium 40.23b, the same plan and lens
+`scripts/revision/76_maps_v2.py` draws the paper's spatial supplement on).
+The operator lens is not offered per area: it is hub-, not cell-attributable.
+`_gate_system()` below checks the euro-weighted system saving of every
+penalty against the grid's own table before any figure is drawn.
 
 Figures
   fig71_map_saving        saving per area, panels over the service penalty
@@ -14,10 +23,10 @@ Figures
   fig77_drivers           which structural features explain the saving
 
 One trap this act has to keep straight. The unweighted mean saving *per area*
-(26.7% at P=0) is not the system saving (22.8%): small peripheral units save
-proportionally far more than the dense units that carry most of the parcels.
-Every distribution here is labelled per-area, and every total is computed from
-absolute euros, never by averaging percentages.
+is not the system saving: small peripheral units save proportionally far more
+than the dense units that carry most of the parcels. Every distribution here
+is labelled per-area, and every total is computed from absolute euros, never
+by averaging percentages.
 """
 from __future__ import annotations
 
@@ -36,8 +45,10 @@ import _plots as P
 import _style as S
 
 ACT = "7 - Where it pays off"
-BASIS = ("Stage-3 per-PLZ direct-delivery cost vs daily-delivery reference, "
-         "theta=1 (express component is exactly 0 there)")
+PLAN = D.CHOSEN_PLAN_DEFAULT
+BASIS = (f"{D.plan_stamp(PLAN)}: per-area cost against that grid's own "
+         f"daily-delivery reference, routing lens, theta=1 (the express "
+         f"component is exactly 0 there, so the decomposition is exact)")
 
 P_REF = 0.25
 P_PANELS = [0.0, 0.25, 0.5, 0.75, 1.0, 2.0]
@@ -45,10 +56,53 @@ RT_ORDER = ["urban", "suburban", "rural"]
 RT_COLOR = D.RT_COLOR   # paper fig 6 settlement palette, via _data
 
 
+_GATED = []
+
+
 def _load():
-    d = D.add_raumtyp(D.load_per_plz())
+    d = D.add_raumtyp(D.load_per_plz(PLAN))
     assert d.raumtyp_3.notna().all(), "settlement type missing for some areas"
+    if not _GATED:
+        _gate_system(d)
+        _GATED.append(True)
     return d
+
+
+def _gate_system(d) -> None:
+    """The euro-weighted system saving must be the grid's, per penalty.
+
+    This is the one number every panel title on fig71 and every line on fig75
+    is built from, and it is the number a wrong plan or a wrong grid moves
+    first: v6's routing-optimal plan saves 22.6 % at P = 0 where its
+    operator-polished plan saves 20.0 %, and both look entirely plausible on
+    a map. So the whole series is checked against
+    `tables/tab_map_saving_P_v2.csv`, which 76_maps_v2.py derives
+    independently from the same grid for the paper's supplement.
+    """
+    got = _system_saving(d).set_index("penalty").saving_pct
+    ref_path = D.REV / "tables" / "tab_map_saving_P_v2.csv"
+    if D.SCHEMA != D.SCHEMA_V2 or PLAN != D.PLAN_BALANCED:
+        print(f"  [gate] {ref_path.name} covers the operator plan of a v2 "
+              f"grid only; system saving not cross-checked")
+        return
+    if not ref_path.exists():
+        raise FileNotFoundError(
+            f"{ref_path} is missing; run scripts/revision/76_maps_v2.py so "
+            f"this act's system savings can be checked against the paper's "
+            f"own version")
+    ref = pd.read_csv(ref_path)
+    D.prov.record(ref_path)
+    want = (ref.groupby("penalty").system_saving_pct.first())
+    common = sorted(set(want.index) & set(got.index))
+    assert common, "no penalty is present in both tables"
+    for pen in common:
+        assert abs(got[pen] - want[pen]) < 1e-6, (
+            f"system saving at P={pen:g} is {got[pen]:.4f} % here and "
+            f"{want[pen]:.4f} % in {ref_path.name} -- one of the two is on "
+            f"the wrong plan or the wrong grid")
+    print(f"  [gate] system saving at P="
+          + ", ".join(f"{pen:g}: {got[pen]:.1f}%" for pen in common)
+          + f" reproduces {ref_path.name} ({D.GRID_PLAN_LABEL[PLAN]})")
 
 
 def _system_saving(d: pd.DataFrame) -> pd.DataFrame:
@@ -348,9 +402,18 @@ def fig75_breakeven():
         ax.axhline(0, color="#888888", linewidth=1)
         ax.grid(alpha=0.25)
         ax.legend(framealpha=0.9)
+        # Which penalty flattens the curve is a measured property of the
+        # grid, not a constant: on v6's operator plan a small saving
+        # survives past P = 5, so the sentence is built from the data.
+        flat = per[per.saving_pct < 1.0].groupby("raumtyp_3").penalty.min()
+        flat_p = float(flat.max()) if len(flat) == len(RT_ORDER) else None
         P.footnote(fig, "Euro-weighted saving within each settlement type. "
-                        "Every type is driven to zero saving by P = 5 €/p/d: "
-                        "above that the penalty exceeds any routing gain.",
+                        + (f"Every type is below one percent from "
+                           f"P = {flat_p:g} €/p/d upward: above that the "
+                           f"penalty absorbs essentially the whole routing "
+                           f"gain." if flat_p is not None else
+                           "No penalty in this grid drives every settlement "
+                           "type below one percent."),
                    style)
         fig.tight_layout(rect=[0, 0.05, 1, 1])
         S.save(fig, "fig75_breakeven", style, S.TIER_A)
@@ -359,7 +422,7 @@ def fig75_breakeven():
     D.prov.write("fig75_breakeven", title="Saving against the service penalty",
                  tier=S.TIER_A, act=ACT, basis=BASIS,
                  claim="Consolidation collapses at a finite penalty: saving "
-                       "reaches zero at P = "
+                       "first falls below 0.05 % at P = "
                        + ", ".join(f"{rt} {zero.get(rt, float('nan')):g}"
                                    for rt in RT_ORDER)
                        + " €/parcel/day, so the policy question is where the "
