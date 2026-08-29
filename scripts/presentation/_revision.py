@@ -801,3 +801,427 @@ def bulge_notes(f: Facts) -> str:
 
 
 BULGE_NOTES = None     # superseded by bulge_notes(f)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Task 20: the temporal-flexibility and express-cost facts of grid v6
+# ═══════════════════════════════════════════════════════════════════════════
+# `Facts` above answers "what does the revision claim". The flexibility deck
+# (`98_deck_v6_flexibility.py`) asks two further questions the existing loaders
+# do not cover:
+#
+#   what does the customer concede -- delayed parcels, waiting days, delivery
+#   days per week -- and what does the operator get for it (peak fleet, vehicle
+#   days, cost); and
+#
+#   what does the express pooled tour cost, against a regular delivery tour,
+#   over the adoption share.
+#
+# Both come from the tables 75_/77_/78_ wrote, which no deck read before. Every
+# value here is read from those tables and cross-checked against the compendium
+# section that records it; a grid whose numbers moved fails the build rather
+# than silently restating a slide.
+FLEX_EXPECT = {
+    # 40.20 (express prices at P = 0.25), 40.21 (headline), 40.22b (fleet),
+    # 40.28 (kilometres).
+    "express_eur_per_vd_lo": 339.0,      # theta = 0.1
+    "express_eur_per_vd_hi": 519.0,      # theta = 0.9
+    "regular_eur_per_vd": 298.0,
+    "express_share_08": 9.6,
+    "express_share_09": 7.4,
+    "peaks_P0": (1239, 1666, 1030),      # baseline, routing plan, operator plan
+    "peaks_P025": (1239, 1314, 1026),
+    "saturday_P025": (781, 944),         # baseline, operator plan
+    "freq_changed": 5525,
+    "cell_rows": 27456,
+    "total_parcels": 1263130,
+    "co2_baseline_km": 305310,
+    "co2_operator_P0_km": 224782,
+}
+
+# What VROOM found, as the compendium records it (40.24 clean basis, 40.25).
+VROOM_EXPECT_V6 = {
+    "baseline_gap_routing": 4.385,
+    "baseline_gap_operator": 4.047,
+    "realised_routing_plan_P0": 20.58,     # routing lens
+    "realised_operator_plan_P0": 22.08,    # operator lens
+    "realised_routing_plan_P0_oplens": -12.09,
+}
+
+VROOM_OK_STATUS = ("OK", "CACHED")
+
+
+def _flex_table(stem: str):
+    """A `tables/<stem>.csv` of the grid in use, read through the adapter."""
+    return D._read(D.REV / "tables" / f"{stem}.csv")
+
+
+def clean_vroom(df):
+    """The rows a realised number may be computed from.
+
+    A solve that left jobs unassigned or had jobs removed prices a different
+    problem than the one the surrogate was asked about, so it cannot enter a
+    predicted-against-actual comparison. This is the basis 40.24's addendum I1
+    calls "clean", and it is what the paper prints.
+    """
+    return df[(df.n_unassigned == 0) & (df.jobs_removed == 0)
+              & (df.vroom_status.isin(VROOM_OK_STATUS))]
+
+
+def lens_totals(df, prefix: str, *, fixed_eur: float = None) -> dict:
+    """Routing euro, operator euro and peak fleet of one solved point.
+
+    `prefix` is "predicted_" or "vroom_". The operator euro is rebuilt the way
+    the grid builds it -- variable cost plus six days of fixed cost for every
+    vehicle a hub must keep -- so a validation row and a grid row mean the same
+    thing. The peak is the sum over hubs of that hub's busiest day.
+    """
+    fixed_eur = D.FIXED_COST_EUR if fixed_eur is None else fixed_eur
+    cost = float(df[f"{prefix}cost_eur"].sum())
+    routes = float(df[f"{prefix}n_routes"].sum())
+    per_day = (df.groupby(["hub_name", "day"])[f"{prefix}n_routes"]
+               .sum().reset_index())
+    peak = float(per_day.groupby("hub_name")[f"{prefix}n_routes"].max().sum())
+    variable = cost - fixed_eur * routes
+    return dict(routing=cost, operator=variable + 6.0 * fixed_eur * peak,
+                peak=peak, variable=variable, routes=routes)
+
+
+@dataclass
+class Vroom:
+    """What the v6 VROOM validation supports, on the clean basis.
+
+    Constructed from the validation directory `_data.VAL` points at, which the
+    deck sets explicitly -- the module default still names the v5 run, because
+    the other decks were audited against it.
+    """
+
+    grid: str
+    baseline: dict = field(default_factory=dict)     # routing/operator, pred+act
+    points: list = field(default_factory=list)       # one dict per solved point
+    subset_points: list = field(default_factory=list)
+    by_kind: list = field(default_factory=list)
+
+    @classmethod
+    def load(cls) -> "Vroom":
+        df = clean_vroom(D.load_vroom_v2())
+        base = df[df.item == 0]
+        if not len(base):
+            raise SystemExit(
+                f"{D.VAL} has no item-0 rows: without a solved theta = 0 "
+                f"baseline there is no realised saving to put on a slide. "
+                f"Point --val-dir at the v6 validation.")
+        bp = lens_totals(base, "predicted_")
+        ba = lens_totals(base, "vroom_")
+        v = cls(grid=D.VAL.parent.name,
+                baseline=dict(pred=bp, actual=ba, n=int(len(base)),
+                              gap_routing=(bp["routing"] / ba["routing"] - 1)
+                              * 100.0,
+                              gap_operator=(bp["operator"] / ba["operator"] - 1)
+                              * 100.0))
+        for (item, plan, P, th), g in df[df.item != 0].groupby(
+                ["item", "plan", "penalty", "share_willing"]):
+            p, a = lens_totals(g, "predicted_"), lens_totals(g, "vroom_")
+            row = dict(
+                item=int(item), plan=str(plan), penalty=float(P),
+                share_willing=float(th), n=int(len(g)),
+                gap_routing=(p["routing"] / a["routing"] - 1) * 100.0,
+                gap_operator=(p["operator"] / a["operator"] - 1) * 100.0,
+                peak_pred=p["peak"], peak_actual=a["peak"],
+                # a realised saving needs the SAME population on both sides,
+                # so a subset item is kept apart (40.27's report defect).
+                #
+                # `pred_*` is the surrogate's saving over THIS point's clean
+                # population, which is what `gap_*` has to be formed against.
+                # It is NOT the predicted saving a slide should print: dropping
+                # one partial instance from item 2 at P = 0 moves it from the
+                # grid's 22.64 % to 23.29 %, and a slide showing that beside
+                # the grid figure would contradict itself. Print
+                # `Facts.headline[...]` for prediction and `act_*` for reality,
+                # which is the pairing 40.25 records.
+                pred_routing=(1 - p["routing"] / bp["routing"]) * 100.0,
+                act_routing=(1 - a["routing"] / ba["routing"]) * 100.0,
+                pred_operator=(1 - p["operator"] / bp["operator"]) * 100.0,
+                act_operator=(1 - a["operator"] / ba["operator"]) * 100.0,
+                subset=float(th) < 1.0)
+            (v.subset_points if row["subset"] else v.points).append(row)
+        v.points.sort(key=lambda r: (r["plan"], r["penalty"]))
+        v._load_by_kind(df)
+        v._check()
+        return v
+
+    def _load_by_kind(self, df) -> None:
+        """MAPE and bias per instance kind at the theta < 1 point (40.27)."""
+        sub = df[df.item == 3]
+        if not len(sub):
+            return
+        for kind, g in sub.groupby("instance_kind"):
+            err = (g.predicted_cost_eur - g.vroom_cost_eur) / g.vroom_cost_eur
+            self.by_kind.append(dict(
+                kind=str(kind), n=int(len(g)),
+                mape=float(np.abs(err).mean() * 100.0),
+                bias=float(err.mean() * 100.0),
+                pred=float(g.predicted_cost_eur.sum()),
+                actual=float(g.vroom_cost_eur.sum())))
+        self.by_kind.sort(key=lambda r: -r["bias"])
+
+    def _check(self) -> None:
+        e = VROOM_EXPECT_V6
+        assert abs(self.baseline["gap_routing"] - e["baseline_gap_routing"]) \
+            < 0.02, (f"40.25 records a +{e['baseline_gap_routing']} % routing "
+                     f"gap at the daily baseline; this validation says "
+                     f"{self.baseline['gap_routing']:.3f} %")
+        assert abs(self.baseline["gap_operator"] - e["baseline_gap_operator"]) \
+            < 0.02, (f"40.25 records +{e['baseline_gap_operator']} % on the "
+                     f"operator lens; this says "
+                     f"{self.baseline['gap_operator']:.3f} %")
+        r = self.point("stage1", 0.0)
+        assert abs(r["act_routing"] - e["realised_routing_plan_P0"]) < 0.05, (
+            f"40.25 records a realised {e['realised_routing_plan_P0']} % for "
+            f"the routing plan at P = 0; this says {r['act_routing']:.2f} %")
+        assert abs(r["act_operator"] - e["realised_routing_plan_P0_oplens"]) \
+            < 0.05, (
+            f"40.25 records {e['realised_routing_plan_P0_oplens']} % for the "
+            f"routing plan in the operator lens; this says "
+            f"{r['act_operator']:.2f} %")
+        b = self.point("balanced", 0.0)
+        assert abs(b["act_operator"] - e["realised_operator_plan_P0"]) < 0.05, (
+            f"40.25 records a realised {e['realised_operator_plan_P0']} % for "
+            f"the operator plan; this says {b['act_operator']:.2f} %")
+
+    def point(self, plan: str, penalty: float) -> dict:
+        for r in self.points:
+            if r["plan"] == plan and abs(r["penalty"] - penalty) < 1e-9:
+                return r
+        raise KeyError(f"no validated point {plan} at P = {penalty:g}")
+
+    def gap_range(self, lens: str = "routing") -> tuple:
+        g = [r[f"gap_{lens}"] for r in self.points]
+        return min(g), max(g)
+
+    def n_solved(self) -> int:
+        return (self.baseline["n"]
+                + sum(r["n"] for r in self.points + self.subset_points))
+
+
+@dataclass
+class Flex:
+    """Temporal flexibility and express cost, read off grid v6.
+
+    One object per build. Everything a slide of the flexibility deck prints
+    comes from here, so the slide bodies stay pure formatting and a moved grid
+    number fails an assert instead of quietly contradicting the figure beside
+    it.
+    """
+
+    mech: object = None           # tab_mechanism_theta_P_v2
+    week: object = None           # tab_fleet_week_by_provider_v2
+    classes: object = None        # tab_fleet_week_classes_v2
+    co2: object = None            # tab_co2_km_v2
+    head_kind: object = None      # tab_head_usage_summary_kind_v2
+    total_parcels: int = 0
+    regular_eur_per_vd: float = 0.0
+    freq_changed: int = 0
+    cell_rows: int = 0
+
+    SYSTEM = "All seven LSPs"
+
+    @classmethod
+    def load(cls) -> "Flex":
+        f = cls(mech=_flex_table("tab_mechanism_theta_P_v2"),
+                week=_flex_table("tab_fleet_week_by_provider_v2"),
+                classes=_flex_table("tab_fleet_week_classes_v2"),
+                co2=_flex_table("tab_co2_km_v2"),
+                head_kind=_flex_table("tab_head_usage_summary_kind_v2"))
+        w = D.load_wait_v2()
+        base = w[np.isclose(w.penalty, 0.0) & np.isclose(w.share_willing, 0.0)]
+        f.total_parcels = int(base.total_parcels.sum())
+        c = D.load_costs_v2()
+        fl = D.load_fleet_v2()
+        cb = c[np.isclose(c.penalty, 0.0) & np.isclose(c.share_willing, 0.0)]
+        fb = fl[np.isclose(fl.penalty, 0.0) & np.isclose(fl.share_willing, 0.0)]
+        # what one ORDINARY delivery vehicle-day costs, so the express price
+        # below has something to be expensive against (40.20)
+        f.regular_eur_per_vd = float(cb.cost_stage1_eur.sum() / fb.fleet.sum())
+        f.freq_changed = int(c.cells_freq_changed_vs_stage1.sum())
+        f.cell_rows = int(len(D.load_chosen_v2()))
+        f._check()
+        return f
+
+    def _check(self) -> None:
+        e = FLEX_EXPECT
+        assert self.total_parcels == e["total_parcels"], (
+            f"the case study moves {e['total_parcels']} parcels a week; this "
+            f"grid says {self.total_parcels}")
+        assert abs(self.regular_eur_per_vd - e["regular_eur_per_vd"]) < 1.0, (
+            f"40.20 puts a regular delivery tour at about "
+            f"{e['regular_eur_per_vd']} EUR per vehicle-day; this grid says "
+            f"{self.regular_eur_per_vd:.2f}")
+        lo, hi = self.express_price_band(0.25)
+        assert abs(lo - e["express_eur_per_vd_lo"]) < 1.5 and \
+            abs(hi - e["express_eur_per_vd_hi"]) < 1.5, (
+            f"40.20 puts the express tour at {e['express_eur_per_vd_lo']}-"
+            f"{e['express_eur_per_vd_hi']} EUR per vehicle-day at P = 0.25; "
+            f"this grid says {lo:.0f}-{hi:.0f}")
+        s8, s9 = (self.express_share(0.25, 0.8), self.express_share(0.25, 0.9))
+        assert abs(s8 - e["express_share_08"]) < 0.1 and \
+            abs(s9 - e["express_share_09"]) < 0.1, (
+            f"40.20 records an express cost share of {e['express_share_08']} "
+            f"-> {e['express_share_09']} % between theta = 0.8 and 0.9; this "
+            f"grid says {s8:.1f} -> {s9:.1f}")
+        for P, want in ((0.0, e["peaks_P0"]), (0.25, e["peaks_P025"])):
+            got = self.peaks(P)[self.SYSTEM]
+            assert got == want, (
+                f"40.22b records system hub peaks {want} at P = {P:g}; the "
+                f"fleet-week table says {got}")
+        assert self.saturday(0.25) == e["saturday_P025"], (
+            f"40.22b records Saturday going from {e['saturday_P025'][0]} to "
+            f"{e['saturday_P025'][1]} vehicles at P = 0.25; this grid says "
+            f"{self.saturday(0.25)}")
+        assert (self.freq_changed, self.cell_rows) == (e["freq_changed"],
+                                                       e["cell_rows"]), (
+            f"the operator polish was measured changing {e['freq_changed']} "
+            f"of {e['cell_rows']} cell rows' FREQUENCY; this grid says "
+            f"{self.freq_changed} of {self.cell_rows}")
+        km = self.km_co2()
+        assert abs(km["baseline"][0] - e["co2_baseline_km"]) < 50 and \
+            abs(km["operator"][0.0][0] - e["co2_operator_P0_km"]) < 50, (
+            f"40.28 records {e['co2_baseline_km']} baseline km and "
+            f"{e['co2_operator_P0_km']} at P = 0; this grid says "
+            f"{km['baseline'][0]:.0f} / {km['operator'][0.0][0]:.0f}")
+
+    # ---- what the customer concedes --------------------------------------
+    def delayed(self, facts: "Facts", penalty: float) -> dict:
+        """Delayed parcels, their share, and the wait a delayed parcel takes.
+
+        The grid reports the mean added wait over ALL parcels; a customer who
+        is actually held waits longer than that, and the ratio of the two is
+        the honest way to say so. Both inputs are table values; the ratio is
+        derived, and every slide that prints it says so.
+        """
+        d = facts.discount[penalty]
+        h = facts.headline[penalty]
+        share = d["delayed"] / self.total_parcels
+        return dict(parcels=d["delayed"], share_pct=share * 100.0,
+                    wait_all=h["wait2"],
+                    wait_delayed=h["wait2"] / share if share else 0.0,
+                    days=h["days2"], days_plan1=h["days1"])
+
+    # ---- the express tour ------------------------------------------------
+    def express_row(self, penalty: float, share_willing: float):
+        m = self.mech
+        r = m[np.isclose(m.penalty, penalty)
+              & np.isclose(m.share_willing, share_willing)]
+        if not len(r):
+            raise KeyError(f"no mechanism row at ({penalty:g}, "
+                           f"{share_willing:g})")
+        return r.iloc[0]
+
+    def express_price_band(self, penalty: float) -> tuple:
+        """Express euro per vehicle-day at theta = 0.1 and 0.9."""
+        return (float(self.express_row(penalty, 0.1).express_eur_per_vd),
+                float(self.express_row(penalty, 0.9).express_eur_per_vd))
+
+    def express_share(self, penalty: float, share_willing: float) -> float:
+        return float(self.express_row(penalty, share_willing).express_share_pct)
+
+    def express_peak_share(self, penalty: float) -> tuple:
+        """(theta, share) where the express cost share is highest."""
+        m = self.mech[np.isclose(self.mech.penalty, penalty)
+                      & (self.mech.share_willing < 1.0)]
+        r = m.loc[m.express_share_pct.idxmax()]
+        return float(r.share_willing), float(r.express_share_pct)
+
+    def express_curve(self, penalty: float) -> list:
+        """(theta, eur/vehicle-day, cost share %, vehicle-days) over theta."""
+        m = self.mech[np.isclose(self.mech.penalty, penalty)
+                      & (self.mech.share_willing > 0)]
+        return [(float(r.share_willing), float(r.express_eur_per_vd),
+                 float(r.express_share_pct), float(r.express_veh_days))
+                for r in m.itertuples()]
+
+    def days_curve(self, penalty: float, plan: str = "plan2") -> list:
+        """(theta, mean weekly delivery days) for one plan."""
+        m = self.mech[np.isclose(self.mech.penalty, penalty)]
+        col = f"mean_days_{plan}"
+        return [(float(r.share_willing), float(getattr(r, col)))
+                for r in m.itertuples()]
+
+    def days_rebound(self, penalty: float, plan: str = "plan2") -> tuple:
+        """The theta = 0.8 -> 0.9 rebound: the curve turning back upwards."""
+        d = dict(self.days_curve(penalty, plan))
+        return d[0.8], d[0.9]
+
+    # ---- what the operator gains -----------------------------------------
+    def peaks(self, penalty: float) -> dict:
+        """{provider: (baseline, routing plan, operator plan)} peak fleet."""
+        w = self.week[np.isclose(self.week.penalty, penalty)]
+        out = {}
+        for prov, g in w.groupby("provider", sort=False):
+            r = g.iloc[0]
+            out[str(prov)] = (int(r.peak_baseline), int(r.peak_plan1),
+                              int(r.peak_plan2))
+        return out
+
+    def system_week(self, penalty: float) -> dict:
+        """Weekday vehicle counts of the whole system, per plan."""
+        w = self.week[np.isclose(self.week.penalty, penalty)
+                      & (self.week.provider == self.SYSTEM)].sort_values("day")
+        return dict(days=[str(x) for x in w.weekday],
+                    baseline=[int(x) for x in w.baseline],
+                    plan1=[int(x) for x in w.plan1],
+                    plan2=[int(x) for x in w.plan2])
+
+    def vehicle_days(self, penalty: float) -> dict:
+        """Weekly vehicle-days of the system, and their change vs baseline."""
+        s = self.system_week(penalty)
+        b = sum(s["baseline"])
+        return dict(baseline=b, plan1=sum(s["plan1"]), plan2=sum(s["plan2"]),
+                    plan1_pct=(sum(s["plan1"]) / b - 1) * 100.0,
+                    plan2_pct=(sum(s["plan2"]) / b - 1) * 100.0)
+
+    def saturday(self, penalty: float) -> tuple:
+        s = self.system_week(penalty)
+        i = s["days"].index("Sat")
+        return s["baseline"][i], s["plan2"][i]
+
+    def cv(self, penalty: float, group: str = None) -> dict:
+        """Mo-Sa coefficient of variation per plan, one class or the system."""
+        group = group or self.SYSTEM
+        c = self.classes[np.isclose(self.classes.penalty, penalty)
+                         & (self.classes.group == group)]
+        return {str(r.plan): float(r.cv) for r in c.itertuples()}
+
+    def class_rows(self, penalty: float) -> list:
+        """Per carrier class: peak fleet and CV of baseline and both plans."""
+        c = self.classes[np.isclose(self.classes.penalty, penalty)]
+        out = []
+        for grp, g in c.groupby("group", sort=False):
+            by = {str(r.plan): r for r in g.itertuples()}
+            out.append(dict(
+                group=str(grp),
+                peaks=(int(by["baseline"].sum_hub_peak),
+                       int(by["plan1_routing_optimal"].sum_hub_peak),
+                       int(by["plan2_operator_polished"].sum_hub_peak)),
+                cv=(float(by["baseline"].cv),
+                    float(by["plan1_routing_optimal"].cv),
+                    float(by["plan2_operator_polished"].cv))))
+        return out
+
+    def km_co2(self) -> dict:
+        """Weekly vehicle-km and tonnes of CO2, baseline and both plans."""
+        c = self.co2[~self.co2.is_g6_subset.astype(bool)]
+        base = c[(c.plan == "stage1") & np.isclose(c.share_willing, 0.0)].iloc[0]
+        out = dict(baseline=(float(base.km_week), float(base.co2_t_week)),
+                   operator={}, routing={})
+        for r in c[np.isclose(c.share_willing, 1.0)].itertuples():
+            key = "operator" if r.plan == "balanced" else "routing"
+            out[key][float(r.penalty)] = (
+                float(r.km_week), float(r.co2_t_week),
+                (float(r.km_week) / float(base.km_week) - 1) * 100.0)
+        return out
+
+    def head_share(self) -> dict:
+        """What fraction of the pooled cost the certified bundle head priced."""
+        return {str(r.kind): float(r.head_cost_share)
+                for r in self.head_kind.itertuples()}
