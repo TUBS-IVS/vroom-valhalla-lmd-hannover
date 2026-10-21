@@ -16,6 +16,7 @@ from batch_delivery.features.core import (  # noqa: F401
     compute_tier1_features,
     compute_tier2_features,
     compute_tier3_features,
+    provider_index,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "compute_tier1_features",
     "compute_tier2_features",
     "compute_tier3_features",
+    "provider_index",
 ]

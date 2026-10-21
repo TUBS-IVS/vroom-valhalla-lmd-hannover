@@ -8,11 +8,44 @@ then derives:
                    fig_S3 break-even map (demand x area -> optimal schedule size)
                    tab_sensitivity_full.csv
   04_model/        fig_M5 lgb_feature_importance (new model)
+
+DEPRECATED (2026-08 revision). Stale entry point: it recomputes totals
+WITHOUT the pool term and predates the universal tour rule, the two cost
+lenses and the operator polish, so its numbers are not comparable with the
+current results. Use scripts/revision/61_grid_run_v2.py for the grid and
+scripts/revision/70_figs_tables_v2.py for figures and tables.
+
+Status D (Task 19): the sensitivity/interpretation math here is a per-schedule
+cost-vs-size analysis of the unchanged production surrogate
+(daganzo_hybrid_v3aug_median.pkl, alpha=1.343) on unchanged structural
+features -- no grid/bundling dependency at all, so it is re-run as-is.
+``--pool-dir``/``--out-dir`` default to the historical (now-moved) paths.
+The pool import (``train_daganzo_hybrid``) and the schedule-cost helper
+(``penalty_sweep_pareto``) both moved during the 2026-05-31 refactor -- to
+``scripts/revision/_stage3_common.py`` and ``scripts/_archive/`` respectively
+-- so those import paths are fixed here too (same class, same pool; not a
+behaviour change).
 """
 from __future__ import annotations
+import argparse
 import pickle, sys, warnings
 from itertools import combinations
 from pathlib import Path
+
+
+# --- DEPRECATED ENTRY POINT (2026-08 revision) -----------------------------
+import warnings as _deprecation_warnings
+
+_deprecation_warnings.warn(
+    "paper_final_sensitivity.py is a STALE entry point: it recomputes totals WITHOUT the pool "
+    "term and predates the universal tour rule, the two cost lenses and the "
+    "operator polish. Its numbers are NOT comparable with the 2026-08 "
+    "revision. Use scripts/revision/61_grid_run_v2.py for the grid and "
+    "scripts/revision/70_figs_tables_v2.py for figures and tables.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+# ---------------------------------------------------------------------------
 
 warnings.filterwarnings("ignore")
 try:
@@ -30,7 +63,13 @@ from matplotlib import rcParams
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts" / "_archive"))
+sys.path.insert(0, str(ROOT / "scripts" / "revision"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _paper_v6_common as V6  # noqa: E402
+
 OUT = ROOT / "results" / "paper_final_2026_05_30"
+POOL_DIR = ROOT / "results" / "sweep_v3_mergefix"
 
 rcParams.update({
     "font.family": "serif", "font.size": 11,
@@ -57,10 +96,14 @@ def enum_sched():
 
 def lgb_feature_importance():
     """Extract gain-based feature importance from the new α=1.343 model."""
-    from train_daganzo_hybrid import DaganzoLGBHybrid, _LGBIdentityWrap
+    # train_daganzo_hybrid.py (the pre-refactor home of this class) was
+    # folded into scripts/pipeline/01_train_surrogate.py by the 2026-05-31
+    # refactor; _stage3_common.py carries the same class verbatim (see its
+    # own comment) so this import is a relocation, not a behaviour change.
+    from _stage3_common import _LGBIdentityWrap
     import __main__
     __main__._LGBIdentityWrap = _LGBIdentityWrap
-    with open(ROOT / "results/sweep_v3_mergefix/daganzo_hybrid_v3aug_median.pkl", "rb") as f:
+    with open(POOL_DIR / "daganzo_hybrid_v3aug_median.pkl", "rb") as f:
         d = pickle.load(f)
     combo_cols = d["combo_cols"]
     wrap = d["model"]
@@ -89,8 +132,12 @@ def lgb_feature_importance():
         ax.text(v + 0.3, i, f"{v:.1f}%", va="center", fontsize=8)
     ax.grid(axis="x", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(d_out / "fig_M5_lgb_feature_importance.png")
-    fig.savefig(d_out / "fig_M5_lgb_feature_importance.pdf")
+    V6.add_provenance_footer(
+        fig, plan="n/a (surrogate pool, no schedule plan)",
+        script="paper_final_sensitivity.py",
+        source=f"{POOL_DIR.name}/daganzo_hybrid_v3aug_median.pkl (D)")
+    V6.savefig_pair(fig, d_out / "fig_M5_lgb_feature_importance.png",
+                    d_out / "fig_M5_lgb_feature_importance.pdf")
     plt.close(fig)
     print("  [OK] M5: lgb_feature_importance (new model)")
     print(f"     Top-5: {imp.head(5).feature.tolist()}")
@@ -98,7 +145,24 @@ def lgb_feature_importance():
 
 def sensitivity():
     """Recompute full cost matrix with new model -> break-even sensitivity."""
-    from penalty_sweep_pareto import build_pp_list, compute_sched_cost, load_model, avg_wait_days
+    # build_pp_list/compute_sched_cost/avg_wait_days have no broken import of
+    # their own; only penalty_sweep_pareto's OWN load_model() does (same
+    # train_daganzo_hybrid relocation as lgb_feature_importance() above), so
+    # the model is loaded via _stage3_common.DaganzoLGBHybrid.load() instead
+    # -- compute_sched_cost only ever calls model.predict(df), so any object
+    # with that method is a drop-in substitute.
+    import penalty_sweep_pareto
+    from penalty_sweep_pareto import build_pp_list, compute_sched_cost, avg_wait_days
+    # penalty_sweep_pareto.py carries the SAME parents[1] ROOT-computation
+    # bug this module had (both scripts moved one level deeper -- into
+    # scripts/paper/ and scripts/_archive/ respectively -- in the 2026-05-31
+    # refactor without updating the parents[] index). Fixing it here, on the
+    # already-imported module object, repairs build_pp_list()'s CKPT read
+    # without editing a file outside this wave's scope.
+    penalty_sweep_pareto.ROOT = ROOT
+    from _stage3_common import DaganzoLGBHybrid, _LGBIdentityWrap
+    import __main__
+    __main__._LGBIdentityWrap = _LGBIdentityWrap
     from batch_delivery.io.demand import get_source_days
 
     schedules = enum_sched()
@@ -106,7 +170,7 @@ def sensitivity():
     sched_src = [{dd: get_source_days(dd, sorted(s)) for dd in sorted(s)} for s in schedules]
     pp_list = build_pp_list()
     print(f"  recomputing cost matrix: {len(pp_list)} cells x {len(schedules)} schedules (new model)")
-    model = load_model(ROOT / "results/sweep_v3_mergefix/daganzo_hybrid_v3aug_median.pkl")
+    model = DaganzoLGBHybrid.load(POOL_DIR / "daganzo_hybrid_v3aug_median.pkl")
     sched_cost = compute_sched_cost(model, pp_list, schedules, sched_src)
 
     # For each cell, cost per schedule SIZE (min cost among schedules of that size)
@@ -140,7 +204,12 @@ def sensitivity():
                   "Fewer delivery days = lower unit cost (batching economy)")
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(d / "fig_S1_cost_per_parcel.png"); fig.savefig(d / "fig_S1_cost_per_parcel.pdf")
+    V6.add_provenance_footer(
+        fig, plan="n/a (structural sensitivity, no schedule plan)",
+        script="paper_final_sensitivity.py",
+        source=f"{POOL_DIR.name}/daganzo_hybrid_v3aug_median.pkl (D) + "
+              "results/checkpoints")
+    V6.savefig_pair(fig, d / "fig_S1_cost_per_parcel.png", d / "fig_S1_cost_per_parcel.pdf")
     plt.close(fig)
     print("  [OK] S1: cost_per_parcel")
 
@@ -167,7 +236,11 @@ def sensitivity():
                   "Positive = each extra day costs more (less batching)")
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(d / "fig_S2_marginal_cost.png"); fig.savefig(d / "fig_S2_marginal_cost.pdf")
+    V6.add_provenance_footer(
+        fig, plan="n/a (structural sensitivity, no schedule plan)",
+        script="paper_final_sensitivity.py",
+        source=f"{POOL_DIR.name}/daganzo_hybrid_v3aug_median.pkl (D)")
+    V6.savefig_pair(fig, d / "fig_S2_marginal_cost.png", d / "fig_S2_marginal_cost.pdf")
     plt.close(fig)
     print("  [OK] S2: marginal_cost")
 
@@ -192,29 +265,41 @@ def sensitivity():
     ax.legend(title="Cheapest schedule", fontsize=9)
     ax.grid(alpha=0.3, which="both")
     fig.tight_layout()
-    fig.savefig(d / "fig_S3_breakeven_map.png"); fig.savefig(d / "fig_S3_breakeven_map.pdf")
+    V6.add_provenance_footer(
+        fig, plan="n/a (structural sensitivity, no schedule plan)",
+        script="paper_final_sensitivity.py",
+        source=f"{POOL_DIR.name}/daganzo_hybrid_v3aug_median.pkl (D) + "
+              "results/checkpoints")
+    V6.savefig_pair(fig, d / "fig_S3_breakeven_map.png", d / "fig_S3_breakeven_map.pdf")
     plt.close(fig)
     print("  [OK] S3: breakeven_map")
 
 
 def copy_input_descriptive():
-    """Copy raumtyp classification maps (data-descriptive, model-independent)."""
+    """Copy raumtyp classification maps (data-descriptive, model-independent).
+
+    The source moved from results/paper_maps_final_v2/ to
+    results/supplementary/paper_maps_final_v2/ in the 2026-05-31 refactor;
+    both are tried so this still works whichever layout is on disk. These
+    maps are pure geodata classification, unrelated to the grid/revision, so
+    there is nothing to adapt -- only the path moved.
+    """
     import shutil
     d = OUT / "01_input_data"
-    items = [
-        ("results/paper_maps_final_v2/fig_M05_raumtyp_3_classification.png",
-         "fig_I3_raumtyp_3_classification.png"),
-        ("results/paper_maps_final_v2/fig_M05_raumtyp_3_classification.pdf",
-         "fig_I3_raumtyp_3_classification.pdf"),
-        ("results/paper_maps_final_v2/fig_M06_raumtyp_8_classification.png",
-         "fig_I4_raumtyp_8_classification.png"),
-        ("results/paper_maps_final_v2/fig_M06_raumtyp_8_classification.pdf",
-         "fig_I4_raumtyp_8_classification.pdf"),
+    d.mkdir(parents=True, exist_ok=True)
+    stems = [
+        ("fig_M05_raumtyp_3_classification.png", "fig_I3_raumtyp_3_classification.png"),
+        ("fig_M05_raumtyp_3_classification.pdf", "fig_I3_raumtyp_3_classification.pdf"),
+        ("fig_M06_raumtyp_8_classification.png", "fig_I4_raumtyp_8_classification.png"),
+        ("fig_M06_raumtyp_8_classification.pdf", "fig_I4_raumtyp_8_classification.pdf"),
     ]
+    candidates = ["results/supplementary/paper_maps_final_v2",
+                  "results/paper_maps_final_v2"]
     n = 0
-    for src, dst in items:
-        sp = ROOT / src
-        if sp.exists():
+    for src_name, dst in stems:
+        sp = next((ROOT / c / src_name for c in candidates
+                  if (ROOT / c / src_name).exists()), None)
+        if sp is not None:
             shutil.copy2(sp, d / dst); n += 1
     print(f"  [OK] input-descriptive raumtyp maps: {n} files (data-intrinsic, model-independent)")
 
@@ -254,10 +339,35 @@ in the training pool).
 
 
 def main():
+    global OUT, POOL_DIR
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--pool-dir", default=None,
+                    help="dir holding daganzo_hybrid_v3aug_median.pkl "
+                         "(default: the historical, now-moved "
+                         "results/sweep_v3_mergefix; pass "
+                         "results/supplementary/sweep_v3_mergefix for the "
+                         "current pool location)")
+    ap.add_argument("--out-dir", default=None,
+                    help="output directory (default: historical "
+                         "results/paper_final_2026_05_30)")
+    args = ap.parse_args()
+    if args.pool_dir is not None:
+        POOL_DIR = Path(args.pool_dir)
+    if args.out_dir is not None:
+        OUT = Path(args.out_dir)
+    for sub in ("01_input_data", "04_model", "10_sensitivity"):
+        (OUT / sub).mkdir(parents=True, exist_ok=True)
+
     print("Regenerating sensitivity + interpretation on NEW α=1.343 model...")
+    print(f"Status D (Task 19): input unchanged -- pool={POOL_DIR}")
     lgb_feature_importance()
     copy_input_descriptive()
-    write_validation_note()
+    # write_validation_note() is skipped for the v6 regeneration: its static
+    # text ("VROOM validation: PENDING", "3.05% MAPE") describes the
+    # pre-revision pipeline state and would misrepresent v6, where
+    # scripts/revision/67_validate_vroom_v2.py has already run
+    # (results/revision_2026_08_v6/validation/tab_vroom_v2.csv). Documented
+    # as an omission in _STATUS.md rather than reproduced verbatim.
     sensitivity()
     print(f"\nDone. {sum(1 for _ in OUT.rglob('*') if _.is_file())} files in {OUT}")
 

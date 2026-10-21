@@ -19,8 +19,20 @@ Inputs:
   results/overnight_2026_05_27_balanced/tab_balancing_summary.csv
   results/overnight_2026_05_27_balanced/tab_chosen_schedules.csv
   results/overnight_2026_05_27_balanced/tab_fleet_per_hub.csv
+
+Status B (Task 19): fig01b/fig06b (schedule-mix/cost-heatmap) and FB3
+(cost-vs-imbalance) map onto 74_-legacy's tab_balancing_summary.csv /
+tab_chosen_schedules.csv directly. FB1 (system fleet-reduction heatmap) and
+FB4 (peak-fleet-per-provider bar) need max_fleet_before, which the legacy
+adapter leaves NaN (74_'s NO_SOURCE) -- reconstructed from v6-native
+tab_costs_v2.csv's sum_hub_peak_before/after via --rev-dir (see
+_paper_v6_common). FB2 (per-HUB-day fleet profile, before vs after) has NO
+v6 source at any grain -- v6 only ever computes a per-hub-day fleet at the
+FINAL plan -- so FB2 is E, documented, not produced.
 """
 from __future__ import annotations
+import argparse
+import sys
 import warnings
 from pathlib import Path
 
@@ -32,9 +44,16 @@ import numpy as np
 import pandas as pd
 from matplotlib import rcParams
 
-ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _paper_v6_common as V6  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[2]
 BAL = ROOT / "results" / "overnight_2026_05_27_balanced"
 OUT = BAL
+REV_DIR = None
+SCRIPT_NAME = "paper_plots_balanced.py"
+PLAN_NOTE = "operator-polished (balanced) vs stage-1 (before)"
+SRC_NOTE = "B: 74_-legacy tab_balancing_summary.csv/tab_chosen_schedules.csv"
 
 rcParams.update({
     "font.family": "serif", "font.size": 11,
@@ -55,7 +74,12 @@ OPERATING_SHARE = 1.0
 def load_data():
     summary = pd.read_csv(BAL / "tab_balancing_summary.csv")
     chosen = pd.read_csv(BAL / "tab_chosen_schedules.csv")
-    fleet = pd.read_csv(BAL / "tab_fleet_per_hub.csv")
+    fleet_path = BAL.parent / "rev" / "tab_fleet_per_hub_fixed.csv"
+    if fleet_path.exists():
+        fleet = pd.read_csv(fleet_path).rename(
+            columns={"fleet_old": "fleet_before", "fleet_fixed": "fleet_after"})
+    else:
+        fleet = pd.read_csv(BAL / "tab_fleet_per_hub.csv")
     return summary, chosen, fleet
 
 
@@ -89,8 +113,10 @@ def plot_balanced_heatmap(summary):
             ax.text(j, i, f"{v:.0f}", ha="center", va="center", color=color, fontsize=10)
     plt.colorbar(im, ax=ax, label="Weekly cost [k€]")
     fig.tight_layout()
-    fig.savefig(OUT / "fig01b_heatmap_balanced.png")
-    fig.savefig(OUT / "fig01b_heatmap_balanced.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script=SCRIPT_NAME, source=SRC_NOTE)
+    V6.savefig_pair(fig, OUT / "fig01b_heatmap_balanced.png",
+                    OUT / "fig01b_heatmap_balanced.pdf")
     plt.close(fig)
     print("  fig01b_heatmap_balanced")
 
@@ -128,17 +154,38 @@ def plot_mix_vs_share_per_P(chosen):
     fig.suptitle("Balanced delivery-frequency mix per service-penalty",
                   fontsize=13, y=1.02)
     fig.tight_layout()
-    fig.savefig(OUT / "fig06b_schedule_mix_vs_share_per_P_balanced.png")
-    fig.savefig(OUT / "fig06b_schedule_mix_vs_share_per_P_balanced.pdf")
+    V6.add_provenance_footer(fig, plan="operator-polished (balanced)",
+                             script=SCRIPT_NAME, source=SRC_NOTE)
+    V6.savefig_pair(fig, OUT / "fig06b_schedule_mix_vs_share_per_P_balanced.png",
+                    OUT / "fig06b_schedule_mix_vs_share_per_P_balanced.pdf")
     plt.close(fig)
     print("  fig06b_schedule_mix_vs_share_per_P_balanced")
 
 
 def plot_max_fleet_reduction(summary):
-    """Gap heatmap: (P × share) → max_fleet_before - max_fleet_after."""
-    agg = summary.groupby(["penalty", "share_willing"], as_index=False).agg(
-        max_fleet_before=("max_fleet_before", "sum"),
-        max_fleet_after=("max_fleet_after", "sum"))
+    """Gap heatmap: (P × share) → max_fleet_before - max_fleet_after.
+
+    max_fleet_before is NaN in the v6 legacy adapter (74_'s NO_SOURCE); the
+    (penalty, share_willing) SYSTEM aggregate (summed over providers, this
+    panel's own grain) is reconstructed from v6-native tab_costs_v2.csv's
+    sum_hub_peak_before/after via REV_DIR when set. Returns None (E, caller
+    skips the figure) when neither source is available.
+    """
+    try:
+        V6.assert_has_data(summary, "max_fleet_before", context="FB1 heatmap")
+        agg = summary.groupby(["penalty", "share_willing"], as_index=False).agg(
+            max_fleet_before=("max_fleet_before", "sum"),
+            max_fleet_after=("max_fleet_after", "sum"))
+        source = SRC_NOTE
+    except V6.NoV6Source as exc:
+        if REV_DIR is None:
+            print(f"  [E] FB1 max-fleet-reduction heatmap skipped: {exc}")
+            return
+        agg = V6.load_fleet_before_after(REV_DIR).groupby(
+            ["penalty", "share_willing"], as_index=False).agg(
+            max_fleet_before=("sum_hub_peak_before", "sum"),
+            max_fleet_after=("sum_hub_peak_after", "sum"))
+        source = "tab_costs_v2.csv (sum_hub_peak_before/after)"
     agg["reduction"] = agg.max_fleet_before - agg.max_fleet_after
     pen = sorted(agg.penalty.unique())
     shares = sorted(agg.share_willing.unique())
@@ -165,14 +212,28 @@ def plot_max_fleet_reduction(summary):
                     color="white" if v > M.max() * 0.55 else "black", fontsize=9)
     plt.colorbar(im, ax=ax, label="Vehicle-day reduction")
     fig.tight_layout()
-    fig.savefig(OUT / "fig_FB1_max_fleet_reduction_per_cell.png")
-    fig.savefig(OUT / "fig_FB1_max_fleet_reduction_per_cell.pdf")
+    V6.add_provenance_footer(fig, plan=PLAN_NOTE, script=SCRIPT_NAME, source=source)
+    V6.savefig_pair(fig, OUT / "fig_FB1_max_fleet_reduction_per_cell.png",
+                    OUT / "fig_FB1_max_fleet_reduction_per_cell.pdf")
     plt.close(fig)
     print("  fig_FB1_max_fleet_reduction_per_cell")
 
 
 def plot_hub_day_profile(fleet):
-    """For the operating point, compare BEFORE/AFTER hub × day fleet."""
+    """For the operating point, compare BEFORE/AFTER hub × day fleet.
+
+    E on v6: a per-hub-day (or even per-provider-day) "before" fleet has NO
+    v6 source at all -- v6 only ever computes a per-hub-day fleet at the
+    FINAL plan (74_'s NO_SOURCE on fleet_old/fleet_before). Unlike FB1/FB4
+    there is no coarser v6-native aggregate that recovers this DAY-level
+    split either (tab_costs_v2.csv's sum_hub_peak_before is a single number
+    per (P, theta, provider), not six per-day values), so this stays E.
+    """
+    try:
+        V6.assert_has_data(fleet, "fleet_before", context="FB2 hub-day profile")
+    except V6.NoV6Source as exc:
+        print(f"  [E] fig_FB2_hub_day_profile_compare skipped: {exc}")
+        return
     sub = fleet[(np.isclose(fleet.penalty, OPERATING_P)) &
                 (np.isclose(fleet.share_willing, OPERATING_SHARE))].copy()
     if sub.empty:
@@ -204,8 +265,9 @@ def plot_hub_day_profile(fleet):
     fig.suptitle(f"Hub fleet profile per LSP × weekday — before vs after balancing\n"
                   f"(operating point $P={OPERATING_P}$, share=100%)", fontsize=13, y=1.02)
     fig.tight_layout()
-    fig.savefig(OUT / "fig_FB2_hub_day_profile_compare.png")
-    fig.savefig(OUT / "fig_FB2_hub_day_profile_compare.pdf")
+    V6.add_provenance_footer(fig, plan=PLAN_NOTE, script=SCRIPT_NAME, source=SRC_NOTE)
+    V6.savefig_pair(fig, OUT / "fig_FB2_hub_day_profile_compare.png",
+                    OUT / "fig_FB2_hub_day_profile_compare.pdf")
     plt.close(fig)
     print("  fig_FB2_hub_day_profile_compare")
 
@@ -225,16 +287,35 @@ def plot_cost_vs_imbalance(summary):
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUT / "fig_FB3_cost_vs_imbalance_pareto.png")
-    fig.savefig(OUT / "fig_FB3_cost_vs_imbalance_pareto.pdf")
+    V6.add_provenance_footer(fig, plan=PLAN_NOTE, script=SCRIPT_NAME, source=SRC_NOTE)
+    V6.savefig_pair(fig, OUT / "fig_FB3_cost_vs_imbalance_pareto.png",
+                    OUT / "fig_FB3_cost_vs_imbalance_pareto.pdf")
     plt.close(fig)
     print("  fig_FB3_cost_vs_imbalance_pareto")
 
 
 def plot_max_fleet_per_provider(summary):
-    """Bar chart: peak fleet per LSP, before vs after, at operating point."""
-    sub = summary[(np.isclose(summary.penalty, OPERATING_P)) &
-                  (np.isclose(summary.share_willing, OPERATING_SHARE))].copy()
+    """Bar chart: peak fleet per LSP, before vs after, at operating point.
+
+    Same max_fleet_before NaN issue as FB1; reconstructed from v6-native
+    tab_costs_v2.csv via REV_DIR at this same (P, share) operating point
+    when the legacy column has no data.
+    """
+    try:
+        V6.assert_has_data(summary, "max_fleet_before", context="FB4 per-provider bar")
+        sub = summary[(np.isclose(summary.penalty, OPERATING_P)) &
+                      (np.isclose(summary.share_willing, OPERATING_SHARE))].copy()
+        fb4_source = SRC_NOTE
+    except V6.NoV6Source as exc:
+        if REV_DIR is None:
+            print(f"  [E] fig_FB4_max_fleet_per_provider skipped: {exc}")
+            return
+        fba = V6.load_fleet_before_after(REV_DIR)
+        sub = fba[(np.isclose(fba.penalty, OPERATING_P))
+                 & (np.isclose(fba.share_willing, OPERATING_SHARE))].rename(
+            columns={"sum_hub_peak_before": "max_fleet_before",
+                    "sum_hub_peak_after": "max_fleet_after"}).copy()
+        fb4_source = "tab_costs_v2.csv (sum_hub_peak_before/after)"
     if sub.empty:
         print("  fig_FB4 skipped: no data at operating point")
         return
@@ -257,13 +338,29 @@ def plot_max_fleet_per_provider(summary):
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUT / "fig_FB4_max_fleet_per_provider.png")
-    fig.savefig(OUT / "fig_FB4_max_fleet_per_provider.pdf")
+    V6.add_provenance_footer(fig, plan=PLAN_NOTE, script=SCRIPT_NAME, source=fb4_source)
+    V6.savefig_pair(fig, OUT / "fig_FB4_max_fleet_per_provider.png",
+                    OUT / "fig_FB4_max_fleet_per_provider.pdf")
     plt.close(fig)
     print("  fig_FB4_max_fleet_per_provider")
 
 
 def main():
+    global BAL, OUT, REV_DIR
+    ap = argparse.ArgumentParser(description=__doc__)
+    V6.add_v6_cli_args(ap, needs_legacy=True)
+    args = ap.parse_args()
+    if args.legacy_dir is not None:
+        BAL = Path(args.legacy_dir)
+    elif args.rev_dir is not None:
+        BAL, _ = V6.run_legacy_adapter(args.rev_dir,
+                                       Path(args.out_dir or OUT) / "_legacy")
+    if args.rev_dir is not None:
+        REV_DIR = Path(args.rev_dir)
+    if args.out_dir is not None:
+        OUT = Path(args.out_dir)
+    OUT.mkdir(parents=True, exist_ok=True)
+
     print("Loading balanced data ...")
     summary, chosen, fleet = load_data()
     print(f"  summary rows: {len(summary)}")

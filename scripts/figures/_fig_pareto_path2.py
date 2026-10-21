@@ -2,12 +2,27 @@
 (cost saving %, parcels-weighted average wait [d]) for each available penalty
 P, marks the sweet-spot (Pareto knee), and prints the table.
 
-Outputs:
+Default outputs:
   results/overnight_2026_05_29_path2/_fig_pareto_path2.png
   results/overnight_2026_05_29_path2/_pareto_path2.csv
+
+Task 19 W1b (v6 regeneration)
+-----------------------------
+v6 status B: ``init``-suffixed columns are the routing-optimal (stage 1)
+plan -- this script's own title says "Path-2 init", so per the brief's plan
+convention it stays on stage 1 (the routing optimum), not the default
+operator plan. Source: ``scripts/revision/74_v2_to_legacy_tables.py``'s
+``tab_balancing_summary.csv``/``tab_chosen_schedules.csv``.  The hardcoded
+``BASE = 1,909,747.75`` EUR is the STALE 2026-07/path2 denominator -- 74_'s
+own docstring rules a v6 saving must never be taken against it (the bundle
+head re-prices the theta=0 baseline too); replaced with this grid's own
+baseline from 74_'s ``legacy_manifest.json``.
 """
-from pathlib import Path
+import argparse
+import sys
 import warnings
+from pathlib import Path
+
 warnings.filterwarnings("ignore")
 
 import matplotlib
@@ -17,9 +32,12 @@ import numpy as np
 import pandas as pd
 from matplotlib import rcParams
 
-ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "results" / "overnight_2026_05_29_path2"
-BASE = 1909747.75
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "figures"))
+import _v6_provenance as V  # noqa: E402
+
+SCRIPT = "_fig_pareto_path2.py"
+DEFAULT_REV = ROOT / "results" / "overnight_2026_05_29_path2"
 
 rcParams.update({
     "font.family": "serif", "font.size": 10,
@@ -30,9 +48,25 @@ rcParams.update({
 })
 
 
-def main():
-    summ = pd.read_csv(OUT / "tab_balancing_summary.csv")
-    chosen = pd.read_csv(OUT / "tab_chosen_schedules.csv")
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    V.add_v6_args(ap, default_rev=DEFAULT_REV, default_out=DEFAULT_REV,
+                 rev_help="legacy-adapted run/ directory (74_ <out>/run) "
+                          "for v6, or the original path2 dir")
+    args = ap.parse_args(argv)
+    rev = Path(args.rev_dir)
+    OUT = Path(args.out_dir)
+    OUT.mkdir(parents=True, exist_ok=True)
+
+    summ_path, chosen_path = rev / "tab_balancing_summary.csv", rev / "tab_chosen_schedules.csv"
+    summ = pd.read_csv(summ_path)
+    chosen = pd.read_csv(chosen_path)
+    V.require_columns(summ, ["penalty", "share_willing", "init_cost_eur"],
+                      source=str(summ_path))
+    V.require_columns(chosen, ["penalty", "share_willing", "avg_wait_d_init",
+                               "weekly_parcels", "schedule_size_init"],
+                      source=str(chosen_path))
+    base_total = V.base_total_with_path2_fallback(rev)
 
     # theta = 1 column only
     th = 1.0
@@ -48,7 +82,7 @@ def main():
               })).reset_index())
     cost = ss.groupby("penalty").init_cost_eur.sum().reset_index()
     pareto = pareto.merge(cost, on="penalty")
-    pareto["init_sav_pct"] = 100 * (BASE - pareto.init_cost_eur) / BASE
+    pareto["init_sav_pct"] = 100 * (base_total - pareto.init_cost_eur) / base_total
     pareto = pareto.sort_values("penalty")
 
     # Knee identification: maximize curvature on the (wait, saving) curve
@@ -93,11 +127,14 @@ def main():
     ax.legend(loc="lower right")
     ax.set_xlim(left=-0.02)
     ax.set_ylim(bottom=-0.5)
-    fig.tight_layout()
-    fig.savefig(OUT / "_fig_pareto_path2.png", bbox_inches="tight")
+    fig.tight_layout(rect=[0, 0.04, 1, 1])
+    V.footer(fig, plan=V.PLAN1, script=SCRIPT,
+             source="tab_balancing_summary.csv + tab_chosen_schedules.csv")
+    written = V.savefig_pinned(fig, OUT, "_fig_pareto_path2")
     plt.close(fig)
-    print(f"\nsaved {OUT/'_fig_pareto_path2.png'}")
+    print(f"\nsaved {written[0]}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

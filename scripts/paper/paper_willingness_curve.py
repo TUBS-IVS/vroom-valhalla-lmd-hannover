@@ -1,6 +1,15 @@
 """Visualise the share_willing → (willing_b2c, willing_b2b) mapping that the
-orchestrator now uses (smooth power-law with B2B advantage)."""
+orchestrator now uses (smooth power-law with B2B advantage).
+
+Status A (Task 19): pure closed-form math, zero results/ file reads -- the
+b2c/b2b willingness-split formula is still the pipeline's own (compendium
+40.17), so nothing here needs porting. ``--out-dir`` only relocates the
+output; the default is unchanged so a bare invocation still writes to the
+historical ``results/overnight_2026_05_27`` path.
+"""
 from __future__ import annotations
+import argparse
+import sys
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -8,9 +17,11 @@ import numpy as np
 from matplotlib import rcParams
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _paper_v6_common as V6  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "results" / "overnight_2026_05_27"
-OUT.mkdir(parents=True, exist_ok=True)
 
 rcParams.update({"font.family": "serif", "font.size": 12,
                   "savefig.bbox": "tight", "savefig.dpi": 300, "pdf.fonttype": 42,
@@ -40,6 +51,16 @@ def willing_b2c(s): return _solve_t(s) ** _EXP_HI
 
 
 def main():
+    global OUT
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--out-dir", default=None,
+                    help="output directory (default: historical "
+                         "results/overnight_2026_05_27)")
+    args = ap.parse_args()
+    if args.out_dir is not None:
+        OUT = Path(args.out_dir)
+    OUT.mkdir(parents=True, exist_ok=True)
+
     s_grid = np.linspace(0, 1, 401)
     w_b2b = np.array([willing_b2b(s) for s in s_grid])
     w_b2c = np.array([willing_b2c(s) for s in s_grid])
@@ -82,8 +103,11 @@ def main():
     ax.set_xticks(grid_xs)
 
     fig.tight_layout()
-    fig.savefig(OUT / "fig_willingness_curve.png")
-    fig.savefig(OUT / "fig_willingness_curve.pdf")
+    V6.add_provenance_footer(fig, plan="n/a (closed-form, no plan)",
+                             script="paper_willingness_curve.py",
+                             source="none -- pipeline formula only")
+    V6.savefig_pair(fig, OUT / "fig_willingness_curve.png",
+                    OUT / "fig_willingness_curve.pdf")
     plt.close(fig)
     print(f"  -> {OUT / 'fig_willingness_curve.png'}")
 

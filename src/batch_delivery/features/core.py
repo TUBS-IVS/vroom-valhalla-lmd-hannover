@@ -76,6 +76,30 @@ ALL_COLS: list[str] = TIER1_COLS + TIER2_COLS + TIER3_COLS
 _PROVIDER_IDX = {p: i for i, p in enumerate(sorted(PROVIDERS))}
 
 
+def provider_index(provider: str) -> int:
+    """``provider_idx`` for *provider*, or raise.
+
+    The single encoder for the ``provider_idx`` model feature, used on every
+    path that builds it -- the per-cell feature builder, both cost-matrix
+    builders and the bundle head -- so train and serve cannot drift apart.
+
+    It **raises** on an unrecognised carrier rather than defaulting to index
+    0. The 7-provider set is fixed and pinned by tests, so an unknown name is
+    a defect (a typo, a stale mapping, a provider column read from the wrong
+    frame); silently encoding it as index 0 would price it as that carrier and
+    return a plausible-looking wrong number instead of an error.
+    """
+    try:
+        return _PROVIDER_IDX[provider]
+    except KeyError:
+        raise KeyError(
+            f"unknown provider {provider!r}: provider_idx is defined only for "
+            f"the {len(_PROVIDER_IDX)} carriers of the case study, "
+            f"{sorted(_PROVIDER_IDX)}. An unrecognised carrier is a defect, "
+            f"not something to encode as index 0."
+        ) from None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tier 1 — baseline features
 # ─────────────────────────────────────────────────────────────────────────────
@@ -296,7 +320,7 @@ def compute_tier3_features(
         "demand_std": float(per_stop_demand.std()) if n_stops > 1 else 0.0,
         "max_stop_demand": float(per_stop_demand.max()) if n_stops > 0 else 0.0,
         "demand_cap_ratio": total / (min_veh * VEHICLE_CAPACITY),
-        "provider_idx": float(_PROVIDER_IDX.get(provider, 0)),
+        "provider_idx": float(provider_index(provider)),
         "day_idx": float(day_idx),
         "delivery_frequency": float(delivery_frequency),
     }

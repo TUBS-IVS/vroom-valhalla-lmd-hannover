@@ -125,3 +125,21 @@ tmp/
 # ─── Notebook checkpoints ────────────────────────────────────────────────────
 .ipynb_checkpoints/
 *-checkpoint.ipynb
+
+# ─── Revision rev1: publish the preprint layout, never the CRC layout ───────
+# The Elsevier camera-ready tree is the version under review at the venue and
+# must not leave this machine. The public artefact is the preprint layout
+# (tbc_preprint_main.tex) plus its build, shipped as
+# EWGT26_Full_Paper_LB_preprint.pdf to match paper/EWGT_2026/.
+paper/EWGT_2026_rev1/elsevier_source/
+
+# LaTeX build artefacts (the .tex source and the published PDF are tracked)
+paper/EWGT_2026_rev1/*.log
+paper/EWGT_2026_rev1/*.xdv
+paper/EWGT_2026_rev1/*.aux
+paper/EWGT_2026_rev1/*.bbl
+paper/EWGT_2026_rev1/*.blg
+paper/EWGT_2026_rev1/*.spl
+paper/EWGT_2026_rev1/*.out
+paper/EWGT_2026_rev1/*.toc
+paper/EWGT_2026_rev1/tbc_preprint_main.pdf
